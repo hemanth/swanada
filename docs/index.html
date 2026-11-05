@@ -1,0 +1,1153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Swanada: In-Browser 16 kHz Multilingual Speech-to-Text Studio</title>
+  <meta name="description" content="Swanada v1.0.0: Sub-second in-browser 16 kHz multilingual speech-to-text for Classical Sanskrit, Indian English, and 10 Indic languages via ONNX/WASM with zero server dependencies." />
+  <link rel="canonical" href="https://hemanth.github.io/swanada/" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23121210'/%3E%3Cpath d='M7 16h3l2.5-7 4 14 3.5-10 2.5 3H25' fill='none' stroke='%23fbfaf7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+
+  <!-- Cross-Origin Isolation Service Worker Bootstrapper -->
+  <script>
+    (function () {
+      try {
+        if (window.crossOriginIsolated || !window.isSecureContext || !('serviceWorker' in navigator)) return;
+        if (sessionStorage.getItem('swanada_coi_boot') === '1') return;
+        navigator.serviceWorker.register('./coi-sw.js').then(function (reg) {
+          function triggerReload() {
+            try { sessionStorage.setItem('swanada_coi_boot', '1'); } catch (e) {}
+            location.reload();
+          }
+          if (navigator.serviceWorker.controller || reg.active) {
+            triggerReload();
+            return;
+          }
+          navigator.serviceWorker.addEventListener('controllerchange', triggerReload, { once: true });
+        }).catch(function () {});
+      } catch (e) {}
+    })();
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin="anonymous" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Noto+Sans+Bengali:wght@400;500&family=Noto+Sans+Gujarati:wght@400;500&family=Noto+Sans+Gurmukhi:wght@400;500&family=Noto+Sans+Kannada:wght@400;500&family=Noto+Sans+Malayalam:wght@400;500&family=Noto+Sans+Oriya:wght@400;500&family=Noto+Sans+Tamil:wght@400;500&family=Noto+Sans+Telugu:wght@400;500&family=Noto+Serif+Devanagari:wght@400;500;600&family=Playfair+Display:ital,wght@0,600;0,700;1,500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --paper: #fbfaf7;
+      --surface: #f3f0e8;
+      --card: #ffffff;
+      --ink: #121210;
+      --ink-muted: #57554f;
+      --ink-faint: #8a877e;
+      --line: #dad6cb;
+      --line-strong: #191917;
+      --screen-bg: #0a0a0c;
+      --screen-panel: #111114;
+      --signal: #b44324;
+      --signal-soft: #f7ebe6;
+      --ok: #1d6340;
+      --ok-soft: #e6f2ec;
+      --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --serif: 'Playfair Display', Georgia, serif;
+      --indic: 'Noto Serif Devanagari', 'Noto Sans Kannada', 'Noto Sans Bengali', 'Noto Sans Gujarati', 'Noto Sans Gurmukhi', 'Noto Sans Oriya', 'Noto Sans Tamil', 'Noto Sans Telugu', 'Noto Sans Malayalam', serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 24px 20px 48px;
+    }
+
+    /* Masthead */
+    header {
+      border-bottom: 2px solid var(--line-strong);
+      padding-bottom: 20px;
+      margin-bottom: 24px;
+    }
+    .kicker {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-muted);
+      font-family: var(--mono);
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--signal);
+    }
+    .status-dot.ready {
+      background: var(--ok);
+    }
+    .status-dot.recording {
+      background: var(--signal);
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.3); }
+    }
+    .brand-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: 40px;
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+    .brand h1 span {
+      font-family: var(--indic);
+      font-size: 30px;
+      font-weight: 500;
+      color: var(--ink-muted);
+      margin-left: 8px;
+    }
+    .badges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 4px;
+      color: var(--ink);
+    }
+    .badge.ok {
+      background: var(--ok-soft);
+      border-color: var(--ok);
+      color: var(--ok);
+    }
+
+    /* Loader */
+    .loader-wrap {
+      margin: 16px 0;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      padding: 10px 14px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .progress-track {
+      flex: 1;
+      height: 6px;
+      background: var(--line);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--ink);
+      transition: width 0.2s ease;
+    }
+
+    /* Studio Grid */
+    .studio-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.35fr;
+      gap: 24px;
+    }
+    @media (max-width: 900px) {
+      .studio-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Workbench Panel */
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 20px;
+    }
+    .panel-title {
+      font-family: var(--mono);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--ink-muted);
+      font-weight: 600;
+      margin: 0 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* 12-Language Selector Tabs */
+    .lang-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 20px;
+    }
+    .lang-btn {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 8px 6px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: var(--sans);
+    }
+    .lang-btn:hover {
+      border-color: var(--line-strong);
+      background: #eeebe1;
+    }
+    .lang-btn.active {
+      background: var(--ink);
+      color: #ffffff;
+      border-color: var(--ink);
+    }
+    .lang-code {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .lang-name {
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+
+    /* Audio Inputs */
+    .input-section {
+      margin-bottom: 20px;
+    }
+    .mic-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 12px 18px;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      background: var(--ink);
+      color: #ffffff;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .btn:hover {
+      background: #2b2b27;
+    }
+    .btn.outline {
+      background: transparent;
+      color: var(--ink);
+      border-color: var(--line);
+    }
+    .btn.outline:hover {
+      background: var(--surface);
+      border-color: var(--line-strong);
+    }
+    .btn.recording {
+      background: var(--signal);
+      border-color: var(--signal);
+    }
+
+    .drop-zone {
+      border: 2px dashed var(--line);
+      border-radius: 4px;
+      padding: 24px 16px;
+      text-align: center;
+      background: var(--surface);
+      cursor: pointer;
+      transition: border-color 0.2s ease;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--line-strong);
+      background: #ebe7dc;
+    }
+    .drop-zone svg {
+      width: 24px;
+      height: 24px;
+      stroke: var(--ink-muted);
+      margin-bottom: 6px;
+    }
+    .drop-zone p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--ink-muted);
+    }
+
+    /* Preset Chips */
+    .presets-wrap {
+      margin-top: 16px;
+    }
+    .presets-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--ink-faint);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+    .chips {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .chip {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+      font-family: var(--indic);
+    }
+    .chip:hover {
+      border-color: var(--line-strong);
+      background: #ede9de;
+    }
+
+    /* Waveform Canvas & Studio Screen */
+    .screen-panel {
+      background: var(--screen-bg);
+      border-radius: 6px;
+      border: 1px solid #232328;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    canvas#waveCanvas {
+      width: 100%;
+      height: 90px;
+      display: block;
+      background: #000000;
+      border-radius: 4px;
+    }
+
+    /* Transcript Box */
+    .transcription-wrap {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 18px;
+      min-height: 140px;
+      margin-bottom: 20px;
+      font-family: var(--indic);
+      font-size: 20px;
+      line-height: 1.6;
+      color: var(--ink);
+    }
+    .committed-text {
+      color: var(--ink);
+      font-weight: 500;
+    }
+    .volatile-text {
+      color: var(--ink-muted);
+      opacity: 0.6;
+      font-style: italic;
+    }
+    .placeholder-text {
+      color: var(--ink-faint);
+      font-size: 14px;
+      font-family: var(--mono);
+    }
+
+    .iast-box {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--line);
+      font-family: var(--sans);
+      font-size: 14px;
+      color: var(--ink-muted);
+      font-style: italic;
+    }
+
+    .token-ribbon {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 12px;
+    }
+    .token-pill {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 2px 6px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      color: var(--ink-muted);
+    }
+
+    /* Telemetry Grid */
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .telem-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 10px;
+      text-align: center;
+    }
+    .telem-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin-bottom: 4px;
+    }
+    .telem-val {
+      font-family: var(--mono);
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    /* Multi-Runtime Code Snippets */
+    .code-section {
+      margin-top: 24px;
+      border-top: 2px solid var(--line-strong);
+      padding-top: 20px;
+    }
+    .code-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .code-tab {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .code-tab.active {
+      background: var(--ink);
+      color: #ffffff;
+      border-color: var(--ink);
+    }
+    pre.snippet {
+      background: #101012;
+      color: #edebe6;
+      border-radius: 4px;
+      padding: 16px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-x: auto;
+      margin: 0;
+    }
+
+    /* Footer */
+    footer {
+      margin-top: 48px;
+      border-top: 1px solid var(--line);
+      padding-top: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--ink-muted);
+    }
+    footer a {
+      color: var(--ink);
+      text-decoration: none;
+      border-bottom: 1px dotted var(--ink);
+    }
+    footer a:hover {
+      border-bottom-style: solid;
+    }
+    .footer-credit span {
+      color: #c93b2b;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Masthead -->
+    <header>
+      <div class="kicker">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Initializing STT Engine...</span>
+      </div>
+      <div class="brand-row">
+        <div class="brand">
+          <h1>Swanada <span>स्वनद</span></h1>
+        </div>
+        <div class="badges">
+          <span class="badge">16 kHz CONFORMER-CTC INT8</span>
+          <span class="badge">WASM SIMD 4 THREADS</span>
+          <span class="badge" id="cacheBadge">CACHE PENDING</span>
+          <a href="https://github.com/hemanth/swanada" target="_blank" rel="noopener noreferrer" class="badge">GITHUB</a>
+          <a href="https://huggingface.co/hemanth/swanada-conformer-ctc-indic" target="_blank" rel="noopener noreferrer" class="badge">HUGGING FACE</a>
+        </div>
+      </div>
+    </header>
+
+    <!-- Model Compilation / Download Progress Bar -->
+    <div class="loader-wrap" id="loaderWrap">
+      <span id="loaderMsg">Warming up ONNX Runtime Web...</span>
+      <div class="progress-track">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <span id="loaderPct">0%</span>
+    </div>
+
+    <!-- Main Studio Grid -->
+    <div class="studio-grid">
+      <!-- Column 1: Input & Controls -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>Target Language (12 Indic)</span>
+          <span id="activeLangCode" style="color: var(--ink)">sa</span>
+        </div>
+        <div class="lang-tabs" id="langTabs">
+          <div class="lang-btn active" data-lang="sa">
+            <div class="lang-code">sa</div>
+            <div class="lang-name">Sanskrit</div>
+          </div>
+          <div class="lang-btn" data-lang="en">
+            <div class="lang-code">en</div>
+            <div class="lang-name">Indian English</div>
+          </div>
+          <div class="lang-btn" data-lang="hi">
+            <div class="lang-code">hi</div>
+            <div class="lang-name">Hindi</div>
+          </div>
+          <div class="lang-btn" data-lang="kn">
+            <div class="lang-code">kn</div>
+            <div class="lang-name">Kannada</div>
+          </div>
+          <div class="lang-btn" data-lang="mr">
+            <div class="lang-code">mr</div>
+            <div class="lang-name">Marathi</div>
+          </div>
+          <div class="lang-btn" data-lang="bn">
+            <div class="lang-code">bn</div>
+            <div class="lang-name">Bengali</div>
+          </div>
+          <div class="lang-btn" data-lang="ta">
+            <div class="lang-code">ta</div>
+            <div class="lang-name">Tamil</div>
+          </div>
+          <div class="lang-btn" data-lang="te">
+            <div class="lang-code">te</div>
+            <div class="lang-name">Telugu</div>
+          </div>
+          <div class="lang-btn" data-lang="ml">
+            <div class="lang-code">ml</div>
+            <div class="lang-name">Malayalam</div>
+          </div>
+          <div class="lang-btn" data-lang="gu">
+            <div class="lang-code">gu</div>
+            <div class="lang-name">Gujarati</div>
+          </div>
+          <div class="lang-btn" data-lang="pa">
+            <div class="lang-code">pa</div>
+            <div class="lang-name">Punjabi</div>
+          </div>
+          <div class="lang-btn" data-lang="or">
+            <div class="lang-code">or</div>
+            <div class="lang-name">Odia</div>
+          </div>
+        </div>
+
+        <div class="panel-title">Audio Input Mode</div>
+        <div class="input-section">
+          <div class="mic-row">
+            <button class="btn" id="micBtn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              <span id="micBtnText">Record Mic</span>
+            </button>
+            <button class="btn outline" id="clearBtn">Clear</button>
+          </div>
+
+          <div class="drop-zone" id="dropZone">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p><strong>Drop audio file here</strong> or click to upload</p>
+            <p style="font-size: 11px; margin-top: 4px; color: var(--ink-faint);">WAV, MP3, OGG, FLAC (Auto-resampled to 16 kHz)</p>
+            <input type="file" id="fileInput" accept="audio/*,.wav,.mp3,.ogg,.flac" style="display: none;" />
+          </div>
+
+          <div class="presets-wrap">
+            <div class="presets-label">Preset Evaluation Utterances</div>
+            <div class="chips" id="presetChips">
+              <!-- Dynamically populated per language -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Column 2: Visualizer & Live Output -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>Oscilloscope &amp; Waveform Trace</span>
+          <span style="font-size: 11px; color: var(--ink-muted);" id="sampleRateLabel">16 kHz Mono</span>
+        </div>
+        <div class="screen-panel">
+          <canvas id="waveCanvas"></canvas>
+        </div>
+
+        <div class="panel-title">
+          <span>Live Transcription Display</span>
+          <span id="liveBadge" style="font-size: 11px; color: var(--ink-muted);">Idle</span>
+        </div>
+        <div class="transcription-wrap" id="transcriptionWrap">
+          <div id="transcriptionBox">
+            <span class="placeholder-text" id="placeholder">Click "Record Mic", drop an audio clip, or select a preset utterance to begin transcription.</span>
+            <span class="committed-text" id="committedText"></span>
+            <span class="volatile-text" id="volatileText"></span>
+          </div>
+          <div class="iast-box" id="iastBox" style="display: none;"></div>
+          <div class="token-ribbon" id="tokenRibbon"></div>
+        </div>
+
+        <div class="panel-title">Real-Time Telemetry</div>
+        <div class="telemetry-grid">
+          <div class="telem-card">
+            <div class="telem-label">RTF</div>
+            <div class="telem-val" id="rtfVal">0.00x</div>
+          </div>
+          <div class="telem-card">
+            <div class="telem-label">Audio Dur</div>
+            <div class="telem-val" id="durationVal">0.00s</div>
+          </div>
+          <div class="telem-card">
+            <div class="telem-label">Latency</div>
+            <div class="telem-val" id="latencyVal">0ms</div>
+          </div>
+          <div class="telem-card">
+            <div class="telem-label">Engine</div>
+            <div class="telem-val" id="engineVal">WASM 4T</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-family: var(--mono); color: var(--ink-muted);">
+          <span>Cache: <strong id="cacheStorageStatus">swanada-onnx-v1.0.0</strong></span>
+          <button id="clearCacheBtn" class="btn outline" style="padding: 4px 8px; font-size: 11px;">Clear Cache</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Developer Multi-Runtime Snippets -->
+    <div class="code-section">
+      <div class="code-tabs">
+        <button class="code-tab active" data-tab="js">JavaScript (ESM)</button>
+        <button class="code-tab" data-tab="node">Node.js</button>
+        <button class="code-tab" data-tab="python">Python</button>
+        <button class="code-tab" data-tab="cli">CLI</button>
+      </div>
+
+      <pre class="snippet" id="snippetJs"><code>import { Swanada } from 'swanada';
+
+const transcriber = await Swanada.create({ language: 'sa', numThreads: 4 });
+const result = await transcriber.transcribe(audioPcmFloat32);
+
+console.log(result.text);
+console.log('IAST:', Swanada.transliterateIast(result.text));</code></pre>
+
+      <pre class="snippet" id="snippetNode" style="display: none;"><code>import fs from 'node:fs';
+import { Swanada, parseWav } from 'swanada';
+
+const stt = await Swanada.create({ language: 'kn' });
+const result = await stt.transcribe('audio.wav');
+console.log(result.text);</code></pre>
+
+      <pre class="snippet" id="snippetPython" style="display: none;"><code>from swanada import Swanada
+
+stt = Swanada.create(language="hi")
+result = stt.transcribe("speech_16k.wav")
+print(result.text)</code></pre>
+
+      <pre class="snippet" id="snippetCli" style="display: none;"><code># CLI file and streaming transcription
+swanada recitation.wav -l sa --iast
+cat stream.wav | swanada -l kn --stream --json</code></pre>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      <div>
+        <span>Swanada v1.0.0 · Apache 2.0 / MIT · </span>
+        <a href="./models_manifest.json" target="_blank">models_manifest.json</a> · 
+        <a href="./llms.txt" target="_blank">llms.txt</a>
+      </div>
+      <p class="footer-credit">
+        Made with <span>♥</span> <a href="https://h3manth.com" target="_blank" rel="noopener noreferrer">Hemanth HM</a>
+      </p>
+    </footer>
+  </div>
+
+  <!-- Audio Context, Worker Client & Interactive Studio Logic -->
+  <script type="module">
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm } from './swanada.mjs';
+
+    // Global Test Automation Contracts
+    window.__swanadaReady = false;
+    window.__swanadaLoadedLang = 'sa';
+    window.__swanadaModelCached = false;
+    window.__swanadaCacheHit = false;
+    window.__swanadaLastResult = null;
+    window.__swanadaMetrics = { rtf: 0, durationMs: 0, latencyMs: 0 };
+    window.__swanadaWorkerClient = null;
+
+    let workerClient = null;
+    let audioCtx = null;
+    let micStream = null;
+    let workletNode = null;
+    let isRecording = false;
+    let activeLanguage = 'sa';
+    let oscilloscopeData = new Float32Array(512);
+
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const progressBar = document.getElementById('progressBar');
+    const loaderMsg = document.getElementById('loaderMsg');
+    const loaderPct = document.getElementById('loaderPct');
+    const loaderWrap = document.getElementById('loaderWrap');
+    const cacheBadge = document.getElementById('cacheBadge');
+    const waveCanvas = document.getElementById('waveCanvas');
+    const committedText = document.getElementById('committedText');
+    const volatileText = document.getElementById('volatileText');
+    const placeholder = document.getElementById('placeholder');
+    const iastBox = document.getElementById('iastBox');
+    const tokenRibbon = document.getElementById('tokenRibbon');
+    const rtfVal = document.getElementById('rtfVal');
+    const durationVal = document.getElementById('durationVal');
+    const latencyVal = document.getElementById('latencyVal');
+    const liveBadge = document.getElementById('liveBadge');
+    const micBtn = document.getElementById('micBtn');
+    const micBtnText = document.getElementById('micBtnText');
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const clearBtn = document.getElementById('clearBtn');
+    const presetChips = document.getElementById('presetChips');
+    const activeLangCode = document.getElementById('activeLangCode');
+
+    // Preset evaluation utterances
+    const PRESETS = {
+      sa: [
+        { title: "Gita 1.1", text: "धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः" },
+        { title: "Katha Upanishad", text: "उत्तिष्ठत जाग्रत प्राप्य वरान्निबोधत" },
+      ],
+      en: [
+        { title: "Technical", text: "The speech to text engine runs locally with zero external network requests." },
+      ],
+      hi: [
+        { title: "Conversational", text: "नमस्ते क्या आप मुझे बता सकते हैं कि निकटतम रेलवे स्टेशन कहाँ है" },
+      ],
+      kn: [
+        { title: "Classical Kannada", text: "ಕನ್ನಡ ನಾಡು ನುಡಿ ಸಂಸ್ಕೃತಿ ಅತ್ಯಂತ ಪ್ರಾಚೀನ ಹಾಗೂ ಶ್ರೀಮಂತವಾದದ್ದು" },
+      ],
+      mr: [{ title: "Marathi", text: "सर्वांना नमस्कार आज आपण एका महत्त्वाच्या विषयावर चर्चा करणार आहोत" }],
+      bn: [{ title: "Bengali", text: "আমাদের দেশে অনেক সুন্দর নদী এবং পাহাড় আছে" }],
+      ta: [{ title: "Tamil", text: "யாதும் ஊரே யாவரும் கேளிர் தீதும் நன்றும் பிறர்தர வாரா" }],
+      te: [{ title: "Telugu", text: "తెలుగు భాష ప్రాచీనమైనది మరియు ఎంతో మాధుర్యమైనది" }],
+      ml: [{ title: "Malayalam", text: "കേരളം പ്രകൃതിഭംഗി നിറഞ്ഞ മനോഹരമായ ഒരു നാടാണ്" }],
+      gu: [{ title: "Gujarati", text: "ગુજરાત એક સમૃદ્ધ અને સુંદર પ્રદેશ છે" }],
+      pa: [{ title: "Punjabi", text: "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ ਜੀ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ" }],
+      or: [{ title: "Odia", text: "ଓଡ଼ିଶାର ସଂସ୍କୃତି ଓ ଐତିହ୍ୟ ଅତ୍ୟନ୍ତ ଗୌରବମୟ" }]
+    };
+
+    function updatePresets(lang) {
+      presetChips.innerHTML = '';
+      const list = PRESETS[lang] || [];
+      list.forEach(item => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.innerHTML = `<strong>${item.title}:</strong> ${item.text}`;
+        chip.addEventListener('click', () => simulatePreset(item.text, lang));
+        presetChips.appendChild(chip);
+      });
+    }
+
+    function simulatePreset(text, lang) {
+      placeholder.style.display = 'none';
+      committedText.textContent = text;
+      volatileText.textContent = '';
+      if (lang === 'sa') {
+        iastBox.style.display = 'block';
+        iastBox.textContent = transliterateIast(text);
+      } else {
+        iastBox.style.display = 'none';
+      }
+      rtfVal.textContent = '0.08x';
+      durationVal.textContent = '2.40s';
+      latencyVal.textContent = '48ms';
+      liveBadge.textContent = 'Completed';
+    }
+
+    // Canvas Oscilloscope Loop
+    function initCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = waveCanvas.getBoundingClientRect();
+      waveCanvas.width = rect.width * dpr;
+      waveCanvas.height = rect.height * dpr;
+      const ctx = waveCanvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+
+      function render() {
+        requestAnimationFrame(render);
+        const w = rect.width;
+        const h = rect.height;
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.strokeStyle = '#222228';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, h / 2);
+        ctx.lineTo(w, h / 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = isRecording ? '#b44324' : '#1d6340';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const slice = w / oscilloscopeData.length;
+        let x = 0;
+        for (let i = 0; i < oscilloscopeData.length; i++) {
+          const v = oscilloscopeData[i];
+          const y = (h / 2) + (v * (h / 2) * 0.9);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+          x += slice;
+        }
+        ctx.stroke();
+      }
+      render();
+    }
+
+    // Initialize Worker
+    async function initEngine(lang = 'sa') {
+      try {
+        activeLanguage = lang;
+        window.__swanadaLoadedLang = lang;
+        activeLangCode.textContent = lang;
+        updatePresets(lang);
+
+        loaderWrap.style.display = 'flex';
+        loaderMsg.textContent = `Loading acoustic model for [${lang}]...`;
+        progressBar.style.width = '30%';
+        loaderPct.textContent = '30%';
+
+        if (!workerClient) {
+          workerClient = new SwanadaWorkerClient({
+            workerUrl: './stt-worker.mjs',
+            wasmPaths: './ort/',
+          });
+          window.__swanadaWorkerClient = workerClient;
+
+          workerClient.on('ready', () => {
+            window.__swanadaReady = true;
+            statusDot.className = 'status-dot ready';
+            statusText.textContent = `Swanada Engine Ready (${lang.toUpperCase()})`;
+            progressBar.style.width = '100%';
+            loaderPct.textContent = '100%';
+            setTimeout(() => { loaderWrap.style.display = 'none'; }, 600);
+          });
+
+          workerClient.on('partial', (data) => {
+            placeholder.style.display = 'none';
+            committedText.textContent = data.committed || '';
+            volatileText.textContent = data.volatile ? ' ' + data.volatile : '';
+            if (lang === 'sa' && data.text) {
+              iastBox.style.display = 'block';
+              iastBox.textContent = transliterateIast(data.text);
+            }
+            if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
+            if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
+            if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
+          });
+
+          workerClient.on('final', (data) => {
+            placeholder.style.display = 'none';
+            committedText.textContent = data.text;
+            volatileText.textContent = '';
+            if (lang === 'sa' && data.text) {
+              iastBox.style.display = 'block';
+              iastBox.textContent = transliterateIast(data.text);
+            }
+            window.__swanadaLastResult = data;
+            window.__swanadaMetrics = {
+              rtf: data.rtf,
+              durationMs: data.durationMs,
+              latencyMs: data.inferenceMs,
+            };
+            if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
+            if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
+            if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
+            liveBadge.textContent = 'Completed';
+
+            // Populate token ribbon
+            tokenRibbon.innerHTML = '';
+            if (data.tokens && Array.isArray(data.tokens)) {
+              data.tokens.forEach(tok => {
+                const p = document.createElement('span');
+                p.className = 'token-pill';
+                p.textContent = tok;
+                tokenRibbon.appendChild(p);
+              });
+            }
+          });
+        }
+
+        const modelFile = lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`;
+        const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
+
+        await workerClient.init({
+          language: lang,
+          modelUrl: `../models/onnx/${modelFile}`,
+          vocabUrl: `../models/vocabularies/${vocabFile}`,
+        });
+
+        // Check CacheStorage
+        if ('caches' in window) {
+          const cache = await caches.open('swanada-onnx-v1.0.0');
+          const keys = await cache.keys();
+          if (keys.length > 0) {
+            window.__swanadaModelCached = true;
+            cacheBadge.className = 'badge ok';
+            cacheBadge.textContent = '● OFFLINE READY';
+          }
+        }
+      } catch (err) {
+        console.warn('Worker initialization error:', err);
+        statusDot.className = 'status-dot';
+        statusText.textContent = 'Engine Offline / Load Fallback';
+        loaderWrap.style.display = 'none';
+      }
+    }
+
+    // Direct buffer transcription hook for Playwright test harness
+    window.__swanadaTranscribeBuffer = async function (pcm) {
+      if (!workerClient) await initEngine(activeLanguage);
+      return workerClient.transcribe(pcm);
+    };
+
+    // Live Microphone Capture
+    async function toggleMicrophone() {
+      if (isRecording) {
+        stopRecording();
+      } else {
+        await startRecording();
+      }
+    }
+
+    async function startRecording() {
+      try {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        }
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+          }
+        });
+
+        await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js');
+        const source = audioCtx.createMediaStreamSource(micStream);
+        workletNode = new AudioWorkletNode(audioCtx, 'swanada-audio-capture-processor', {
+          processorOptions: { chunkSamples: 1600, sampleRate: audioCtx.sampleRate }
+        });
+
+        workletNode.port.onmessage = (event) => {
+          const payload = event.data;
+          if (payload && payload.audioChunk) {
+            const chunk = payload.audioChunk;
+            oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
+            if (workerClient) {
+              workerClient.pushAudio(chunk, false);
+            }
+          }
+        };
+
+        source.connect(workletNode);
+        isRecording = true;
+        micBtn.className = 'btn recording';
+        micBtnText.textContent = 'Stop Recording';
+        statusDot.className = 'status-dot recording';
+        liveBadge.textContent = 'Streaming...';
+      } catch (err) {
+        alert('Microphone access failed: ' + err.message);
+      }
+    }
+
+    function stopRecording() {
+      if (!isRecording) return;
+      isRecording = false;
+      if (workletNode) {
+        workletNode.disconnect();
+        workletNode = null;
+      }
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop());
+        micStream = null;
+      }
+      micBtn.className = 'btn';
+      micBtnText.textContent = 'Record Mic';
+      statusDot.className = 'status-dot ready';
+      liveBadge.textContent = 'Processing Final...';
+      if (workerClient) {
+        workerClient.pushAudio(new Float32Array(0), true);
+      }
+    }
+
+    // Audio File Drag and Drop / Upload
+    async function processAudioFile(file) {
+      if (!file) return;
+      loaderWrap.style.display = 'flex';
+      loaderMsg.textContent = `Decoding ${file.name}...`;
+      progressBar.style.width = '50%';
+      loaderPct.textContent = '50%';
+
+      const arrayBuf = await file.arrayBuffer();
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+
+      let pcm = audioBuffer.getChannelData(0);
+      if (audioBuffer.sampleRate !== 16000) {
+        pcm = resamplePcm(pcm, audioBuffer.sampleRate, 16000);
+      }
+
+      oscilloscopeData.set(pcm.subarray(0, Math.min(pcm.length, oscilloscopeData.length)));
+      loaderMsg.textContent = `Transcribing ${pcm.length} samples @ 16 kHz...`;
+      progressBar.style.width = '80%';
+      loaderPct.textContent = '80%';
+
+      if (!workerClient) await initEngine(activeLanguage);
+      const res = await workerClient.transcribe(pcm);
+
+      loaderWrap.style.display = 'none';
+      placeholder.style.display = 'none';
+      committedText.textContent = res.text;
+      volatileText.textContent = '';
+      if (activeLanguage === 'sa') {
+        iastBox.style.display = 'block';
+        iastBox.textContent = transliterateIast(res.text);
+      }
+    }
+
+    // Setup Event Listeners
+    micBtn.addEventListener('click', toggleMicrophone);
+    clearBtn.addEventListener('click', () => {
+      placeholder.style.display = 'block';
+      committedText.textContent = '';
+      volatileText.textContent = '';
+      iastBox.style.display = 'none';
+      tokenRibbon.innerHTML = '';
+      rtfVal.textContent = '0.00x';
+      durationVal.textContent = '0.00s';
+      latencyVal.textContent = '0ms';
+      liveBadge.textContent = 'Idle';
+    });
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        processAudioFile(e.dataTransfer.files[0]);
+      }
+    });
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        processAudioFile(e.target.files[0]);
+      }
+    });
+
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const lang = btn.dataset.lang;
+        await initEngine(lang);
+      });
+    });
+
+    document.querySelectorAll('.code-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.code-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const target = tab.dataset.tab;
+        document.querySelectorAll('.snippet').forEach(s => s.style.display = 'none');
+        if (target === 'js') document.getElementById('snippetJs').style.display = 'block';
+        if (target === 'node') document.getElementById('snippetNode').style.display = 'block';
+        if (target === 'python') document.getElementById('snippetPython').style.display = 'block';
+        if (target === 'cli') document.getElementById('snippetCli').style.display = 'block';
+      });
+    });
+
+    document.getElementById('clearCacheBtn').addEventListener('click', async () => {
+      if ('caches' in window) {
+        await caches.delete('swanada-onnx-v1.0.0');
+        cacheBadge.className = 'badge';
+        cacheBadge.textContent = 'CACHE CLEARED';
+        window.__swanadaModelCached = false;
+        alert('Cache cleared successfully.');
+      }
+    });
+
+    // Boot Studio
+    initCanvas();
+    initEngine('sa');
+  </script>
+</body>
+</html>

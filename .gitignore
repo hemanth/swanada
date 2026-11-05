@@ -1,0 +1,46 @@
+# Python environments & bytecode
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+/build/
+/dist/
+.pytest_cache/
+
+# Node.js dependencies
+node_modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & IDE metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Large ONNX binary model weights (>100 MB limit, published to Hugging Face Hub)
+models/onnx/*.onnx
+!models/onnx/heads/
+
+# Temporary / Scratch audio files & benchmark cache
+*.wav
+*.mp3
+*.flac
+*.ogg
+bench/*_results*.json
+bench/results.json
+temp_*
+*.tmp
+
+# Teamwork agent metadata
+.agents/
+
+# Secrets and local credentials
+.env
+.env.*
+*.pem
+*.key
+*credentials*.json

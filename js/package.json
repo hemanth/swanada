@@ -1,0 +1,78 @@
+{
+  "name": "swanada",
+  "version": "1.0.0",
+  "description": "In-browser and Node.js 16 kHz multilingual speech to text for Classical Sanskrit, Indian English, and 10 Indic languages via ONNX/WASM with zero server dependencies.",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "swanada": "bin/swanada.mjs"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "keywords": [
+    "swanada",
+    "stt",
+    "speech-to-text",
+    "asr",
+    "sanskrit",
+    "indic",
+    "conformer",
+    "ctc",
+    "onnx",
+    "wasm",
+    "webgpu",
+    "hindi",
+    "kannada",
+    "tamil",
+    "telugu",
+    "malayalam",
+    "marathi",
+    "bengali",
+    "gujarati",
+    "punjabi",
+    "odia",
+    "english"
+  ],
+  "peerDependencies": {
+    "onnxruntime-web": ">=1.18.0"
+  },
+  "peerDependenciesMeta": {
+    "onnxruntime-web": {
+      "optional": true
+    }
+  },
+  "homepage": "https://hemanth.github.io/swanada/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hemanth/swanada.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hemanth/swanada/issues"
+  },
+  "author": "Hemanth HM <hemanth@h3manth.com> (https://h3manth.com)",
+  "license": "MIT"
+}
+

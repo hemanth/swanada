@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swanada"
+version = "1.0.0"
+description = "Swanada (स्वनद): In-browser, Node.js, and Python 16 kHz Multilingual Speech-to-Text for Classical Sanskrit, Indian English & 10 Indic languages via ONNX/WASM."
+readme = "README.md"
+license = "MIT"
+authors = [
+  { name = "Hemanth HM", email = "hemanth@h3manth.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24.0",
+]
+
+[project.urls]
+Homepage = "https://hemanth.github.io/swanada/"
+Repository = "https://github.com/hemanth/swanada"
+
+[project.scripts]
+swanada = "swanada.cli:main"
+
+[project.optional-dependencies]
+neural = [
+  "onnxruntime>=1.18.0",
+  "soundfile>=0.12.1",
+  "scipy>=1.11.0",
+]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["python/src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["python/src"]
+testpaths = ["tests"]
+markers = [
+  "tier1: Tier 1 feature coverage tests",
+  "tier2: Tier 2 boundary and corner case tests",
+  "tier3: Tier 3 cross-feature integration tests",
+  "tier4: Tier 4 real-world speech and benchmark tests",
+  "m1: Milestone 1 tests",
+  "m2: Milestone 2 tests",
+  "m3: Milestone 3 tests",
+  "m4: Milestone 4 tests",
+  "m5: Milestone 5 tests",
+  "f01: Feature 1 Audio Ingestion & Resampling",
+  "f02: Feature 2 Deterministic Log-Mel Frontend",
+  "f03: Feature 3 Core In-Browser ONNX/WASM Engine",
+  "f04: Feature 4 Linear-Time CTC Greedy Decoder",
+  "f05: Feature 5 Multilingual Vocabulary Registry",
+  "f06: Feature 6 Classical Sanskrit CTC Model",
+  "f07: Feature 7 Indic Languages CTC Heads",
+  "f08: Feature 8 Indian English Acoustic Head",
+  "f09: Feature 9 Streaming AudioWorklet Processor",
+  "f10: Feature 10 Background STT Web Worker",
+  "f11: Feature 11 RTF < 1.0 Protocol",
+  "f12: Feature 12 Offline CacheStorage Persistence",
+  "f13: Feature 13 JS/TS Package Parity",
+  "f14: Feature 14 Node.js Runtime Support",
+  "f15: Feature 15 Standalone Python Package",
+  "f16: Feature 16 Cross-Platform CLI Tools",
+  "f17: Feature 17 Tactile Studio Browser Playground",
+  "f18: Feature 18 Local Static Server",
+  "f19: Feature 19 Automated Browser Test Harness",
+  "f20: Feature 20 Held-Out Speech Audio Test Suite",
+  "f21: Feature 21 Empirical Accuracy & Latency Benchmarks",
+  "f22: Feature 22 Adversarial Hardening & Zero Regressions",
+]

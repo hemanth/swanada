@@ -1,0 +1,18 @@
+{
+  "name": "swanada-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Swanada (स्वनद): In-browser 16 kHz Multilingual Speech-to-Text for Classical Sanskrit, Indian English & 10 Indic Languages via ONNX/WASM with Zero Server Dependencies",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 js/test/*.test.mjs",
+    "test:unit": "node --test --test-concurrency=1 js/test/*.test.mjs",
+    "build": "node js/build.mjs",
+    "playground": "node serve-playground.mjs"
+  },
+  "author": "Hemanth HM <hemanth@h3manth.com> (https://h3manth.com)",
+  "license": "MIT",
+  "devDependencies": {
+    "onnxruntime-web": "^1.31.1"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "swanada-conformer-ctc-indic",
+  "version": "1.0.0",
+  "pipeline_tag": "automatic-speech-recognition",
+  "sample_rate": 16000,
+  "frontend": {
+    "type": "log_mel_filterbank",
+    "features": 80,
+    "fft_size": 512,
+    "hop_length": 160,
+    "win_length": 400,
+    "window_fn": "hann",
+    "f_min": 0.0,
+    "f_max": 8000.0,
+    "preprocessor_model": "preprocessor.onnx"
+  },
+  "acoustic_model": {
+    "architecture": "Conformer-CTC",
+    "d_model": 512,
+    "n_layers": 17,
+    "n_heads": 8,
+    "conv_kernel_size": 31,
+    "subsampling_factor": 4,
+    "quantization": "INT8_DYNAMIC_QUINT8",
+    "time_stride_ms": 40.0
+  },
+  "languages": {
+    "sa": { "name": "Sanskrit", "script": "Devanagari", "model": "models/onnx/swanada_sa_ctc_int8.onnx", "vocab": "models/vocabularies/sa_vocab.json", "vocab_size": 257 },
+    "en": { "name": "Indian English", "script": "Latin", "model": "models/onnx/swanada_en_ctc_int8.onnx", "vocab": "models/vocabularies/en_vocab.json", "vocab_size": 257 },
+    "hi": { "name": "Hindi", "script": "Devanagari", "model": "models/onnx/swanada_hi_ctc_int8.onnx", "vocab": "models/vocabularies/hi_vocab.json", "vocab_size": 257 },
+    "kn": { "name": "Kannada", "script": "Kannada", "model": "models/onnx/swanada_kn_ctc_int8.onnx", "vocab": "models/vocabularies/kn_vocab.json", "vocab_size": 257 },
+    "mr": { "name": "Marathi", "script": "Devanagari", "model": "models/onnx/swanada_mr_ctc_int8.onnx", "vocab": "models/vocabularies/mr_vocab.json", "vocab_size": 257 },
+    "bn": { "name": "Bengali", "script": "Bengali", "model": "models/onnx/swanada_bn_ctc_int8.onnx", "vocab": "models/vocabularies/bn_vocab.json", "vocab_size": 257 },
+    "ta": { "name": "Tamil", "script": "Tamil", "model": "models/onnx/swanada_ta_ctc_int8.onnx", "vocab": "models/vocabularies/ta_vocab.json", "vocab_size": 257 },
+    "te": { "name": "Telugu", "script": "Telugu", "model": "models/onnx/swanada_te_ctc_int8.onnx", "vocab": "models/vocabularies/te_vocab.json", "vocab_size": 257 },
+    "ml": { "name": "Malayalam", "script": "Malayalam", "model": "models/onnx/swanada_ml_ctc_int8.onnx", "vocab": "models/vocabularies/ml_vocab.json", "vocab_size": 257 },
+    "gu": { "name": "Gujarati", "script": "Gujarati", "model": "models/onnx/swanada_gu_ctc_int8.onnx", "vocab": "models/vocabularies/gu_vocab.json", "vocab_size": 257 },
+    "pa": { "name": "Punjabi", "script": "Gurmukhi", "model": "models/onnx/swanada_pa_ctc_int8.onnx", "vocab": "models/vocabularies/pa_vocab.json", "vocab_size": 257 },
+    "or": { "name": "Odia", "script": "Odia", "model": "models/onnx/swanada_or_ctc_int8.onnx", "vocab": "models/vocabularies/or_vocab.json", "vocab_size": 257 }
+  }
+}

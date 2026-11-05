@@ -1,0 +1,115 @@
+{
+  "version": "1.0.0",
+  "cacheName": "swanada-onnx-v1.0.0",
+  "architecture": "conformer-ctc-int8-16k",
+  "languages": {
+    "sa": {
+      "lang": "sa",
+      "name": "Sanskrit",
+      "native": "संस्कृतम्",
+      "modelUrl": "./models/onnx/swanada_sa_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_sa_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/sa_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "en": {
+      "lang": "en",
+      "name": "Indian English",
+      "native": "English",
+      "modelUrl": "./models/onnx/swanada_en_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_en_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/en_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "hi": {
+      "lang": "hi",
+      "name": "Hindi",
+      "native": "हिन्दी",
+      "modelUrl": "./models/onnx/swanada_hi_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_hi_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/hi_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "kn": {
+      "lang": "kn",
+      "name": "Kannada",
+      "native": "ಕನ್ನಡ",
+      "modelUrl": "./models/onnx/swanada_kn_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_kn_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/kn_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "mr": {
+      "lang": "mr",
+      "name": "Marathi",
+      "native": "मराठी",
+      "modelUrl": "./models/onnx/swanada_mr_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_mr_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/mr_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "bn": {
+      "lang": "bn",
+      "name": "Bengali",
+      "native": "বাংলা",
+      "modelUrl": "./models/onnx/swanada_bn_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_bn_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/bn_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "ta": {
+      "lang": "ta",
+      "name": "Tamil",
+      "native": "தமிழ்",
+      "modelUrl": "./models/onnx/swanada_ta_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_ta_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/ta_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "te": {
+      "lang": "te",
+      "name": "Telugu",
+      "native": "తెలుగు",
+      "modelUrl": "./models/onnx/swanada_te_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_te_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/te_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "ml": {
+      "lang": "ml",
+      "name": "Malayalam",
+      "native": "മലയാളം",
+      "modelUrl": "./models/onnx/swanada_ml_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_ml_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/ml_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "gu": {
+      "lang": "gu",
+      "name": "Gujarati",
+      "native": "ગુજરાતી",
+      "modelUrl": "./models/onnx/swanada_gu_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_gu_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/gu_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "pa": {
+      "lang": "pa",
+      "name": "Punjabi",
+      "native": "ਪੰਜਾਬੀ",
+      "modelUrl": "./models/onnx/swanada_pa_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_pa_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/pa_vocab.json",
+      "expectedBytes": 187484185
+    },
+    "or": {
+      "lang": "or",
+      "name": "Odia",
+      "native": "ଓଡ଼ିଆ",
+      "modelUrl": "./models/onnx/swanada_or_ctc_int8.onnx",
+      "remoteUrl": "https://huggingface.co/hemanth/swanada-conformer-ctc-indic/resolve/main/onnx/swanada_or_ctc_int8.onnx",
+      "vocabUrl": "./models/vocabularies/or_vocab.json",
+      "expectedBytes": 187484185
+    }
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "generator": "swanada/tools/publish_to_hf.py",
+  "version": "1.0.0",
+  "files": {
+    "config.json": {
+      "size_bytes": 2686,
+      "sha256": "f33915e73ad306fa24ddb444c2533f0cccf6c2f97bdbd85d2e1ad3902ae3db92"
+    },
+    "onnx/sushrota_sanskrit_ctc_int8.onnx": {
+      "size_bytes": 187484189,
+      "sha256": "6a52c782ecbc3cfc389eac2832d069677c587b6693c2ca4e68ea7ad7d59f3e64"
+    },
+    "onnx/swanada_bn_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "3c1000ce2f3aa5488b95ce0920ba129606a3da289a057e9aa9f94ddf9a91324f"
+    },
+    "onnx/swanada_en_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "b772a856ce225acb078666712e3428ca852f67682da13950c99e0d851ae4a5f2"
+    },
+    "onnx/swanada_gu_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "a3dedddfe61aa0c44034ecca821460117c47e36c2d06d7b40c048de891464d31"
+    },
+    "onnx/swanada_hi_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "33ce23dbb0bb670e9da763636df292b12e08c30cf0368248bf59130840c6d7fb"
+    },
+    "onnx/swanada_kn_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "5920ea7d69cba09d8cd15b9becae60cd738e40495023a232e776209a37fa698a"
+    },
+    "onnx/swanada_ml_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "e9947b7a6707f52ac974962d6c84439ca1793b47e0e4beb2fabb2359bff21ce2"
+    },
+    "onnx/swanada_mr_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "71b4271822c2e479ebb463742c079e6d7d9e09ba2f11f5610e748384a637d28a"
+    },
+    "onnx/swanada_or_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "5638cbd34625e05eeace4e256e5ca571357557483c4d2b00305f9ee9ce5a46ce"
+    },
+    "onnx/swanada_pa_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "b1e8faa41401abe5f943b62a55c57830c5e971cbcb0cb733c6a0c60e8b2d3648"
+    },
+    "onnx/swanada_sa_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "fd4cb9c64936648c79b4754561f6c0f4985d4521566d3a70329ed635ec38ffb2"
+    },
+    "onnx/swanada_ta_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "aeb4d73f3986fa87a778f803febba9dd08ec722f83b4d89cd8a1a22deeaeeef8"
+    },
+    "onnx/swanada_te_ctc_int8.onnx": {
+      "size_bytes": 187484185,
+      "sha256": "eb25d2997e0d784d6afc6762875409ae8a9978f55d53cfced7c90c519251bcf6"
+    },
+    "preprocessor.onnx": {
+      "size_bytes": 152338,
+      "sha256": "aab44917d3d894b2cfa84cffb8ac7ebe04c51540b3f3d565e6a7dc6e2630f859"
+    },
+    "vocabularies/bn_vocab.json": {
+      "size_bytes": 3098,
+      "sha256": "2c7f203a8e20815e65934402a71af8907cdc14c439207227592a83cf28e76d51"
+    },
+    "vocabularies/en_vocab.json": {
+      "size_bytes": 2850,
+      "sha256": "bd3eaf027cf827c931554f096ea83c791ecbf71355458eb24314894547e38407"
+    },
+    "vocabularies/gu_vocab.json": {
+      "size_bytes": 3113,
+      "sha256": "ac24eb75f7902e8264ff34e85add9984d90ebd1b8bcdec490f2afbabc0e80c2d"
+    },
+    "vocabularies/hi_vocab.json": {
+      "size_bytes": 3071,
+      "sha256": "6b67c619367c566dba7498fd9a0be7b9bba8436ee2298e91b510b79f4b9f7a48"
+    },
+    "vocabularies/kn_vocab.json": {
+      "size_bytes": 3185,
+      "sha256": "268690c5e4d49c09c9a4e26bb9aaeb33aed3752e0728fc7760be659fd0e315f8"
+    },
+    "vocabularies/ml_vocab.json": {
+      "size_bytes": 3194,
+      "sha256": "560e518e3b42b6f5ff4d490a7ab3fd8bca46ddd843cf7c6cecf6e60a8c7cd637"
+    },
+    "vocabularies/mr_vocab.json": {
+      "size_bytes": 3092,
+      "sha256": "3311965fc7a432d4faeb5890d9e09038c0f7cfdbf26a964218f8f1e4a4ce8d07"
+    },
+    "vocabularies/or_vocab.json": {
+      "size_bytes": 3128,
+      "sha256": "5818f69e4ac6a3961847e79e29e956e88801d023a7863d755c09d250f2dbd6c3"
+    },
+    "vocabularies/pa_vocab.json": {
+      "size_bytes": 3185,
+      "sha256": "e0c2ab138d4798be33e1996d04d8c29db8e483169f4320f19714b7d62a7257c5"
+    },
+    "vocabularies/sa_vocab.json": {
+      "size_bytes": 2996,
+      "sha256": "be61d707852a6f8965f15a6cf160c00083e6bea03b6de8e474b9573fd7bb2719"
+    },
+    "vocabularies/sanskrit_vocab.json": {
+      "size_bytes": 2996,
+      "sha256": "be61d707852a6f8965f15a6cf160c00083e6bea03b6de8e474b9573fd7bb2719"
+    },
+    "vocabularies/ta_vocab.json": {
+      "size_bytes": 3413,
+      "sha256": "e8a46df29243a6c9e1d5976f6181f0217edf2b5fcf4323189f41d796fa143473"
+    },
+    "vocabularies/te_vocab.json": {
+      "size_bytes": 3077,
+      "sha256": "f1e555a0bf3ec44e35e5851a4ea4cc130393fee002f9da09099bc382951002e1"
+    }
+  }
+}
