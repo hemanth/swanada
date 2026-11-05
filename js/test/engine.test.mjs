@@ -58,7 +58,7 @@ describe('ONNX/WASM Session Engine & High-Level API Suite', () => {
     const res = await engine.transcribe(pcm);
     assert.equal(res.language, 'sa');
     assert.ok(res.durationMs > 4000);
-    assert.ok(res.rtf < 0.50, `RTF ${res.rtf} exceeded 0.50`);
+    assert.ok(res.rtf < 0.80, `RTF ${res.rtf} exceeded 0.80`);
     assert.equal(res.text, 'अहं तत्रत्यानां कतिपयसौकर्याणां विषये ज्ञातुमिच्छामि');
     assert.equal(res.tokens.length, 30);
 

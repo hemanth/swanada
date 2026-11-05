@@ -2367,7 +2367,7 @@ class StreamingAcousticEngine {
     this.engine = engine;
     this.decoder = new StreamingCTCDecoder(vocab);
     this.leftContextSamples = options?.leftContextSamples ?? 20480; // 1,280 ms
-    this.maxBufferSamples = options?.maxBufferSamples ?? 61440;      // 3,840 ms
+    this.maxBufferSamples = options?.maxBufferSamples ?? 40960; // 2,560 ms
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
   }
 
@@ -2543,12 +2543,12 @@ class StreamingAcousticEngine {
     this.isWindowSliding = false;
 
     const result                      = {
-      text: finalSt.text,
+      text: finalText,
       language: batchRes ? batchRes.language : '',
       durationMs,
       inferenceMs,
       rtf: durationMs > 0 ? inferenceMs / durationMs : 0,
-      tokens: finalSt.tokens,
+      tokens: finalTokens,
     };
 
     for (const cb of this.listeners.final) {

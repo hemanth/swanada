@@ -95,7 +95,7 @@ describe('Adversarial Streaming Latency, RTF & 60-Second Stress Suite (Feature 1
 
     const numChunks = 60; // 60 * 320ms = 19.2 seconds of speech
     const chunkSize = 5120;
-    const maxBuffer = 61440; // 3,840 ms
+    const maxBuffer = 40960; // 2,560 ms
 
     const latencies = [];
     const bufferSizes = [];
