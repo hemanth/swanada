@@ -79,7 +79,7 @@ async function main() {
       streamMode = true;
     } else if (a === '--iast') {
       iastMode = true;
-    } else if (!a.startsWith('-')) {
+    } else if (a === '-' || !a.startsWith('-')) {
       inputPath = a;
     } else {
       console.error(`Unknown option: ${a}`);
@@ -98,7 +98,15 @@ async function main() {
   let rawBuffer;
   if (inputPath === '-' || (!inputPath && !process.stdin.isTTY)) {
     try {
-      rawBuffer = fs.readFileSync(0); // fd 0 = stdin
+      const chunks = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk);
+      }
+      if (chunks.length === 0) {
+        console.error('Error: Empty standard input received.');
+        process.exit(1);
+      }
+      rawBuffer = Buffer.concat(chunks);
       if (!rawBuffer || rawBuffer.length === 0) {
         console.error('Error: Empty standard input received.');
         process.exit(1);
@@ -139,7 +147,35 @@ async function main() {
   try {
     const config = { language, numThreads: threads };
     if (modelDir) {
-      config.modelPath = path.resolve(modelDir);
+      const resolvedDir = path.resolve(modelDir);
+      if (fs.existsSync(resolvedDir) && fs.statSync(resolvedDir).isDirectory()) {
+        const modelNames = [`swanada_${language}_ctc_int8.onnx`];
+        if (language === 'sa') modelNames.push('sushrota_sanskrit_ctc_int8.onnx');
+        let foundModel = null;
+        for (const mn of modelNames) {
+          const c1 = path.join(resolvedDir, 'onnx', mn);
+          const c2 = path.join(resolvedDir, mn);
+          if (fs.existsSync(c1)) { foundModel = c1; break; }
+          if (fs.existsSync(c2)) { foundModel = c2; break; }
+        }
+        if (foundModel) {
+          config.modelPath = foundModel;
+        }
+        const vocabNames = [`${language}_vocab.json`];
+        if (language === 'sa') vocabNames.push('sanskrit_vocab.json');
+        let foundVocab = null;
+        for (const vn of vocabNames) {
+          const v1 = path.join(resolvedDir, 'vocabularies', vn);
+          const v2 = path.join(resolvedDir, vn);
+          if (fs.existsSync(v1)) { foundVocab = v1; break; }
+          if (fs.existsSync(v2)) { foundVocab = v2; break; }
+        }
+        if (foundVocab) {
+          config.vocabPath = foundVocab;
+        }
+      } else {
+        config.modelPath = resolvedDir;
+      }
     }
     transcriber = await Swanada.create(config);
   } catch (err) {

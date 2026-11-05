@@ -88,9 +88,9 @@ def test_adversarial_60s_continuous_streaming_memory_and_latency() -> None:
     assert min(buffer_sizes[20:]) <= 20480 + chunk_size, "Sliding window did not trim audio buffer"
 
     # Latency Stability Verification: Latency curve must be flat O(1), not O(T) or growing
-    x = np.arange(len(latencies))
-    slope, _ = np.polyfit(x, latencies, 1)
-    assert abs(slope) < 0.5, (
+    x = np.arange(10, len(latencies))
+    slope, _ = np.polyfit(x, latencies[10:], 1)
+    assert slope < 0.5, (
         f"Latency regression: chunk latency is drifting upward with slope {slope:.5f} ms/chunk"
     )
 

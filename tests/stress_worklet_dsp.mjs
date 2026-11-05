@@ -131,7 +131,7 @@ async function runTests() {
 
     // Run 1,000 quantums without buffer emission (pause chunk emission or inspect inner quantums)
     // To strictly test non-emitting quantums, feed 30 quantums (which accumulate without emitting chunk if chunkSamples=1600 at 48kHz, 1 chunk every ~38 quantums)
-    // Here we recycle immediately whenever a chunk emits to keep pool full
+    // Recycle buffer immediately whenever a chunk emits to keep pool full
     let totalQuanta = 1200;
     for (let i = 0; i < totalQuanta; i++) {
       sim.step(quantum);

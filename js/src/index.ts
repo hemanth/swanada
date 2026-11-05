@@ -8,8 +8,10 @@ import { resamplePcm, decodeAndResampleBrowser } from './audio/resample.ts';
 import { extractLogMelFeatures } from './audio/frontend.ts';
 import { AcousticEngine } from './models/engine.ts';
 import { StreamingAcousticEngine } from './models/streaming.ts';
+import type { StreamSessionOptions } from './models/streaming.ts';
 import { decodeCTC, CTCGreedyDecoder } from './decoder/ctc.ts';
 import { StreamingCTCDecoder } from './decoder/streaming.ts';
+import type { StreamingTranscript } from './decoder/streaming.ts';
 import { normalizeIndicText, dedupMarks, assembleText } from './decoder/normalizer.ts';
 import { transliterateIast } from './tokenizers/iast.ts';
 import { SwanadaAudioCapture } from './audio/audio-capture.ts';
@@ -22,6 +24,7 @@ import type {
 } from './models/types.ts';
 
 export type SwanadaConfig = SwanadaEngineConfig;
+export type { StreamSessionOptions };
 
 export interface SwanadaStream {
   push(chunk: Float32Array): Promise<StreamingTranscript | void>;
@@ -85,8 +88,8 @@ export class Swanada {
   /**
    * Creates a streaming audio transcription session.
    */
-  createStream(): SwanadaStream {
-    const streamSession = new StreamingAcousticEngine(this.engine, this.engine.getVocab());
+  createStream(options?: StreamSessionOptions): SwanadaStream {
+    const streamSession = new StreamingAcousticEngine(this.engine, this.engine.getVocab(), options);
     return {
       async push(chunk: Float32Array): Promise<StreamingTranscript | void> {
         return streamSession.push(chunk);

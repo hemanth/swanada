@@ -108,6 +108,24 @@ export class AcousticEngine {
 
     // Initialize session if model path provided or discover local default
     let effectiveModelPath = config.modelPath;
+    if (effectiveModelPath && typeof process !== 'undefined' && process.versions?.node) {
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const resolved = path.resolve(effectiveModelPath);
+        if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+          const lang = config.language || 'sa';
+          const modelNames = [`swanada_${lang}_ctc_int8.onnx`];
+          if (lang === 'sa') modelNames.push('sushrota_sanskrit_ctc_int8.onnx');
+          for (const mn of modelNames) {
+            const c1 = path.join(resolved, 'onnx', mn);
+            const c2 = path.join(resolved, mn);
+            if (fs.existsSync(c1)) { effectiveModelPath = c1; break; }
+            if (fs.existsSync(c2)) { effectiveModelPath = c2; break; }
+          }
+        }
+      } catch {}
+    }
     if (!effectiveModelPath && typeof process !== 'undefined' && process.versions?.node) {
       try {
         const fs = await import('node:fs');

@@ -68,7 +68,14 @@ const server = http.createServer((req, res) => {
   }
 
   const urlObj = new URL(req.url || '/', `http://localhost:${PORT}`);
-  let pathname = decodeURIComponent(urlObj.pathname);
+  let pathname;
+  try {
+    pathname = decodeURIComponent(urlObj.pathname);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bad Request: Malformed URI sequence');
+    return;
+  }
   if (pathname === '/' || pathname === '') {
     pathname = '/index.html';
   }
@@ -114,24 +121,29 @@ const server = http.createServer((req, res) => {
   if (rangeHeader) {
     const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
     if (match) {
-      let start = match[1] ? parseInt(match[1], 10) : 0;
-      let end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
-
-      if (isNaN(start)) {
-        start = stat.size - parseInt(match[2], 10);
+      let start;
+      let end;
+      if (match[1] === '') {
+        // Suffix range: bytes=-N
+        const suffix = parseInt(match[2], 10);
+        start = Math.max(0, stat.size - suffix);
         end = stat.size - 1;
-      }
-      if (isNaN(end) || end >= stat.size) {
-        end = stat.size - 1;
+      } else {
+        start = parseInt(match[1], 10);
+        end = match[2] !== '' ? parseInt(match[2], 10) : stat.size - 1;
       }
 
-      if (start > end || start >= stat.size) {
+      if (isNaN(start) || isNaN(end) || start > end || start >= stat.size) {
         res.writeHead(416, {
           'Content-Range': `bytes */${stat.size}`,
           'Content-Type': 'text/plain; charset=utf-8',
         });
         res.end('Requested Range Not Satisfiable');
         return;
+      }
+
+      if (end >= stat.size) {
+        end = stat.size - 1;
       }
 
       const contentLength = end - start + 1;

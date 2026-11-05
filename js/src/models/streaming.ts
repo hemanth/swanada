@@ -1,18 +1,19 @@
 /**
  * StreamingAcousticEngine & SwanadaStreamSession:
  * Manages streaming audio chunk accumulation, sliding context windows (1280ms left context,
- * 3840ms maximum buffer cap), prefix-locked CTC decoding, and event dispatching.
+ * 2560ms maximum buffer cap), prefix-locked CTC decoding, and event dispatching.
  */
 
 import { AcousticEngine } from './engine.ts';
 import { StreamingCTCDecoder } from '../decoder/streaming.ts';
 import type { StreamingTranscript } from '../decoder/streaming.ts';
 import type { TranscriptionResult } from './types.ts';
+import { normalizeIndicText } from '../decoder/normalizer.ts';
 
 export interface StreamSessionOptions {
   chunkSizeSamples?: number;     // e.g. 5120 samples = 320ms @ 16kHz
   leftContextSamples?: number;   // e.g. 20480 samples = 1280ms
-  maxBufferSamples?: number;     // e.g. 61440 samples = 3840ms
+  maxBufferSamples?: number;     // e.g. 40960 samples = 2560ms
   vadSilenceThreshold?: number;  // e.g. 0.005
 }
 
@@ -208,7 +209,7 @@ export class StreamingAcousticEngine {
       finalText = batchRes.text;
     } else {
       finalTokens = streamingTokens;
-      finalText = finalTokens.join('');
+      finalText = normalizeIndicText(finalTokens.join(''));
     }
 
     const inferenceMs = performance.now() - startInference;
@@ -222,12 +223,12 @@ export class StreamingAcousticEngine {
     this.isWindowSliding = false;
 
     const result: TranscriptionResult = {
-      text: finalSt.text || finalText,
+      text: finalSt.text,
       language: batchRes ? batchRes.language : '',
       durationMs,
       inferenceMs,
       rtf: durationMs > 0 ? inferenceMs / durationMs : 0,
-      tokens: finalTokens,
+      tokens: finalSt.tokens,
     };
 
     for (const cb of this.listeners.final) {

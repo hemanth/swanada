@@ -68,6 +68,7 @@ const engineSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'engine
 const streamingEngineSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'streaming.ts'), 'utf8'))
   .replace(/import .*? from '\.\/engine\.ts';/g, '')
   .replace(/import .*? from '\.\.\/decoder\/streaming\.ts';/g, '')
+  .replace(/import .*? from '\.\.\/decoder\/normalizer\.ts';/g, '')
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
 
