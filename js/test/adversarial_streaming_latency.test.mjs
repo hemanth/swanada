@@ -95,7 +95,7 @@ describe('Adversarial Streaming Latency, RTF & 60-Second Stress Suite (Feature 1
 
     const numChunks = 60; // 60 * 320ms = 19.2 seconds of speech
     const chunkSize = 5120;
-    const maxBuffer = 40960; // 2,560 ms
+    const maxBuffer = 32000; // 2,000 ms
 
     const latencies = [];
     const bufferSizes = [];
@@ -109,18 +109,20 @@ describe('Adversarial Streaming Latency, RTF & 60-Second Stress Suite (Feature 1
       latencies.push(performance.now() - t0);
 
       // Access stream internal audioBuffer length if observable
-      const bufLen = stream.audioBuffer ? stream.audioBuffer.length : 0;
+      const bufLen = stream.audioBuffer ? stream.audioBuffer.length : (stream.getBufferLength ? stream.getBufferLength() : 0);
       bufferSizes.push(bufLen);
     }
 
     // 1. Sliding window buffer boundedness check (O(1) memory bound)
     const maxObservedBuffer = Math.max(...bufferSizes);
-    if (maxObservedBuffer > 0) {
-      assert.ok(
-        maxObservedBuffer <= maxBuffer + chunkSize,
-        `Buffer unbounded: observed ${maxObservedBuffer} samples, cap is ${maxBuffer + chunkSize}`
-      );
-    }
+    assert.ok(
+      maxObservedBuffer > 0,
+      `Buffer size introspection must yield non-zero samples (observed ${maxObservedBuffer})`
+    );
+    assert.ok(
+      maxObservedBuffer <= maxBuffer + chunkSize,
+      `Buffer unbounded: observed ${maxObservedBuffer} samples, cap is ${maxBuffer + chunkSize}`
+    );
 
     // 2. Real-time Factor across the continuous streaming session
     const totalComputeMs = latencies.reduce((a, b) => a + b, 0);

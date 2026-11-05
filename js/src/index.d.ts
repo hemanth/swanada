@@ -61,6 +61,8 @@ export interface SwanadaStream {
   push(chunk: Float32Array): Promise<StreamingTranscript | void>;
   finish(): Promise<TranscriptionResult>;
   on(event: 'token' | 'partial' | 'error' | 'final', callback: Function): void;
+  readonly audioBuffer?: Float32Array;
+  getBufferLength?(): number;
 }
 
 export declare class Swanada {
@@ -154,6 +156,8 @@ export declare class StreamingCTCDecoder {
 
 export declare class StreamingAcousticEngine {
   constructor(engine: any, vocab: string[] | Record<number, string>, options?: any);
+  readonly audioBuffer: Float32Array;
+  readonly bufferLength: number;
   push(chunk: Float32Array): Promise<StreamingTranscript | void>;
   finish(): Promise<TranscriptionResult>;
   on(event: 'partial' | 'final' | 'token' | 'error', callback: Function): this;

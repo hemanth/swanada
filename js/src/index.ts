@@ -30,6 +30,8 @@ export interface SwanadaStream {
   push(chunk: Float32Array): Promise<StreamingTranscript | void>;
   finish(): Promise<TranscriptionResult>;
   on(event: 'token' | 'partial' | 'error' | 'final', callback: Function): void;
+  readonly audioBuffer?: Float32Array;
+  getBufferLength?(): number;
 }
 
 export class Swanada {
@@ -91,6 +93,12 @@ export class Swanada {
   createStream(options?: StreamSessionOptions): SwanadaStream {
     const streamSession = new StreamingAcousticEngine(this.engine, this.engine.getVocab(), options);
     return {
+      get audioBuffer(): Float32Array {
+        return streamSession.audioBuffer;
+      },
+      getBufferLength(): number {
+        return streamSession.audioBuffer.length;
+      },
       async push(chunk: Float32Array): Promise<StreamingTranscript | void> {
         return streamSession.push(chunk);
       },

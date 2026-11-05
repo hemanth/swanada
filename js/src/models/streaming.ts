@@ -1,7 +1,7 @@
 /**
  * StreamingAcousticEngine & SwanadaStreamSession:
- * Manages streaming audio chunk accumulation, sliding context windows (1280ms left context,
- * 2560ms maximum buffer cap), prefix-locked CTC decoding, and event dispatching.
+ * Manages streaming audio chunk accumulation, sliding context windows (1000ms left context,
+ * 2000ms maximum buffer cap), prefix-locked CTC decoding, and event dispatching.
  */
 
 import { AcousticEngine } from './engine.ts';
@@ -12,8 +12,8 @@ import { normalizeIndicText } from '../decoder/normalizer.ts';
 
 export interface StreamSessionOptions {
   chunkSizeSamples?: number;     // e.g. 5120 samples = 320ms @ 16kHz
-  leftContextSamples?: number;   // e.g. 20480 samples = 1280ms
-  maxBufferSamples?: number;     // e.g. 40960 samples = 2560ms
+  leftContextSamples?: number;   // e.g. 16000 samples = 1000ms
+  maxBufferSamples?: number;     // e.g. 32000 samples = 2000ms
   vadSilenceThreshold?: number;  // e.g. 0.005
 }
 
@@ -21,7 +21,6 @@ export class StreamingAcousticEngine {
   private engine: AcousticEngine;
   private decoder: StreamingCTCDecoder;
   private audioBuffer: Float32Array = new Float32Array(0);
-  private allChunks: Float32Array[] = [];
   private leftContextSamples: number;
   private maxBufferSamples: number;
   private vadSilenceThreshold: number;
@@ -31,6 +30,18 @@ export class StreamingAcousticEngine {
   private baseCommittedTokens: string[] = [];
   private isFinished: boolean = false;
   private isWindowSliding: boolean = false;
+
+  get audioBuffer(): Float32Array {
+    return this.audioBuffer;
+  }
+
+  get bufferLength(): number {
+    return this.audioBuffer.length;
+  }
+
+  getAudioBuffer(): Float32Array {
+    return this.audioBuffer;
+  }
 
   private listeners: {
     partial: ((res: StreamingTranscript) => void)[];
@@ -46,8 +57,8 @@ export class StreamingAcousticEngine {
   ) {
     this.engine = engine;
     this.decoder = new StreamingCTCDecoder(vocab);
-    this.leftContextSamples = options?.leftContextSamples ?? 20480; // 1,280 ms
-    this.maxBufferSamples = options?.maxBufferSamples ?? 40960; // 2,560 ms
+    this.leftContextSamples = options?.leftContextSamples ?? 16000; // 1,000 ms
+    this.maxBufferSamples = options?.maxBufferSamples ?? 32000; // 2,000 ms
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
   }
 
@@ -75,7 +86,6 @@ export class StreamingAcousticEngine {
   async push(chunk: Float32Array): Promise<StreamingTranscript | void> {
     if (this.isFinished || chunk.length === 0) return;
     this.totalAudioSamples += chunk.length;
-    this.allChunks.push(new Float32Array(chunk));
 
     // Non-destructive silence check & pause utterance segmentation
     let sumSq = 0;
@@ -166,20 +176,7 @@ export class StreamingAcousticEngine {
     const durationMs = (this.totalAudioSamples / 16000) * 1000;
     const startInference = performance.now();
 
-    // Reconstruct full audio if available
-    let fullAudio: Float32Array;
-    if (this.allChunks.length > 0) {
-      fullAudio = new Float32Array(this.totalAudioSamples);
-      let offset = 0;
-      for (const c of this.allChunks) {
-        fullAudio.set(c, offset);
-        offset += c.length;
-      }
-    } else {
-      fullAudio = this.audioBuffer;
-    }
-
-    // Transcribe tail if pending (< 1600 samples)
+    // Process pending audio tail if needed (< 1600 samples)
     if (this.audioBuffer.length >= 400 && (this.audioBuffer.length < 1600 || !(this.decoder as any).lastHypTokens?.length)) {
       const tailRes = await this.engine.transcribe(this.audioBuffer);
       let globalTokens: string[];
@@ -197,38 +194,22 @@ export class StreamingAcousticEngine {
       ? [...(this.decoder as any).lastHypTokens]
       : this.decoder.getCommittedTokens();
 
-    let batchRes: TranscriptionResult | null = null;
-    if (fullAudio.length >= 400) {
-      batchRes = await this.engine.transcribe(fullAudio);
-    }
-
-    let finalTokens: string[];
-    let finalText: string;
-    if (batchRes && batchRes.tokens.length >= streamingTokens.length - 2) {
-      finalTokens = batchRes.tokens;
-      finalText = batchRes.text;
-    } else {
-      finalTokens = streamingTokens;
-      finalText = normalizeIndicText(finalTokens.join(''));
-    }
-
     const inferenceMs = performance.now() - startInference;
-    const finalSt = this.decoder.update(finalTokens, true, durationMs, inferenceMs);
+    const finalSt = this.decoder.update(streamingTokens, true, durationMs, inferenceMs);
 
     this.audioBuffer = new Float32Array(0);
-    this.allChunks = [];
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];
     this.isWindowSliding = false;
 
     const result: TranscriptionResult = {
-      text: finalText,
-      language: batchRes ? batchRes.language : '',
+      text: finalSt.text,
+      language: (this.engine as any).config?.language || 'sa',
       durationMs,
       inferenceMs,
       rtf: durationMs > 0 ? inferenceMs / durationMs : 0,
-      tokens: finalTokens,
+      tokens: finalSt.tokens,
     };
 
     for (const cb of this.listeners.final) {
@@ -311,7 +292,6 @@ export class StreamingAcousticEngine {
 
   reset(): void {
     this.audioBuffer = new Float32Array(0);
-    this.allChunks = [];
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];

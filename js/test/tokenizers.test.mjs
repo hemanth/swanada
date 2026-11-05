@@ -103,6 +103,7 @@ describe('Multilingual Registry and Sanskrit IAST Suite', () => {
     assert.strictEqual(res.language, 'sa');
     assert.strictEqual(res.durationMs, 1000);
     assert.ok(res.inferenceMs < 5.0, `Inference should be under 5ms, was ${res.inferenceMs}`);
+    await engine.release();
   });
 
   it('throws descriptive error if acousticSession is not initialized on non-silent audio', async () => {
