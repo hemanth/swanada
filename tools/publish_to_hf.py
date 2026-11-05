@@ -48,12 +48,33 @@ def sha256_file(path: Path) -> str:
 
 
 def resolve_auth_token(cli_token: Optional[str] = None) -> Optional[str]:
-    """Resolve Hugging Face authentication token from CLI, environment, or cache."""
+    """Resolve Hugging Face authentication token from CLI, environment, git credential helper, or cache."""
     if cli_token:
         return cli_token
     env_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     if env_token:
         return env_token.strip()
+    try:
+        import subprocess
+        for prompt in [
+            "protocol=https\nhost=huggingface.co\nusername=gnumanth\n\n",
+            "protocol=https\nhost=huggingface.co\n\n",
+        ]:
+            try:
+                res = subprocess.check_output(
+                    ["git", "credential", "fill"],
+                    input=prompt,
+                    text=True,
+                )
+                for line in res.splitlines():
+                    if line.startswith("password="):
+                        tok = line.split("=", 1)[1].strip()
+                        if tok:
+                            return tok
+            except Exception:
+                continue
+    except Exception:
+        pass
     return get_token()
 
 
@@ -254,6 +275,7 @@ def build_manifest(models_dir: Path) -> Dict[str, Any]:
         models_dir / "config.json",
     ]
     scan_targets.extend((models_dir / "onnx").glob("*.onnx") if (models_dir / "onnx").exists() else [])
+    scan_targets.extend((models_dir / "onnx" / "heads").glob("*") if (models_dir / "onnx" / "heads").exists() else [])
     scan_targets.extend((models_dir / "vocabularies").glob("*.json") if (models_dir / "vocabularies").exists() else [])
 
     for p in sorted(scan_targets):
@@ -331,7 +353,7 @@ def verify_remote_deployment(repo_id: str, token: Optional[str] = None) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish Swanada Speech-to-Text models to Hugging Face Hub")
-    parser.add_argument("--repo-id", default="hemanth/swanada-conformer-ctc-indic", help="Target Hugging Face repository ID")
+    parser.add_argument("--repo-id", default="gnumanth/swanada", help="Target Hugging Face repository ID")
     parser.add_argument("--models-dir", type=Path, default=Path("models"), help="Path to models directory")
     parser.add_argument("--bench-json", type=Path, default=Path("bench/results.json"), help="Path to benchmark results.json")
     parser.add_argument("--commit-message", default="Release Swanada v1.0.0: 16 kHz Multilingual Indic Conformer-CTC INT8 Models", help="Commit message")

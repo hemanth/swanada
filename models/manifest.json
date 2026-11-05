@@ -3,8 +3,104 @@
   "version": "1.0.0",
   "files": {
     "config.json": {
-      "size_bytes": 2686,
-      "sha256": "f33915e73ad306fa24ddb444c2533f0cccf6c2f97bdbd85d2e1ad3902ae3db92"
+      "size_bytes": 2666,
+      "sha256": "435a8e954e82daf2f0213079a43bc2f16fcfb1d7dd21d54c90861e732652ea74"
+    },
+    "onnx/heads/head_bn.onnx": {
+      "size_bytes": 743,
+      "sha256": "b800062bf34b7416563baed2164fd9fe84289d6e5280c93a5d87773b584d1886"
+    },
+    "onnx/heads/head_bn.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "c58321e5a2e657eff44e657758868344d479d8be67b566732ac9387406f997e6"
+    },
+    "onnx/heads/head_en.onnx": {
+      "size_bytes": 730,
+      "sha256": "8c93fa5868a2c36d3b4ad1c99b99312b2196f7af41e6a1cb4b8c9ff9b6389fa9"
+    },
+    "onnx/heads/head_en.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "7c77450c2a530c96155a0c000e44b5cb39fdcbd3067a91eab2863d48a56b0335"
+    },
+    "onnx/heads/head_gu.onnx": {
+      "size_bytes": 743,
+      "sha256": "601bdee4a9c42aef809c4dfe62f7677fee1ba63c461f66badfc100cb22d39225"
+    },
+    "onnx/heads/head_gu.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "fb89fde4ebec82245f6ee08e364bb4665f3f28aa0e20a5b0cfd3afab66a9b3fe"
+    },
+    "onnx/heads/head_hi.onnx": {
+      "size_bytes": 743,
+      "sha256": "d4964b2b1153d236ecfe7c2b0781c8847fdb0e4c4e46c24c297b4020d249def5"
+    },
+    "onnx/heads/head_hi.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "dddc9657bc9e24bcfdb09a04bf9fb2a7d60b726ac2d371087a3f53a3d579bd9d"
+    },
+    "onnx/heads/head_kn.onnx": {
+      "size_bytes": 743,
+      "sha256": "58a3f4e653589d3008f7aa5039faaaaa2b6a584f0ba8b73a97594b8a6dfdc7e0"
+    },
+    "onnx/heads/head_kn.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "1e5b5898cd5f5057d5f6df68b55afbc68839cc15ae6d9edb51c8a2f2329beeb1"
+    },
+    "onnx/heads/head_ml.onnx": {
+      "size_bytes": 743,
+      "sha256": "fcfb3f62a0c39f2441b619dc0ea63ff81ed7df5bbcbf685128ecd142301f5cc6"
+    },
+    "onnx/heads/head_ml.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "5d67c58c433921496dc60674f39bdbb52235b1b18906950042682a593462843a"
+    },
+    "onnx/heads/head_mr.onnx": {
+      "size_bytes": 743,
+      "sha256": "fbc510121c5c6e0186336c9f608736f3557a8132726a93d58988935cc0db8d54"
+    },
+    "onnx/heads/head_mr.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "dfd8d9ef1ad22e68dbe76a2a7cb510831485aef331f4a0f9bf9a316df9a13de2"
+    },
+    "onnx/heads/head_or.onnx": {
+      "size_bytes": 743,
+      "sha256": "3cd6d5cdfe5d84abcf0d4674ee606b94c066f30413674c8fd1a224091b2bba9b"
+    },
+    "onnx/heads/head_or.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "011ec8b860519434e60e2846efbfbcd3f23ba21b1fc4dd6c8d98855142943c72"
+    },
+    "onnx/heads/head_pa.onnx": {
+      "size_bytes": 743,
+      "sha256": "84d2a84544bca2947b886d7f724a4be58d1a0f835f0ecfe65a443e568d130baa"
+    },
+    "onnx/heads/head_pa.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "cdbf671ec2302b1945421561eb2bc9a2c96821ce57c7b4bb0d060aba10f302d0"
+    },
+    "onnx/heads/head_sa.onnx": {
+      "size_bytes": 743,
+      "sha256": "9e7a7fe8bf6d0a5aba948a3cc1c744a68659041097d64992133902ad7db1d282"
+    },
+    "onnx/heads/head_sa.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "506647f2e37c1dd68e70172f1486f151067c0f18e686686c244b54cbe6acc74d"
+    },
+    "onnx/heads/head_ta.onnx": {
+      "size_bytes": 743,
+      "sha256": "0828767b4f6f82c1d6319c7cd17586e3ed6b6e3b93c7f1072ff50ceba68d94dc"
+    },
+    "onnx/heads/head_ta.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "dd0a35a383b677675cf46ff4e090a0ae2ba95b2f1a0b52ccace8d76084d630e7"
+    },
+    "onnx/heads/head_te.onnx": {
+      "size_bytes": 743,
+      "sha256": "63e96028b34ab9ef9f67c4164104712d809020ce9ba3517534b7318b52a6dc6a"
+    },
+    "onnx/heads/head_te.onnx.data": {
+      "size_bytes": 527364,
+      "sha256": "f796217ff0fdc18984cabb196f44b631af9c1aad06f6282370cd887df1c59193"
     },
     "onnx/sushrota_sanskrit_ctc_int8.onnx": {
       "size_bytes": 187484189,
@@ -16,7 +112,7 @@
     },
     "onnx/swanada_en_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "3c60468015ce0923790c8c0da8506d40a52bad995b36d22ca4dbfc53aeb571b1"
+      "sha256": "5dd2d081bdd2c18301c05b9f7928523847be9451fb9d3dcb046d10b3e82b3140"
     },
     "onnx/swanada_gu_ctc_int8.onnx": {
       "size_bytes": 187484185,

@@ -1,5 +1,5 @@
 {
-  "name": "swanada-conformer-ctc-indic",
+  "name": "swanada",
   "version": "1.0.0",
   "pipeline_tag": "automatic-speech-recognition",
   "sample_rate": 16000,

@@ -30,6 +30,7 @@ models/onnx/*.onnx
 *.mp3
 *.flac
 *.ogg
+*.pt
 bench/*_results*.json
 bench/results.json
 temp_*

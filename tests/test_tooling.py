@@ -38,7 +38,7 @@ def test_hf_manifest_builder() -> None:
 
 def test_hf_model_card_generator() -> None:
     bench_file = REPO_ROOT / "bench" / "results.json"
-    card = generate_model_card(MODELS_DIR, bench_file, "hemanth/swanada-conformer-ctc-indic")
+    card = generate_model_card(MODELS_DIR, bench_file, "gnumanth/swanada")
     assert "pipeline_tag: automatic-speech-recognition" in card
     assert "library_name: onnx" in card
     for code, name, script, _, _ in LANGUAGE_REGISTRY:

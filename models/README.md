@@ -53,7 +53,7 @@ Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is 
 
 - **Interactive In-Browser Tactile Playground**: [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
 - **GitHub Repository & Multi-Runtime SDKs**: [https://github.com/hemanth/swanada](https://github.com/hemanth/swanada)
-- **Hugging Face Model Repository**: [https://huggingface.co/hemanth/swanada-conformer-ctc-indic](https://huggingface.co/hemanth/swanada-conformer-ctc-indic)
+- **Hugging Face Model Repository**: [https://huggingface.co/gnumanth/swanada](https://huggingface.co/gnumanth/swanada)
 
 ## Architecture & Offline Inference Pipeline
 

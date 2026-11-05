@@ -99,7 +99,7 @@ cat stream.wav | swanada -l ta --stream
 ## Model Weights & Hugging Face Hub
 
 Quantized INT8 model weights are hosted on Hugging Face Hub:
-- Repository: [https://huggingface.co/hemanth/swanada-conformer-ctc-indic](https://huggingface.co/hemanth/swanada-conformer-ctc-indic)
+- Repository: [https://huggingface.co/gnumanth/swanada](https://huggingface.co/gnumanth/swanada)
 
 ## License
 
