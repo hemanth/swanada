@@ -234,21 +234,76 @@ def slice_models(
     if modular:
         heads_dir.mkdir(parents=True, exist_ok=True)
 
+def fetch_openvoiceos_indic_head(lang: str) -> tuple[np.ndarray, np.ndarray]:
+    """Fetches trained IndicConformer CTC projection weights from OpenVoiceOS ONNX release."""
+    import urllib.request
+    url = f"https://huggingface.co/OpenVoiceOS/ai4bharat-indicconformer-{lang}-onnx/resolve/main/model.onnx_data"
+    req_w = urllib.request.Request(url, headers={"Range": "bytes=63948800-64475135", "User-Agent": "Mozilla/5.0"})
+    raw_w = urllib.request.urlopen(req_w, timeout=30).read()
+    w = np.frombuffer(raw_w, dtype=np.float32).reshape(257, 512, 1)
+
+    req_b = urllib.request.Request(url, headers={"Range": "bytes=64475136-64476163", "User-Agent": "Mozilla/5.0"})
+    raw_b = urllib.request.urlopen(req_b, timeout=30).read()
+    b = np.frombuffer(raw_b, dtype=np.float32)
+
+    # Permute blank from row 256 to row 0 for Swanada CTC alignment
+    w_perm = np.concatenate([w[256:], w[:256]], axis=0)
+    b_perm = np.concatenate([b[256:], b[:256]], axis=0)
+    return w_perm.astype(np.float32), b_perm.astype(np.float32)
+
+
+def get_calibrated_en_head(models_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Loads calibrated English CTC head weights from head_en.onnx or runs calibration."""
+    head_en_path = models_dir / "heads" / "head_en.onnx"
+    if head_en_path.exists():
+        head_m = onnx.load(str(head_en_path))
+        w = None
+        b = None
+        for init in head_m.graph.initializer:
+            if "weight" in init.name:
+                w = numpy_helper.to_array(init)
+            elif "bias" in init.name:
+                b = numpy_helper.to_array(init)
+        if w is not None and b is not None and np.linalg.norm(w) > 20.0:
+            if w.ndim == 2:
+                w = w[:, :, None]
+            return w.astype(np.float32), b.astype(np.float32)
+
+    train_script = Path(__file__).resolve().parent / "train_en_head.py"
+    import subprocess
+    subprocess.run([sys.executable, str(train_script)], check=True)
+    return get_calibrated_en_head(models_dir)
+
+
+def slice_models(
+    ckpt_dict: dict,
+    base_onnx_path: Path,
+    output_dir: Path,
+    modular: bool = True,
+) -> None:
+    """Slices CTC projection weights and exports per-language ONNX models."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    orig_w = ckpt_dict["ctc_decoder.decoder_layers.0.weight"].numpy()  # [5633, 512, 1]
+    orig_b = ckpt_dict["ctc_decoder.decoder_layers.0.bias"].numpy()    # [5633]
+
+    if not base_onnx_path.exists():
+        raise FileNotFoundError(f"Base quantized ONNX model not found at {base_onnx_path}")
+
+    base_model = onnx.load(str(base_onnx_path))
+
+    heads_dir = output_dir / "heads"
+    if modular:
+        heads_dir.mkdir(parents=True, exist_ok=True)
+
     for lang in SWANADA_LANGUAGES:
         if lang == "en":
-            # Deterministic Xavier uniform initialization with blank bound to col 5632
-            rng = np.random.RandomState(42)
-            bound = np.sqrt(6.0 / (512 + 257))
-            w_sub = rng.uniform(-bound, bound, size=(256, 512, 1)).astype(np.float32)
-            b_sub = np.zeros(256, dtype=np.float32)
-
-            w_slice = np.concatenate([orig_w[[BLANK_COL_INDEX]], w_sub], axis=0)
-            b_slice = np.concatenate([orig_b[[BLANK_COL_INDEX]], b_sub], axis=0)
-        else:
-            idx = TARGET_INDIC_LANGS[lang]
-            cols = [BLANK_COL_INDEX] + list(range(idx * 256, (idx + 1) * 256))
+            w_slice, b_slice = get_calibrated_en_head(output_dir)
+        elif lang == "sa":
+            cols = [BLANK_COL_INDEX] + list(range(16 * 256, 17 * 256))
             w_slice = orig_w[cols].astype(np.float32)
             b_slice = orig_b[cols].astype(np.float32)
+        else:
+            w_slice, b_slice = fetch_openvoiceos_indic_head(lang)
 
         # 1. Monolithic sliced model: replace ctc.weight & ctc.bias in base ONNX model
         lang_model = copy.deepcopy(base_model)
@@ -268,7 +323,7 @@ def slice_models(
             head_path = heads_dir / f"head_{lang}.onnx"
             build_modular_head_onnx(w_slice, b_slice, head_path)
 
-        print(f"Exported model for '{lang}': {monolithic_path.name}")
+        print(f"Exported model for '{lang}': {monolithic_path.name} (w norm={np.linalg.norm(w_slice):.2f})")
 
     # Mirror swanada_sa_ctc_int8.onnx to sushrota_sanskrit_ctc_int8.onnx if not present
     sushrota_target = output_dir / "sushrota_sanskrit_ctc_int8.onnx"

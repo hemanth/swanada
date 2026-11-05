@@ -12,39 +12,39 @@
     },
     "onnx/swanada_bn_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "3c1000ce2f3aa5488b95ce0920ba129606a3da289a057e9aa9f94ddf9a91324f"
+      "sha256": "dea49ba83afddca8f198ccc1cbe6d759b101b64e8aa50a61b5feec92345992d4"
     },
     "onnx/swanada_en_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "b772a856ce225acb078666712e3428ca852f67682da13950c99e0d851ae4a5f2"
+      "sha256": "3c60468015ce0923790c8c0da8506d40a52bad995b36d22ca4dbfc53aeb571b1"
     },
     "onnx/swanada_gu_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "a3dedddfe61aa0c44034ecca821460117c47e36c2d06d7b40c048de891464d31"
+      "sha256": "4a528f08b1fefe39efc1d9de1149e5f54d02d241b8b52cd2fa07c4e44d8d8313"
     },
     "onnx/swanada_hi_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "33ce23dbb0bb670e9da763636df292b12e08c30cf0368248bf59130840c6d7fb"
+      "sha256": "ebe4014b3181c5c914451139b3a6476070c010f2af683eecf05e12466c8715cf"
     },
     "onnx/swanada_kn_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "5920ea7d69cba09d8cd15b9becae60cd738e40495023a232e776209a37fa698a"
+      "sha256": "554e0c2d130fbd4565d473910e5ec3676b7f393ae500bfeefdfef69c3adf0e24"
     },
     "onnx/swanada_ml_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "e9947b7a6707f52ac974962d6c84439ca1793b47e0e4beb2fabb2359bff21ce2"
+      "sha256": "b86b66fbe1e0675e2bf5bb3b5e6f807d25c3a9e78ed6dc39c4d57fcda2dc33ca"
     },
     "onnx/swanada_mr_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "71b4271822c2e479ebb463742c079e6d7d9e09ba2f11f5610e748384a637d28a"
+      "sha256": "ba9709888b5af11656b1f1d5a946dc6187b0d65e52228ad4c5b01f809a3e8fa5"
     },
     "onnx/swanada_or_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "5638cbd34625e05eeace4e256e5ca571357557483c4d2b00305f9ee9ce5a46ce"
+      "sha256": "77d764cbd3aa48a416fa9e039a16a9adaba0720af7cb25c94ec68621d20c388a"
     },
     "onnx/swanada_pa_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "b1e8faa41401abe5f943b62a55c57830c5e971cbcb0cb733c6a0c60e8b2d3648"
+      "sha256": "229180f26f9b6784d1351a00f957bf7829c9ba060565231841d39e8e0ccfa8a5"
     },
     "onnx/swanada_sa_ctc_int8.onnx": {
       "size_bytes": 187484185,
@@ -52,11 +52,11 @@
     },
     "onnx/swanada_ta_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "aeb4d73f3986fa87a778f803febba9dd08ec722f83b4d89cd8a1a22deeaeeef8"
+      "sha256": "77b1f009ea266b38370787b25329d1bc57fc7d4af8994ca1bb59c91f63a6acc0"
     },
     "onnx/swanada_te_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "eb25d2997e0d784d6afc6762875409ae8a9978f55d53cfced7c90c519251bcf6"
+      "sha256": "f840d27d8c75b8804ec72b594ce6f393bd113c7e03268b27eb6bbf3a544204bf"
     },
     "preprocessor.onnx": {
       "size_bytes": 152338,

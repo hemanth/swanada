@@ -787,27 +787,18 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     // Preset evaluation utterances
     const PRESETS = {
-      sa: [
-        { title: "Gita 1.1", text: "धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः" },
-        { title: "Katha Upanishad", text: "उत्तिष्ठत जाग्रत प्राप्य वरान्निबोधत" },
-      ],
-      en: [
-        { title: "Technical", text: "The speech to text engine runs locally with zero external network requests." },
-      ],
-      hi: [
-        { title: "Conversational", text: "नमस्ते क्या आप मुझे बता सकते हैं कि निकटतम रेलवे स्टेशन कहाँ है" },
-      ],
-      kn: [
-        { title: "Classical Kannada", text: "ಕನ್ನಡ ನಾಡು ನುಡಿ ಸಂಸ್ಕೃತಿ ಅತ್ಯಂತ ಪ್ರಾಚೀನ ಹಾಗೂ ಶ್ರೀಮಂತವಾದದ್ದು" },
-      ],
-      mr: [{ title: "Marathi", text: "सर्वांना नमस्कार आज आपण एका महत्त्वाच्या विषयावर चर्चा करणार आहोत" }],
-      bn: [{ title: "Bengali", text: "আমাদের দেশে অনেক সুন্দর নদী এবং পাহাড় আছে" }],
-      ta: [{ title: "Tamil", text: "யாதும் ஊரே யாவரும் கேளிர் தீதும் நன்றும் பிறர்தர வாரா" }],
-      te: [{ title: "Telugu", text: "తెలుగు భాష ప్రాచీనమైనది మరియు ఎంతో మాధుర్యమైనది" }],
-      ml: [{ title: "Malayalam", text: "കേരളം പ്രകൃതിഭംഗി നിറഞ്ഞ മനോഹരമായ ഒരു നാടാണ്" }],
-      gu: [{ title: "Gujarati", text: "ગુજરાત એક સમૃદ્ધ અને સુંદર પ્રદેશ છે" }],
-      pa: [{ title: "Punjabi", text: "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ ਜੀ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ" }],
-      or: [{ title: "Odia", text: "ଓଡ଼ିଶାର ସଂସ୍କୃତି ଓ ଐତିହ୍ୟ ଅତ୍ୟନ୍ତ ଗୌରବମୟ" }]
+      sa: [{ title: "Subhashita", text: "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति" }],
+      hi: [{ title: "Conversational", text: "अपने हेडमास्टर साहब ही को देखो" }],
+      kn: [{ title: "Conversational", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ" }],
+      ta: [{ title: "Conversational", text: "அதோ கலங்கரை விளக்கமும் தெரிகிறது" }],
+      te: [{ title: "Conversational", text: "నాకు కూడా ప్రయాణం చేయటం, చదవటం ఇష్టం" }],
+      ml: [{ title: "Conversational", text: "ഉമ്മായ്ക്കതിൽ പരിപൂർണവിശ്വാസമുണ്ട്" }],
+      en: [{ title: "Literature", text: "The king was troubled with jealousy." }],
+      mr: [{ title: "Conversational", text: "हो. आणखीही काही आहे." }],
+      bn: [{ title: "Conversational", text: "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে।" }],
+      gu: [{ title: "Conversational", text: "જો એવું હોય તો હું બસથી જઈશ." }],
+      pa: [{ title: "Train Travel", text: "ਉਦਯੋਗਨਗਰੀ ਐਕਸਪ੍ਰੈਸ" }],
+      or: [{ title: "Instruction", text: "ସନ୍ଧ୍ୟାଙ୍କୁ ଇମେଲ କରି ଏହା ଲେଖ" }],
     };
 
     let presetPlaybackNode = null;
@@ -864,23 +855,41 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
         }
         if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
+          try {
+            await Promise.race([
+              audioCtx.resume(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('AudioContext resume timeout')), 500))
+            ]);
+          } catch (_) {
+            // Non-gesture automated environment: resume suspended gracefully
+          }
         }
 
-        const audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+        let audioBuffer;
+        try {
+          audioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
+        } catch (_) {
+          const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 16000, 16000);
+          audioBuffer = await offlineCtx.decodeAudioData(arrayBuf.slice(0));
+        }
+
         let pcm = audioBuffer.getChannelData(0);
         if (audioBuffer.sampleRate !== 16000) {
           pcm = resamplePcm(pcm, audioBuffer.sampleRate, 16000);
         }
 
-        // Play audio out loud through speakers via Web Audio API
-        const sourceNode = audioCtx.createBufferSource();
-        const playBuf = audioCtx.createBuffer(1, pcm.length, 16000);
-        playBuf.getChannelData(0).set(pcm);
-        sourceNode.buffer = playBuf;
-        sourceNode.connect(audioCtx.destination);
-        sourceNode.start();
-        presetPlaybackNode = sourceNode;
+        // Play audio out loud through speakers via Web Audio API if context is active
+        try {
+          if (audioCtx && audioCtx.state === 'running') {
+            const sourceNode = audioCtx.createBufferSource();
+            const playBuf = audioCtx.createBuffer(1, pcm.length, 16000);
+            playBuf.getChannelData(0).set(pcm);
+            sourceNode.buffer = playBuf;
+            sourceNode.connect(audioCtx.destination);
+            sourceNode.start();
+            presetPlaybackNode = sourceNode;
+          }
+        } catch (_) {}
 
         // Reset worker stream
         workerClient.startStream();
@@ -905,8 +914,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           // Update oscilloscope so visualizer bounces live
           oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
 
-          const isFinal = offset >= total;
-          workerClient.pushAudio(chunk, isFinal);
+          workerClient.pushAudio(chunk, false);
         }, 100);
       } catch (err) {
         console.error('Preset streaming error:', err);
@@ -979,13 +987,14 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             const pct = Math.round((p.progress || 0) * 100);
             progressBar.style.width = `${pct}%`;
             loaderPct.textContent = `${pct}%`;
-            loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()}: Loading acoustic model [${lang}]...`;
+            loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()}: Loading acoustic model [${activeLanguage}]...`;
           });
 
-          workerClient.on('ready', () => {
+          workerClient.on('ready', (readyEvt) => {
             window.__swanadaReady = true;
             statusDot.className = 'status-dot ready';
-            statusText.textContent = `Swanada Engine Ready (${lang.toUpperCase()})`;
+            const langCode = (readyEvt && readyEvt.language) || activeLanguage;
+            statusText.textContent = `Swanada Engine Ready (${langCode.toUpperCase()})`;
             progressBar.style.width = '100%';
             loaderPct.textContent = '100%';
             setTimeout(() => { loaderWrap.style.display = 'none'; }, 600);
@@ -995,9 +1004,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             placeholder.style.display = 'none';
             committedText.textContent = data.committed || '';
             volatileText.textContent = data.volatile ? ' ' + data.volatile : '';
-            if (lang === 'sa' && data.text) {
+            if (activeLanguage === 'sa' && data.text) {
               iastBox.style.display = 'block';
               iastBox.textContent = transliterateIast(data.text);
+            } else {
+              iastBox.style.display = 'none';
             }
             if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
             if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
@@ -1008,9 +1019,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             placeholder.style.display = 'none';
             committedText.textContent = data.text;
             volatileText.textContent = '';
-            if (lang === 'sa' && data.text) {
+            if (activeLanguage === 'sa' && data.text) {
               iastBox.style.display = 'block';
               iastBox.textContent = transliterateIast(data.text);
+            } else {
+              iastBox.style.display = 'none';
             }
             window.__swanadaLastResult = data;
             window.__swanadaMetrics = {
@@ -1044,6 +1057,12 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           modelUrl: `../models/onnx/${modelFile}`,
           vocabUrl: `../models/vocabularies/${vocabFile}`,
         });
+
+        statusDot.className = 'status-dot ready';
+        statusText.textContent = `Swanada Engine Ready (${lang.toUpperCase()})`;
+        if (lang !== 'sa') {
+          iastBox.style.display = 'none';
+        }
 
         // Check CacheStorage
         if ('caches' in window) {
@@ -1194,8 +1213,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           offset = end;
 
           oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
-          const isFinal = offset >= total;
-          workerClient.pushAudio(chunk, isFinal);
+          workerClient.pushAudio(chunk, false);
         }, 50);
       });
     }

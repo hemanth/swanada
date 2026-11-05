@@ -340,10 +340,6 @@ class SwanadaStream:
 
         self.audio_buffer = np.concatenate([self.audio_buffer, chunk_float])
 
-        # Defer inference on tiny trailing fragments (< 800 samples = 50ms) after sliding window
-        if self.is_window_sliding and len(chunk_float) < 800:
-            return None
-
         if len(self.audio_buffer) < 1600:
             return None
 
@@ -425,3 +421,14 @@ class SwanadaStream:
                 self._emit_error(e)
 
         return result
+
+    def reset(self) -> None:
+        """Reset stream session state for fresh streaming without re-instantiating."""
+        self.audio_buffer = np.zeros(0, dtype=np.float32)
+        self.total_audio_samples = 0
+        self.consecutive_silent_chunks = 0
+        self.consecutive_silent_samples = 0
+        self.base_committed_tokens.clear()
+        self.is_window_sliding = False
+        self.is_finished = False
+        self.decoder.reset()
