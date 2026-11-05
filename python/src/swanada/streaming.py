@@ -132,9 +132,9 @@ class SwanadaStream:
     def __init__(
         self,
         engine: AcousticEngine,
-        chunk_size_samples: int = 5120,    # 320 ms
-        left_context_samples: int = 20480,  # 1,280 ms
-        max_buffer_samples: int = 61440,    # 3,840 ms
+        chunk_size_samples: int = 5120,     # 320 ms
+        left_context_samples: int = 16000,   # 1,000 ms
+        max_buffer_samples: int = 32000,     # 2,000 ms
         vad_silence_threshold: float = 0.005,
     ):
         self.engine = engine
@@ -145,13 +145,13 @@ class SwanadaStream:
         self.vad_silence_threshold = vad_silence_threshold
 
         self.audio_buffer = np.zeros(0, dtype=np.float32)
-        self.all_chunks: List[np.ndarray] = []
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0
         self.pause_threshold_samples = 8000  # 500 ms @ 16 kHz
         self.base_committed_tokens: List[str] = []
         self.is_window_sliding = False
+        self.is_finished = False
         self.listeners_partial: List[Callable[[StreamingTranscript], None]] = []
         self.listeners_final: List[Callable[[TranscriptionResult], None]] = []
         self.listeners_error: List[Callable[[Exception], None]] = []
@@ -240,12 +240,11 @@ class SwanadaStream:
         return len(committed_tokens), 0
 
     def push(self, chunk: np.ndarray) -> Optional[StreamingTranscript]:
-        if len(chunk) == 0:
+        if self.is_finished or len(chunk) == 0:
             return None
 
         chunk_float = chunk.astype(np.float32)
         self.total_audio_samples += len(chunk_float)
-        self.all_chunks.append(chunk_float)
 
         # Non-destructive silence check & pause utterance segmentation
         rms = float(np.sqrt(np.mean(chunk_float ** 2))) if len(chunk_float) > 0 else 0.0
@@ -264,6 +263,11 @@ class SwanadaStream:
             self.consecutive_silent_samples = 0
 
         self.audio_buffer = np.concatenate([self.audio_buffer, chunk_float])
+
+        # Defer inference on tiny trailing fragments (< 800 samples = 50ms) after sliding window
+        if self.is_window_sliding and len(chunk_float) < 800:
+            return None
+
         if len(self.audio_buffer) < 1600:
             return None
 
@@ -296,44 +300,33 @@ class SwanadaStream:
         return st
 
     def finish(self) -> TranscriptionResult:
+        self.is_finished = True
         duration_ms = (self.total_audio_samples / 16000.0) * 1000.0
         t0 = time.perf_counter()
 
-        if self.all_chunks:
-            full_audio = np.concatenate(self.all_chunks)
-        else:
-            full_audio = self.audio_buffer
-
-        # Transcribe tail if pending (< 1600 samples)
+        # Process pending audio tail if needed (< 1600 samples)
         if len(self.audio_buffer) >= 400 and (len(self.audio_buffer) < 1600 or not self.decoder.last_hyp_tokens):
-            res = self.engine.transcribe(self.audio_buffer)
+            tail_res = self.engine.transcribe(self.audio_buffer)
             if not self.is_window_sliding:
-                global_tokens = self.base_committed_tokens + res.tokens
+                global_tokens = self.base_committed_tokens + tail_res.tokens
             else:
                 best_offset, best_raw_start = self._find_window_alignment(
-                    self.decoder.committed_tokens, res.tokens
+                    self.decoder.committed_tokens, tail_res.tokens
                 )
-                global_tokens = self.decoder.committed_tokens[:best_offset] + res.tokens[best_raw_start:]
+                global_tokens = self.decoder.committed_tokens[:best_offset] + tail_res.tokens[best_raw_start:]
             self.decoder.update(global_tokens, False, duration_ms, 0.0)
 
-        batch_res = None
-        if len(full_audio) >= 400:
-            batch_res = self.engine.transcribe(full_audio)
-
-        streaming_tokens = list(self.decoder.last_hyp_tokens) if self.decoder.last_hyp_tokens else list(self.decoder.committed_tokens)
-
-        if batch_res is not None and len(batch_res.tokens) >= len(streaming_tokens) - 2:
-            final_tokens = batch_res.tokens
-            final_text = batch_res.text
-        else:
-            final_tokens = streaming_tokens
-            final_text = normalize_indic_text("".join(streaming_tokens))
+        streaming_tokens = (
+            list(self.decoder.last_hyp_tokens)
+            if self.decoder.last_hyp_tokens
+            else list(self.decoder.committed_tokens)
+        )
 
         inference_ms = (time.perf_counter() - t0) * 1000.0
-        final_st = self.decoder.update(final_tokens, True, duration_ms, inference_ms)
+        final_st = self.decoder.update(streaming_tokens, True, duration_ms, inference_ms)
 
+        # Free buffer memory immediately
         self.audio_buffer = np.zeros(0, dtype=np.float32)
-        self.all_chunks.clear()
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0

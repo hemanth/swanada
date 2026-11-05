@@ -2294,12 +2294,23 @@ class AcousticEngine {
   }
 
   /**
-   * Warm-up the session with a 100ms synthetic silence buffer.
+   * Warm-up the session with synthetic non-silent buffers covering sliding window and chunk shapes.
    */
   async warmup()                {
     if (!this.acousticSession) return;
-    const silence = new Float32Array(1600); // 100ms silence
-    await this.transcribe(silence);
+    // Generate synthetic non-zero signals exceeding VAD silence gate (RMS >= 1e-4)
+    // Pre-warm maximum sliding window buffer (32,000 samples) and chunk size (5,120 samples)
+    const windowSignal = new Float32Array(32000);
+    for (let i = 0; i < 32000; i++) {
+      windowSignal[i] = Math.sin(i * 0.1) * 0.05;
+    }
+    await this.transcribe(windowSignal);
+
+    const chunkSignal = new Float32Array(5120);
+    for (let i = 0; i < 5120; i++) {
+      chunkSignal[i] = Math.sin(i * 0.1) * 0.05;
+    }
+    await this.transcribe(chunkSignal);
   }
 
   getVocab()           {
@@ -2565,13 +2576,11 @@ class StreamingAcousticEngine {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
-          if (matchLen >= 2) break;
         }
       }
-      if (bestMatchLen >= 2) break;
     }
 
-    if (bestMatchLen > 0) {
+    if (bestMatchLen >= 3) {
       return [bestOffset, bestRawStart];
     }
 
@@ -2590,13 +2599,11 @@ class StreamingAcousticEngine {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
-          if (matchLen >= 2) break;
         }
       }
-      if (bestMatchLen >= 2) break;
     }
 
-    if (bestMatchLen >= 2) {
+    if (bestMatchLen >= 3) {
       return [bestOffset, bestRawStart];
     }
 
@@ -2607,6 +2614,12 @@ class StreamingAcousticEngine {
     const errorObj = err instanceof Error ? err : new Error(String(err));
     for (const errCb of this.listeners.error) {
       try { errCb(errorObj); } catch {}
+    }
+  }
+
+  async warmup()                {
+    if ((this.engine       ).warmup) {
+      await (this.engine       ).warmup();
     }
   }
 
@@ -3776,10 +3789,11 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
                                                                                
                                       
                              
+                           
  
 
 class Swanada {
-          engine                ;
+                  engine                ;
           config               ;
 
           constructor(engine                , config               ) {
@@ -3832,9 +3846,19 @@ class Swanada {
   }
 
   /**
+   * Warms up the underlying acoustic engine kernels.
+   */
+  async warmup()                {
+    await this.engine.warmup();
+  }
+
+  /**
    * Creates a streaming audio transcription session.
    */
   createStream(options                       )                {
+    if ((this.engine       ).warmup) {
+      (this.engine       ).warmup().catch(() => {});
+    }
     const streamSession = new StreamingAcousticEngine(this.engine, this.engine.getVocab(), options);
     return {
       get audioBuffer()               {
@@ -3842,6 +3866,9 @@ class Swanada {
       },
       getBufferLength()         {
         return streamSession.audioBuffer.length;
+      },
+      async warmup()                {
+        return streamSession.warmup();
       },
       async push(chunk              )                                      {
         return streamSession.push(chunk);

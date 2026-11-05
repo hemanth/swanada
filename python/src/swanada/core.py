@@ -100,8 +100,18 @@ class Swanada:
         """Transcribe audio input to normalized text."""
         return self.engine.transcribe(audio, sample_rate=sample_rate)
 
-    def stream(self, chunk_size_samples: int = 5120) -> "SwanadaStream":
+    def stream(
+        self,
+        chunk_size_samples: int = 5120,
+        left_context_samples: int = 16000,
+        max_buffer_samples: int = 32000,
+    ) -> "SwanadaStream":
         """Creates a streaming audio transcription pipeline."""
         from .streaming import SwanadaStream
-        return SwanadaStream(self.engine, chunk_size_samples=chunk_size_samples)
+        return SwanadaStream(
+            self.engine,
+            chunk_size_samples=chunk_size_samples,
+            left_context_samples=left_context_samples,
+            max_buffer_samples=max_buffer_samples,
+        )
 

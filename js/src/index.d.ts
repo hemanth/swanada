@@ -63,13 +63,16 @@ export interface SwanadaStream {
   on(event: 'token' | 'partial' | 'error' | 'final', callback: Function): void;
   readonly audioBuffer?: Float32Array;
   getBufferLength?(): number;
+  warmup?(): Promise<void>;
 }
 
 export declare class Swanada {
+  readonly engine: AcousticEngine;
   static create(config?: SwanadaConfig): Promise<Swanada>;
   static transliterateIast(text: string): string;
   transcribe(audio: Float32Array | ArrayBuffer | Uint8Array | string): Promise<TranscriptionResult>;
-  createStream(): SwanadaStream;
+  warmup(): Promise<void>;
+  createStream(options?: StreamSessionOptions): SwanadaStream;
   release(): Promise<void>;
 }
 

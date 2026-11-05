@@ -245,13 +245,11 @@ export class StreamingAcousticEngine {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
-          if (matchLen >= 2) break;
         }
       }
-      if (bestMatchLen >= 2) break;
     }
 
-    if (bestMatchLen > 0) {
+    if (bestMatchLen >= 3) {
       return [bestOffset, bestRawStart];
     }
 
@@ -270,13 +268,11 @@ export class StreamingAcousticEngine {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
-          if (matchLen >= 2) break;
         }
       }
-      if (bestMatchLen >= 2) break;
     }
 
-    if (bestMatchLen >= 2) {
+    if (bestMatchLen >= 3) {
       return [bestOffset, bestRawStart];
     }
 
@@ -287,6 +283,12 @@ export class StreamingAcousticEngine {
     const errorObj = err instanceof Error ? err : new Error(String(err));
     for (const errCb of this.listeners.error) {
       try { errCb(errorObj); } catch {}
+    }
+  }
+
+  async warmup(): Promise<void> {
+    if ((this.engine as any).warmup) {
+      await (this.engine as any).warmup();
     }
   }
 

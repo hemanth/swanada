@@ -32,10 +32,11 @@ export interface SwanadaStream {
   on(event: 'token' | 'partial' | 'error' | 'final', callback: Function): void;
   readonly audioBuffer?: Float32Array;
   getBufferLength?(): number;
+  warmup?(): Promise<void>;
 }
 
 export class Swanada {
-  private engine: AcousticEngine;
+  public readonly engine: AcousticEngine;
   private config: SwanadaConfig;
 
   private constructor(engine: AcousticEngine, config: SwanadaConfig) {
@@ -88,9 +89,19 @@ export class Swanada {
   }
 
   /**
+   * Warms up the underlying acoustic engine kernels.
+   */
+  async warmup(): Promise<void> {
+    await this.engine.warmup();
+  }
+
+  /**
    * Creates a streaming audio transcription session.
    */
   createStream(options?: StreamSessionOptions): SwanadaStream {
+    if ((this.engine as any).warmup) {
+      (this.engine as any).warmup().catch(() => {});
+    }
     const streamSession = new StreamingAcousticEngine(this.engine, this.engine.getVocab(), options);
     return {
       get audioBuffer(): Float32Array {
@@ -98,6 +109,9 @@ export class Swanada {
       },
       getBufferLength(): number {
         return streamSession.audioBuffer.length;
+      },
+      async warmup(): Promise<void> {
+        return streamSession.warmup();
       },
       async push(chunk: Float32Array): Promise<StreamingTranscript | void> {
         return streamSession.push(chunk);

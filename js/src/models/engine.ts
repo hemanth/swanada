@@ -456,12 +456,23 @@ export class AcousticEngine {
   }
 
   /**
-   * Warm-up the session with a 100ms synthetic silence buffer.
+   * Warm-up the session with synthetic non-silent buffers covering sliding window and chunk shapes.
    */
   async warmup(): Promise<void> {
     if (!this.acousticSession) return;
-    const silence = new Float32Array(1600); // 100ms silence
-    await this.transcribe(silence);
+    // Generate synthetic non-zero signals exceeding VAD silence gate (RMS >= 1e-4)
+    // Pre-warm maximum sliding window buffer (32,000 samples) and chunk size (5,120 samples)
+    const windowSignal = new Float32Array(32000);
+    for (let i = 0; i < 32000; i++) {
+      windowSignal[i] = Math.sin(i * 0.1) * 0.05;
+    }
+    await this.transcribe(windowSignal);
+
+    const chunkSignal = new Float32Array(5120);
+    for (let i = 0; i < 5120; i++) {
+      chunkSignal[i] = Math.sin(i * 0.1) * 0.05;
+    }
+    await this.transcribe(chunkSignal);
   }
 
   getVocab(): string[] {
