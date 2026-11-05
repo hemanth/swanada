@@ -16,7 +16,7 @@ const DOCS_DIR = path.resolve(__dirname, 'docs');
 const MODELS_DIR = path.resolve(__dirname, 'models');
 const JS_DIST_DIR = path.resolve(__dirname, 'js', 'dist');
 
-const PORT = Number(process.env.PORT || 4180);
+const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
 const gzipCache = new Map();
 
