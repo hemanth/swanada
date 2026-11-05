@@ -1,2 +1,2 @@
 export * from './client.js';
-export * from './stt-worker.js';
+export { handleIncomingMessage, getWorkerState } from './stt-worker.js';

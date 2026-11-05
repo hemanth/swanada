@@ -26,6 +26,24 @@ export async function getOrt(): Promise<any> {
   if (typeof (globalThis as any).ort !== 'undefined') {
     return (globalThis as any).ort;
   }
+  const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
+  if (!isNode) {
+    const baseHref =
+      (typeof self !== 'undefined' && self.location?.href) ||
+      (typeof window !== 'undefined' && window.location?.href) ||
+      (typeof import.meta !== 'undefined' && import.meta.url) ||
+      '';
+    try {
+      const url = new URL('./ort/ort.wasm.bundle.min.mjs', baseHref).href;
+      const mod = await import(/* @vite-ignore */ url);
+      return mod.default || mod;
+    } catch {}
+    try {
+      const url = new URL('./ort/ort.wasm.min.mjs', baseHref).href;
+      const mod = await import(/* @vite-ignore */ url);
+      return mod.default || mod;
+    } catch {}
+  }
   try {
     const mod = await import('onnxruntime-web');
     return mod.default || mod;
@@ -80,6 +98,7 @@ export class AcousticEngine {
   private executionProvider: ExecutionProvider = 'wasm';
   private allocatedThreads: number = 1;
   private decoder: CTCGreedyDecoder;
+  private isWarmed: boolean = false;
 
   private constructor(ort: any, config: SwanadaEngineConfig) {
     this.ort = ort;
@@ -459,7 +478,7 @@ export class AcousticEngine {
    * Warm-up the session with synthetic non-silent buffers covering sliding window and chunk shapes.
    */
   async warmup(): Promise<void> {
-    if (!this.acousticSession) return;
+    if (this.isWarmed || !this.acousticSession) return;
     // Generate synthetic non-zero signals exceeding VAD silence gate (RMS >= 1e-4)
     // Pre-warm maximum sliding window buffer (32,000 samples) and chunk size (5,120 samples)
     const windowSignal = new Float32Array(32000);
@@ -473,6 +492,7 @@ export class AcousticEngine {
       chunkSignal[i] = Math.sin(i * 0.1) * 0.05;
     }
     await this.transcribe(chunkSignal);
+    this.isWarmed = true;
   }
 
   getVocab(): string[] {
@@ -480,6 +500,7 @@ export class AcousticEngine {
   }
 
   async release(): Promise<void> {
+    this.isWarmed = false;
     if (this.acousticSession && typeof this.acousticSession.release === 'function') {
       await this.acousticSession.release();
       this.acousticSession = null;

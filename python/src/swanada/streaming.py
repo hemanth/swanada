@@ -33,20 +33,96 @@ class StreamingCTCDecoder:
         vocab: Union[List[str], dict],
         stability_threshold: int = 2,
         trail_tokens: int = 3,
+        suffix_window_tokens: int = 15,
     ):
         self.vocab = vocab
         self.stability_threshold = stability_threshold
         self.trail_tokens = trail_tokens
+        self.suffix_window_tokens = suffix_window_tokens
         self.committed_tokens: List[str] = []
         self.committed_text: str = ""
         self.last_hyp_tokens: List[str] = []
         self.token_stability_counts: List[int] = []
+
+        # O(1) Incremental Prefix Normalization State
+        self._frozen_text: str = ""
+        self._frozen_token_count: int = 0
+        self._last_committed_count: int = 0
 
     def reset(self) -> None:
         self.committed_tokens.clear()
         self.committed_text = ""
         self.last_hyp_tokens.clear()
         self.token_stability_counts.clear()
+        self._frozen_text = ""
+        self._frozen_token_count = 0
+        self._last_committed_count = 0
+
+    def _update_committed_text(self) -> str:
+        """Incrementally computes and caches committed_text in O(1) time."""
+        n_comm = len(self.committed_tokens)
+        if n_comm == 0:
+            self.committed_text = ""
+            return ""
+
+        # O(1) Fast Path: No new tokens were committed in this chunk
+        if n_comm == self._last_committed_count:
+            return self.committed_text
+
+        self._last_committed_count = n_comm
+
+        # Bounded Prefix Freezing: Freeze tokens older than suffix_window_tokens
+        unfrozen_count = n_comm - self._frozen_token_count
+        if unfrozen_count > self.suffix_window_tokens:
+            freeze_limit = n_comm - self.suffix_window_tokens
+
+            # Look for a clean word boundary (starts with space marker)
+            freeze_idx = -1
+            for idx in range(freeze_limit, self._frozen_token_count, -1):
+                tok = self.committed_tokens[idx]
+                if tok.startswith("\u2581") or tok.startswith("▁") or tok.startswith(" "):
+                    freeze_idx = idx
+                    break
+
+            if freeze_idx > self._frozen_token_count:
+                new_slice = self.committed_tokens[self._frozen_token_count:freeze_idx]
+                slice_text = normalize_indic_text("".join(new_slice))
+                if slice_text:
+                    if self._frozen_text:
+                        self._frozen_text = f"{self._frozen_text} {slice_text}"
+                    else:
+                        self._frozen_text = slice_text
+                self._frozen_token_count = freeze_idx
+            elif unfrozen_count > self.suffix_window_tokens * 2:
+                # Fallback for continuous compound words without spaces: freeze at window midpoint
+                freeze_idx = self._frozen_token_count + self.suffix_window_tokens
+                new_slice = self.committed_tokens[self._frozen_token_count:freeze_idx]
+                slice_text = normalize_indic_text("".join(new_slice))
+                if slice_text:
+                    if self._frozen_text:
+                        self._frozen_text = f"{self._frozen_text}{slice_text}"
+                    else:
+                        self._frozen_text = slice_text
+                self._frozen_token_count = freeze_idx
+
+        # Normalize only the active suffix window tokens (<= suffix_window_tokens)
+        suffix_tokens = self.committed_tokens[self._frozen_token_count:]
+        if suffix_tokens:
+            suffix_text = normalize_indic_text("".join(suffix_tokens))
+            if self._frozen_text and suffix_text:
+                first_tok = suffix_tokens[0]
+                if first_tok.startswith("\u2581") or first_tok.startswith("▁") or first_tok.startswith(" "):
+                    self.committed_text = f"{self._frozen_text} {suffix_text}"
+                else:
+                    self.committed_text = f"{self._frozen_text}{suffix_text}"
+            elif self._frozen_text:
+                self.committed_text = self._frozen_text
+            else:
+                self.committed_text = suffix_text
+        else:
+            self.committed_text = self._frozen_text
+
+        return self.committed_text
 
     def update(
         self,
@@ -74,8 +150,10 @@ class StreamingCTCDecoder:
                 rtf=rtf,
             )
 
-        # Longest Common Prefix with previous hypothesis
-        common_len = 0
+        already_committed = len(self.committed_tokens)
+
+        # Longest Common Prefix with previous hypothesis (skip already committed tokens)
+        common_len = min(already_committed, min(len(self.last_hyp_tokens), len(raw_tokens)))
         min_len = min(len(self.last_hyp_tokens), len(raw_tokens))
         while common_len < min_len and self.last_hyp_tokens[common_len] == raw_tokens[common_len]:
             common_len += 1
@@ -90,7 +168,6 @@ class StreamingCTCDecoder:
         self.token_stability_counts = new_stability
 
         lockable_limit = max(0, len(raw_tokens) - self.trail_tokens)
-        already_committed = len(self.committed_tokens)
 
         for i in range(already_committed, lockable_limit):
             is_word_ahead = any(
@@ -106,10 +183,9 @@ class StreamingCTCDecoder:
 
         self.last_hyp_tokens = list(raw_tokens)
 
-        committed_str = normalize_indic_text("".join(self.committed_tokens))
-        self.committed_text = committed_str
+        committed_str = self._update_committed_text()
         volatile_tokens = raw_tokens[len(self.committed_tokens):]
-        volatile_str = normalize_indic_text("".join(volatile_tokens))
+        volatile_str = normalize_indic_text("".join(volatile_tokens)) if volatile_tokens else ""
 
         full_text = f"{committed_str} {volatile_str}".strip() if committed_str and volatile_str else (committed_str or volatile_str)
         rtf = (inference_ms / duration_ms) if duration_ms > 0 else 0.0

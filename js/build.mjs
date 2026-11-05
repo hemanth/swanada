@@ -89,6 +89,7 @@ const workerHandlerSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'worker', 
   .replace(/import .*? from '\.\.\/decoder\/ctc\.ts';/g, '')
   .replace(/import .*? from '\.\.\/tokenizers\/iast\.ts';/g, '')
   .replace(/import .*? from '\.\.\/models\/cache\.ts';/g, '')
+  .replace(/import .*? from '\.\.\/models\/streaming\.ts';/g, '')
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
 
@@ -194,15 +195,21 @@ fs.mkdirSync(docsDir, { recursive: true });
 fs.copyFileSync(path.join(distDir, 'index.mjs'), path.join(docsDir, 'swanada.mjs'));
 
 // Transform ESM import.meta constructs into CommonJS-safe expressions
-const cjsEngineSrc = engineSrc
-  .replace(
-    /typeof import\.meta !== 'undefined' && import\.meta\.url/g,
-    "typeof __filename !== 'undefined'"
-  )
-  .replace(
-    /import\.meta\.url/g,
-    "require('url').pathToFileURL(__filename).href"
-  );
+function makeCjsSafe(code) {
+  return code
+    .replace(
+      /typeof import\.meta !== 'undefined' && import\.meta\.url/g,
+      "typeof __filename !== 'undefined'"
+    )
+    .replace(
+      /import\.meta\.url/g,
+      "require('url').pathToFileURL(__filename).href"
+    )
+    .replace(/import\.meta/g, "({ url: require('url').pathToFileURL(__filename).href })");
+}
+
+const cjsEngineSrc = makeCjsSafe(engineSrc);
+const cjsWorkerHandlerSrc = makeCjsSafe(workerHandlerSrc);
 
 const cjsBody = `// Auto-generated CommonJS bundle for swanada v1.0.0
 ${ingestSrc}
@@ -218,7 +225,7 @@ ${streamingEngineSrc}
 ${registrySrc}
 ${iastSrc}
 ${workerClientSrc}
-${workerHandlerSrc}
+${cjsWorkerHandlerSrc}
 ${indexSrc}
 
 module.exports = {
@@ -274,7 +281,7 @@ module.exports = {
 };
 `;
 
-fs.writeFileSync(path.join(distDir, 'index.cjs'), cjsBody, 'utf8');
+fs.writeFileSync(path.join(distDir, 'index.cjs'), makeCjsSafe(cjsBody), 'utf8');
 
 console.log('Successfully built js/dist/index.mjs, js/dist/index.cjs, js/dist/index.d.ts, and docs/swanada.mjs');
 

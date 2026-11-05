@@ -27,8 +27,12 @@ export interface WorkerProgressEvent {
 
 export interface WorkerPartialEvent {
   text: string;
+  committed?: string;
+  volatile?: string;
   iast?: string;
   rtf: number;
+  durationMs?: number;
+  inferenceMs?: number;
   tokens: string[];
   chunkIndex?: number;
 }
@@ -83,10 +87,12 @@ export class SwanadaWorkerClient {
 
     this.setupWorkerListeners();
 
-    // Auto-initiate if config provided
-    this.init(config).catch((err) => {
-      this.emit('error', { message: err.message, fatal: true });
-    });
+    // Auto-initiate only if language or modelUrl is provided
+    if (config.language || config.modelUrl) {
+      this.init(config).catch((err) => {
+        this.emit('error', { message: err.message, fatal: true });
+      });
+    }
   }
 
   private setupWorkerListeners(): void {
@@ -123,8 +129,12 @@ export class SwanadaWorkerClient {
         case 'PARTIAL': {
           this.emit('partial', {
             text: msg.text,
+            committed: msg.committed ?? '',
+            volatile: msg.volatile ?? '',
             iast: msg.iast,
             rtf: msg.rtf,
+            durationMs: msg.durationMs,
+            inferenceMs: msg.inferenceMs,
             tokens: msg.tokens,
             chunkIndex: msg.chunkIndex,
           });
@@ -254,6 +264,25 @@ export class SwanadaWorkerClient {
       this.finalResolve = resolve;
       this.finalReject = reject;
       this.pushAudio(pcm, true);
+    });
+  }
+
+  /**
+   * Starts a new streaming transcription session.
+   */
+  startStream(): void {
+    this.reset();
+  }
+
+  /**
+   * Completes active stream and awaits final transcription result.
+   */
+  async finishStream(): Promise<TranscriptionResult & { iast?: string }> {
+    await this.whenReady();
+    return new Promise((resolve, reject) => {
+      this.finalResolve = resolve;
+      this.finalReject = reject;
+      this.pushAudio(new Float32Array(0), true);
     });
   }
 

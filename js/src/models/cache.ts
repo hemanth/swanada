@@ -190,13 +190,27 @@ export async function loadModelAsset(
   }
 
   // 5. Streaming HTTP Fetch (only if http/https or browser environment)
-  if (!urlOrPath.startsWith('http://') && !urlOrPath.startsWith('https://') && typeof window === 'undefined') {
+  const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
+  if (!urlOrPath.startsWith('http://') && !urlOrPath.startsWith('https://') && isNode) {
     throw new Error(`Model not found at path: ${urlOrPath}`);
   }
 
-  const response = await fetch(urlOrPath);
+  let fetchUrl = urlOrPath;
+  if (!isNode && !urlOrPath.startsWith('http://') && !urlOrPath.startsWith('https://')) {
+    try {
+      const baseHref =
+        (typeof self !== 'undefined' && self.location?.href) ||
+        (typeof window !== 'undefined' && window.location?.href) ||
+        '';
+      if (baseHref) {
+        fetchUrl = new URL(urlOrPath, baseHref).href;
+      }
+    } catch {}
+  }
+
+  const response = await fetch(fetchUrl);
   if (!response.ok) {
-    throw new Error(`Failed to fetch model from ${urlOrPath}: HTTP ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to fetch model from ${fetchUrl}: HTTP ${response.status} ${response.statusText}`);
   }
 
   const contentLength = Number(response.headers.get('content-length') || 0);

@@ -485,6 +485,12 @@
       overflow-x: auto;
       margin: 0;
     }
+    .tok-kw { color: #f07178; font-weight: 600; }
+    .tok-str { color: #c3e88d; }
+    .tok-fn { color: #82aaff; }
+    .tok-com { color: #676e95; font-style: italic; }
+    .tok-num { color: #f78c6c; }
+    .tok-typ { color: #ffcb6b; }
 
     /* Footer */
     footer {
@@ -688,28 +694,34 @@
         <button class="code-tab" data-tab="cli">CLI</button>
       </div>
 
-      <pre class="snippet" id="snippetJs"><code>import { Swanada } from 'swanada';
+      <pre class="snippet" id="snippetJs"><code><span class="tok-kw">import</span> { <span class="tok-typ">Swanada</span> } <span class="tok-kw">from</span> <span class="tok-str">'swanada'</span>;
 
-const transcriber = await Swanada.create({ language: 'sa', numThreads: 4 });
-const result = await transcriber.transcribe(audioPcmFloat32);
+<span class="tok-com">// 1. Streaming transcription with two-zone partials</span>
+<span class="tok-kw">const</span> stt = <span class="tok-kw">await</span> <span class="tok-typ">Swanada</span>.<span class="tok-fn">create</span>({ language: <span class="tok-str">'sa'</span>, numThreads: <span class="tok-num">4</span> });
+<span class="tok-kw">const</span> stream = stt.<span class="tok-fn">createStream</span>();
 
-console.log(result.text);
-console.log('IAST:', Swanada.transliterateIast(result.text));</code></pre>
+stream.<span class="tok-fn">on</span>(<span class="tok-str">'partial'</span>, ({ committed, volatile }) =&gt; {
+  console.<span class="tok-fn">log</span>(<span class="tok-str">'Committed:'</span>, committed, <span class="tok-str">'Volatile:'</span>, volatile);
+});
 
-      <pre class="snippet" id="snippetNode" style="display: none;"><code>import fs from 'node:fs';
-import { Swanada, parseWav } from 'swanada';
+<span class="tok-kw">await</span> stream.<span class="tok-fn">push</span>(audioChunk16k);
+<span class="tok-kw">const</span> result = <span class="tok-kw">await</span> stream.<span class="tok-fn">finish</span>();
+console.<span class="tok-fn">log</span>(<span class="tok-str">'Final:'</span>, result.text, <span class="tok-str">'IAST:'</span>, <span class="tok-typ">Swanada</span>.<span class="tok-fn">transliterateIast</span>(result.text));</code></pre>
 
-const stt = await Swanada.create({ language: 'kn' });
-const result = await stt.transcribe('audio.wav');
-console.log(result.text);</code></pre>
+      <pre class="snippet" id="snippetNode" style="display: none;"><code><span class="tok-kw">import</span> fs <span class="tok-kw">from</span> <span class="tok-str">'node:fs'</span>;
+<span class="tok-kw">import</span> { <span class="tok-typ">Swanada</span>, parseWav } <span class="tok-kw">from</span> <span class="tok-str">'swanada'</span>;
 
-      <pre class="snippet" id="snippetPython" style="display: none;"><code>from swanada import Swanada
+<span class="tok-kw">const</span> stt = <span class="tok-kw">await</span> <span class="tok-typ">Swanada</span>.<span class="tok-fn">create</span>({ language: <span class="tok-str">'kn'</span> });
+<span class="tok-kw">const</span> result = <span class="tok-kw">await</span> stt.<span class="tok-fn">transcribe</span>(<span class="tok-str">'audio.wav'</span>);
+console.<span class="tok-fn">log</span>(result.text);</code></pre>
 
-stt = Swanada.create(language="hi")
-result = stt.transcribe("speech_16k.wav")
-print(result.text)</code></pre>
+      <pre class="snippet" id="snippetPython" style="display: none;"><code><span class="tok-kw">from</span> swanada <span class="tok-kw">import</span> Swanada
 
-      <pre class="snippet" id="snippetCli" style="display: none;"><code># CLI file and streaming transcription
+stt = Swanada.<span class="tok-fn">create</span>(language=<span class="tok-str">"hi"</span>)
+result = stt.<span class="tok-fn">transcribe</span>(<span class="tok-str">"speech_16k.wav"</span>)
+<span class="tok-fn">print</span>(result.text)</code></pre>
+
+      <pre class="snippet" id="snippetCli" style="display: none;"><code><span class="tok-com"># CLI file and streaming transcription</span>
 swanada recitation.wav -l sa --iast
 cat stream.wav | swanada -l kn --stream --json</code></pre>
     </div>
@@ -798,6 +810,20 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       or: [{ title: "Odia", text: "ଓଡ଼ିଶାର ସଂସ୍କୃତି ଓ ଐତିହ୍ୟ ଅତ୍ୟନ୍ତ ଗୌରବମୟ" }]
     };
 
+    let presetPlaybackNode = null;
+    let presetIntervalId = null;
+
+    function stopPresetPlayback() {
+      if (presetPlaybackNode) {
+        try { presetPlaybackNode.stop(); } catch {}
+        presetPlaybackNode = null;
+      }
+      if (presetIntervalId) {
+        clearInterval(presetIntervalId);
+        presetIntervalId = null;
+      }
+    }
+
     function updatePresets(lang) {
       presetChips.innerHTML = '';
       const list = PRESETS[lang] || [];
@@ -805,25 +831,87 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         const chip = document.createElement('div');
         chip.className = 'chip';
         chip.innerHTML = `<strong>${item.title}:</strong> ${item.text}`;
-        chip.addEventListener('click', () => simulatePreset(item.text, lang));
+        chip.addEventListener('click', () => playAndStreamPreset(lang));
         presetChips.appendChild(chip);
       });
     }
 
-    function simulatePreset(text, lang) {
-      placeholder.style.display = 'none';
-      committedText.textContent = text;
-      volatileText.textContent = '';
-      if (lang === 'sa') {
-        iastBox.style.display = 'block';
-        iastBox.textContent = transliterateIast(text);
-      } else {
-        iastBox.style.display = 'none';
+    async function playAndStreamPreset(lang) {
+      try {
+        stopRecording();
+        stopPresetPlayback();
+
+        if (!workerClient) await initEngine(lang);
+        if (activeLanguage !== lang) await initEngine(lang);
+
+        placeholder.style.display = 'none';
+        committedText.textContent = '';
+        volatileText.textContent = '';
+        if (lang === 'sa') {
+          iastBox.style.display = 'block';
+          iastBox.textContent = '';
+        } else {
+          iastBox.style.display = 'none';
+        }
+        liveBadge.textContent = 'Streaming...';
+
+        const sampleUrl = `./samples/${lang}.wav`;
+        const res = await fetch(sampleUrl);
+        if (!res.ok) throw new Error(`Could not load audio sample from ${sampleUrl}`);
+        const arrayBuf = await res.arrayBuffer();
+
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        }
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+        let pcm = audioBuffer.getChannelData(0);
+        if (audioBuffer.sampleRate !== 16000) {
+          pcm = resamplePcm(pcm, audioBuffer.sampleRate, 16000);
+        }
+
+        // Play audio out loud through speakers via Web Audio API
+        const sourceNode = audioCtx.createBufferSource();
+        const playBuf = audioCtx.createBuffer(1, pcm.length, 16000);
+        playBuf.getChannelData(0).set(pcm);
+        sourceNode.buffer = playBuf;
+        sourceNode.connect(audioCtx.destination);
+        sourceNode.start();
+        presetPlaybackNode = sourceNode;
+
+        // Reset worker stream
+        workerClient.startStream();
+
+        // Stream chunk-by-chunk (1600 samples = 100ms at 100ms intervals)
+        const chunkSize = 1600;
+        let offset = 0;
+        const total = pcm.length;
+
+        presetIntervalId = setInterval(() => {
+          if (offset >= total) {
+            clearInterval(presetIntervalId);
+            presetIntervalId = null;
+            workerClient.finishStream();
+            return;
+          }
+
+          const end = Math.min(offset + chunkSize, total);
+          const chunk = pcm.subarray(offset, end);
+          offset = end;
+
+          // Update oscilloscope so visualizer bounces live
+          oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
+
+          const isFinal = offset >= total;
+          workerClient.pushAudio(chunk, isFinal);
+        }, 100);
+      } catch (err) {
+        console.error('Preset streaming error:', err);
+        liveBadge.textContent = 'Error';
       }
-      rtfVal.textContent = '0.08x';
-      durationVal.textContent = '2.40s';
-      latencyVal.textContent = '48ms';
-      liveBadge.textContent = 'Completed';
     }
 
     // Canvas Oscilloscope Loop
@@ -885,6 +973,14 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             wasmPaths: './ort/',
           });
           window.__swanadaWorkerClient = workerClient;
+
+          workerClient.on('progress', (p) => {
+            loaderWrap.style.display = 'flex';
+            const pct = Math.round((p.progress || 0) * 100);
+            progressBar.style.width = `${pct}%`;
+            loaderPct.textContent = `${pct}%`;
+            loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()}: Loading acoustic model [${lang}]...`;
+          });
 
           workerClient.on('ready', () => {
             window.__swanadaReady = true;
@@ -1012,8 +1108,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             const chunk = payload.audioChunk;
             oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
             if (workerClient) {
-              workerClient.pushAudio(chunk, false);
+              const sendChunk = new Float32Array(chunk);
+              workerClient.pushAudio(sendChunk, false);
             }
+            workletNode.port.postMessage({ type: 'recycle', buffer: chunk.buffer }, [chunk.buffer]);
           }
         };
 
@@ -1048,16 +1146,20 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       }
     }
 
-    // Audio File Drag and Drop / Upload
+    // Audio File Drag and Drop / Upload with streaming
     async function processAudioFile(file) {
       if (!file) return;
+      stopPresetPlayback();
+      stopRecording();
+
       loaderWrap.style.display = 'flex';
       loaderMsg.textContent = `Decoding ${file.name}...`;
-      progressBar.style.width = '50%';
-      loaderPct.textContent = '50%';
+      progressBar.style.width = '40%';
+      loaderPct.textContent = '40%';
 
       const arrayBuf = await file.arrayBuffer();
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
       const audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
 
       let pcm = audioBuffer.getChannelData(0);
@@ -1065,27 +1167,45 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         pcm = resamplePcm(pcm, audioBuffer.sampleRate, 16000);
       }
 
-      oscilloscopeData.set(pcm.subarray(0, Math.min(pcm.length, oscilloscopeData.length)));
-      loaderMsg.textContent = `Transcribing ${pcm.length} samples @ 16 kHz...`;
-      progressBar.style.width = '80%';
-      loaderPct.textContent = '80%';
-
-      if (!workerClient) await initEngine(activeLanguage);
-      const res = await workerClient.transcribe(pcm);
-
       loaderWrap.style.display = 'none';
       placeholder.style.display = 'none';
-      committedText.textContent = res.text;
+      committedText.textContent = '';
       volatileText.textContent = '';
-      if (activeLanguage === 'sa') {
-        iastBox.style.display = 'block';
-        iastBox.textContent = transliterateIast(res.text);
-      }
+      liveBadge.textContent = 'Streaming...';
+
+      if (!workerClient) await initEngine(activeLanguage);
+      workerClient.startStream();
+
+      // Stream file chunk-by-chunk in real time
+      const chunkSize = 1600;
+      let offset = 0;
+      const total = pcm.length;
+
+      return new Promise((resolve) => {
+        const intervalId = setInterval(() => {
+          if (offset >= total) {
+            clearInterval(intervalId);
+            workerClient.finishStream().then(resolve);
+            return;
+          }
+
+          const end = Math.min(offset + chunkSize, total);
+          const chunk = pcm.subarray(offset, end);
+          offset = end;
+
+          oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
+          const isFinal = offset >= total;
+          workerClient.pushAudio(chunk, isFinal);
+        }, 50);
+      });
     }
 
     // Setup Event Listeners
     micBtn.addEventListener('click', toggleMicrophone);
     clearBtn.addEventListener('click', () => {
+      stopPresetPlayback();
+      stopRecording();
+      if (workerClient) workerClient.reset();
       placeholder.style.display = 'block';
       committedText.textContent = '';
       volatileText.textContent = '';

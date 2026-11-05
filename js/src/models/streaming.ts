@@ -30,6 +30,9 @@ export class StreamingAcousticEngine {
   private baseCommittedTokens: string[] = [];
   private isFinished: boolean = false;
   private isWindowSliding: boolean = false;
+  private slidingChunkCount: number = 0;
+  private stride: number = 2;
+  private lastPartialTranscript: StreamingTranscript | null = null;
 
   get audioBuffer(): Float32Array {
     return this.audioBuffer;
@@ -105,6 +108,8 @@ export class StreamingAcousticEngine {
           this.baseCommittedTokens = this.decoder.getCommittedTokens();
           this.audioBuffer = new Float32Array(0);
           this.isWindowSliding = false;
+          this.slidingChunkCount = 0;
+          this.lastPartialTranscript = null;
         }
         return;
       }
@@ -123,12 +128,39 @@ export class StreamingAcousticEngine {
       return;
     }
 
+    const durationMs = (this.totalAudioSamples / 16000) * 1000;
+
+    // Stride-2 inference scheduling during continuous window sliding
+    if (this.isWindowSliding) {
+      this.slidingChunkCount++;
+      if (this.slidingChunkCount % this.stride !== 0) {
+        if (this.lastPartialTranscript) {
+          const st: StreamingTranscript = {
+            ...this.lastPartialTranscript,
+            durationMs,
+            inferenceMs: 0,
+            rtf: durationMs > 0 ? (this.lastPartialTranscript.inferenceMs / durationMs) : 0,
+          };
+          for (const cb of this.listeners.partial) {
+            try { cb(st); } catch (e) {
+              this.emitError(e);
+            }
+          }
+          return st;
+        }
+        return;
+      }
+    }
+
     try {
+      const evalBuffer = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
+        ? this.audioBuffer.slice(-this.maxBufferSamples)
+        : this.audioBuffer;
+
       const startInference = performance.now();
       // Acoustic model inference over active buffer window
-      const res = await this.engine.transcribe(this.audioBuffer);
+      const res = await this.engine.transcribe(evalBuffer);
       const inferenceMs = performance.now() - startInference;
-      const durationMs = (this.totalAudioSamples / 16000) * 1000;
 
       // Track window offset with base committed tokens across segmented pauses
       let globalTokens: string[];
@@ -142,6 +174,7 @@ export class StreamingAcousticEngine {
 
       // Update streaming decoder with aligned global tokens
       const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs);
+      this.lastPartialTranscript = st;
 
       // Emit new tokens if any
       if (this.listeners.token.length > 0 && res.tokens.length > 0) {
@@ -176,9 +209,16 @@ export class StreamingAcousticEngine {
     const durationMs = (this.totalAudioSamples / 16000) * 1000;
     const startInference = performance.now();
 
-    // Process pending audio tail if needed (< 1600 samples)
-    if (this.audioBuffer.length >= 400 && (this.audioBuffer.length < 1600 || !(this.decoder as any).lastHypTokens?.length)) {
-      const tailRes = await this.engine.transcribe(this.audioBuffer);
+    // Process pending audio tail if needed (< 1600 samples or odd stride skip)
+    const hasUnEvaluatedSamples =
+      (this.isWindowSliding && this.slidingChunkCount % this.stride !== 0) ||
+      (this.audioBuffer.length >= 400 && (this.audioBuffer.length < 1600 || !(this.decoder as any).lastHypTokens?.length));
+
+    if (this.audioBuffer.length >= 400 && hasUnEvaluatedSamples) {
+      const evalBuffer = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
+        ? this.audioBuffer.slice(-this.maxBufferSamples)
+        : this.audioBuffer;
+      const tailRes = await this.engine.transcribe(evalBuffer);
       let globalTokens: string[];
       if (!this.isWindowSliding) {
         globalTokens = [...this.baseCommittedTokens, ...tailRes.tokens];
@@ -202,6 +242,8 @@ export class StreamingAcousticEngine {
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];
     this.isWindowSliding = false;
+    this.slidingChunkCount = 0;
+    this.lastPartialTranscript = null;
 
     const result: TranscriptionResult = {
       text: finalSt.text,
@@ -299,6 +341,8 @@ export class StreamingAcousticEngine {
     this.baseCommittedTokens = [];
     this.isFinished = false;
     this.isWindowSliding = false;
+    this.slidingChunkCount = 0;
+    this.lastPartialTranscript = null;
     this.decoder.reset();
   }
 }

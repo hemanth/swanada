@@ -73,6 +73,8 @@ describe('Real-Time Streaming Conformer-CTC Engine & Prefix Locking Suite (Featu
       modelPath: MODEL_PATH,
     });
 
+    await stt.warmup();
+
     const stream = stt.createStream();
     const wavBuf = fs.readFileSync(TEST_WAV_PATH);
     const { pcm } = parseWav(wavBuf);

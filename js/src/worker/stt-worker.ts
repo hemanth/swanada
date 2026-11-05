@@ -9,10 +9,26 @@ import { extractLogMelFeatures } from '../audio/frontend.ts';
 import { decodeCTC, CTCGreedyDecoder } from '../decoder/ctc.ts';
 import { devanagariToIast } from '../tokenizers/iast.ts';
 import { loadModelAsset, CACHE_STORAGE_NAME } from '../models/cache.ts';
-import type { SupportedLanguage, ExecutionProvider } from '../models/types.ts';
+import { StreamingAcousticEngine } from '../models/streaming.ts';
+import type { SupportedLanguage, ExecutionProvider, AcousticInferenceResult } from '../models/types.ts';
 
 // Worker global scope declaration
 declare const self: any;
+
+let workerReadyToDispatch = false;
+const startupMessageQueue: any[] = [];
+if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') {
+  if (!(self as any).__swanadaWorkerListenerAttached) {
+    (self as any).__swanadaWorkerListenerAttached = true;
+    self.addEventListener('message', (event: any) => {
+      if (!workerReadyToDispatch) {
+        startupMessageQueue.push(event.data);
+      } else {
+        handleIncomingMessage(event.data);
+      }
+    });
+  }
+}
 
 export type WorkerState = 'UNINITIALIZED' | 'INITIALIZING' | 'READY' | 'STREAMING' | 'ERROR';
 
@@ -79,11 +95,8 @@ let cacheStorageName: string = CACHE_STORAGE_NAME;
 // Session cache (LRU) for instant language switching without redownloading
 const sessionCache = new Map<string, { session: any; vocab: string[] }>();
 
-// Audio accumulator for streaming transcription
-let accumulatedAudio: Float32Array[] = [];
-let totalAccumulatedSamples = 0;
-let lastPartialTimeMs = 0;
-const PARTIAL_THROTTLE_MS = 250; // Emit partials at most every 250ms
+// Streaming session for bounded O(1) real-time transcription
+let streamingSession: StreamingAcousticEngine | null = null;
 
 export function getWorkerState(): WorkerState {
   return workerState;
@@ -102,12 +115,40 @@ async function resolveOrt(): Promise<any> {
     ort = (globalThis as any).ort;
     return ort;
   }
+
+  const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
+  if (!isNode) {
+    const baseHref =
+      (typeof self !== 'undefined' && self.location?.href) ||
+      (typeof window !== 'undefined' && (window as any).location?.href) ||
+      (typeof import.meta !== 'undefined' && import.meta.url) ||
+      '';
+    try {
+      const url = new URL('./ort/ort.wasm.bundle.min.mjs', baseHref).href;
+      const mod = await import(/* @vite-ignore */ url);
+      ort = mod?.default?.InferenceSession ? mod.default : (mod.default || mod);
+      return ort;
+    } catch {}
+    try {
+      const url = new URL('./ort/ort.wasm.min.mjs', baseHref).href;
+      const mod = await import(/* @vite-ignore */ url);
+      ort = mod?.default?.InferenceSession ? mod.default : (mod.default || mod);
+      return ort;
+    } catch {}
+  }
+
   try {
     const mod = await import('onnxruntime-web');
     ort = mod.default || mod;
     return ort;
-  } catch (err) {
-    throw new Error(`Failed to load onnxruntime-web in worker: ${(err as Error).message}`);
+  } catch {
+    try {
+      const mod = await import('onnxruntime-node');
+      ort = mod.default || mod;
+      return ort;
+    } catch (err) {
+      throw new Error(`Failed to load onnxruntime-web in worker: ${(err as Error).message}`);
+    }
   }
 }
 
@@ -121,6 +162,17 @@ function configureWasm(ortInstance: any, numThreads?: number, wasmPaths?: string
 
   if (wasmPaths) {
     ortInstance.env.wasm.wasmPaths = wasmPaths;
+  } else if (!ortInstance.env.wasm.wasmPaths) {
+    try {
+      const baseHref =
+        (typeof self !== 'undefined' && self.location?.href) ||
+        (typeof window !== 'undefined' && (window as any).location?.href) ||
+        (typeof import.meta !== 'undefined' && import.meta.url) ||
+        '';
+      if (baseHref) {
+        ortInstance.env.wasm.wasmPaths = new URL('./ort/', baseHref).href;
+      }
+    } catch {}
   }
 
   const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
@@ -152,7 +204,8 @@ async function loadVocab(vocabUrlOrPath: string): Promise<string[]> {
   }
 
   // Node filesystem check
-  if (typeof process !== 'undefined' && process.versions?.node) {
+  const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
+  if (isNode) {
     try {
       const fs = await import('node:fs');
       const path = await import('node:path');
@@ -177,13 +230,26 @@ async function loadVocab(vocabUrlOrPath: string): Promise<string[]> {
   }
 
   // Network fetch fallback (only if http/https or browser environment)
-  if (!vocabUrlOrPath.startsWith('http://') && !vocabUrlOrPath.startsWith('https://') && typeof window === 'undefined') {
+  if (!vocabUrlOrPath.startsWith('http://') && !vocabUrlOrPath.startsWith('https://') && isNode) {
     throw new Error(`Vocabulary not found at path: ${vocabUrlOrPath}`);
   }
 
-  const res = await fetch(vocabUrlOrPath);
+  let fetchUrl = vocabUrlOrPath;
+  if (!isNode && !vocabUrlOrPath.startsWith('http://') && !vocabUrlOrPath.startsWith('https://')) {
+    try {
+      const baseHref =
+        (typeof self !== 'undefined' && self.location?.href) ||
+        (typeof window !== 'undefined' && (window as any).location?.href) ||
+        '';
+      if (baseHref) {
+        fetchUrl = new URL(vocabUrlOrPath, baseHref).href;
+      }
+    } catch {}
+  }
+
+  const res = await fetch(fetchUrl);
   if (!res.ok) {
-    throw new Error(`Failed to fetch vocabulary from ${vocabUrlOrPath}: HTTP ${res.status}`);
+    throw new Error(`Failed to fetch vocabulary from ${fetchUrl}: HTTP ${res.status}`);
   }
 
   // Clone response and store in CacheStorage
@@ -229,6 +295,18 @@ async function setupLanguage(
     activeSession = cached.session;
     activeVocab = cached.vocab;
     ctcDecoder = new CTCGreedyDecoder(activeVocab);
+    const engineAdapter: any = {
+      config: { language: lang },
+      getVocab: () => activeVocab,
+      transcribe: async (pcm: Float32Array) => {
+        return runAcousticInference(pcm);
+      },
+    };
+    streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
+      leftContextSamples: 16000,
+      maxBufferSamples: 32000,
+      vadSilenceThreshold: 0.005,
+    });
     workerState = 'READY';
     postWorkerMessage({
       type: 'READY',
@@ -322,6 +400,20 @@ async function setupLanguage(
 
   // Save to LRU cache
   sessionCache.set(lang, { session: activeSession, vocab: activeVocab });
+
+  const engineAdapter: any = {
+    config: { language: lang },
+    getVocab: () => activeVocab,
+    transcribe: async (pcm: Float32Array) => {
+      return runAcousticInference(pcm);
+    },
+  };
+  streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
+    leftContextSamples: 16000,
+    maxBufferSamples: 32000,
+    vadSilenceThreshold: 0.005,
+  });
+
   workerState = 'READY';
 
   postWorkerMessage({
@@ -336,12 +428,11 @@ async function setupLanguage(
 /**
  * Runs feature extraction, acoustic inference, and CTC decoding on audio.
  */
-async function processAudio(pcm: Float32Array, isFinal: boolean, chunkIndex?: number): Promise<void> {
-  if (!activeSession || !ctcDecoder) {
+async function runAcousticInference(pcm: Float32Array): Promise<TranscriptionResult & { iast?: string }> {
+  if (!activeSession) {
     throw new Error('Inference session is not ready.');
   }
 
-  workerState = isFinal ? 'READY' : 'STREAMING';
   const startMs = performance.now();
   const durationMs = (pcm.length / 16000) * 1000;
 
@@ -353,23 +444,15 @@ async function processAudio(pcm: Float32Array, isFinal: boolean, chunkIndex?: nu
   if (rms < 1e-4) {
     const elapsed = performance.now() - startMs;
     const rtf = durationMs > 0 ? elapsed / durationMs : 0;
-    if (isFinal) {
-      postWorkerMessage({
-        type: 'FINAL',
-        text: '',
-        iast: currentLanguage === 'sa' ? '' : undefined,
-        language: currentLanguage,
-        durationMs,
-        inferenceMs: elapsed,
-        rtf,
-        tokens: [],
-      });
-      accumulatedAudio = [];
-      totalAccumulatedSamples = 0;
-      ctcDecoder.reset();
-      workerState = 'READY';
-    }
-    return;
+    return {
+      text: '',
+      iast: currentLanguage === 'sa' ? '' : undefined,
+      language: currentLanguage,
+      durationMs,
+      inferenceMs: elapsed,
+      rtf,
+      tokens: [],
+    };
   }
 
   // 1. Analytical Log-Mel Spectrogram Extraction
@@ -407,39 +490,20 @@ async function processAudio(pcm: Float32Array, isFinal: boolean, chunkIndex?: nu
   }
 
   // 3. CTC Decoding
-  const decoded = isFinal
-    ? decodeCTC(logits, [timeSteps, numClasses], activeVocab)
-    : ctcDecoder.decodeChunk(logits, [timeSteps, numClasses]);
-
+  const decoded = decodeCTC(logits, [timeSteps, numClasses], activeVocab);
   const elapsedMs = performance.now() - startMs;
   const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
   const iastText = currentLanguage === 'sa' ? devanagariToIast(decoded.text) : undefined;
 
-  if (isFinal) {
-    postWorkerMessage({
-      type: 'FINAL',
-      text: decoded.text,
-      iast: iastText,
-      language: currentLanguage,
-      durationMs,
-      inferenceMs: elapsedMs,
-      rtf,
-      tokens: decoded.tokens,
-    });
-    accumulatedAudio = [];
-    totalAccumulatedSamples = 0;
-    ctcDecoder.reset();
-    workerState = 'READY';
-  } else {
-    postWorkerMessage({
-      type: 'PARTIAL',
-      text: decoded.text,
-      iast: iastText,
-      rtf,
-      tokens: decoded.tokens,
-      chunkIndex,
-    });
-  }
+  return {
+    text: decoded.text,
+    iast: iastText,
+    language: currentLanguage,
+    durationMs,
+    inferenceMs: elapsedMs,
+    rtf,
+    tokens: decoded.tokens,
+  };
 }
 
 /**
@@ -478,36 +542,58 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
           return;
         }
 
-        const rawAudio = msg.audio || msg.chunk;
-        if (!rawAudio) {
+        if (!streamingSession) {
           postWorkerMessage({
             type: 'ERROR',
-            message: 'Missing chunk payload',
+            message: 'Streaming session is not initialized.',
             fatal: false,
           });
           return;
         }
 
-        const chunk = rawAudio instanceof Float32Array ? rawAudio : new Float32Array(rawAudio);
-        if (chunk.length > 0) {
-          accumulatedAudio.push(chunk);
-          totalAccumulatedSamples += chunk.length;
-        }
+        const rawAudio = msg.audio || msg.chunk;
+        const chunk = rawAudio
+          ? (rawAudio instanceof Float32Array ? rawAudio : new Float32Array(rawAudio))
+          : new Float32Array(0);
 
-        const isFinal = Boolean(msg.isFinal);
-        const now = performance.now();
-        const shouldEmitPartial = !isFinal && (now - lastPartialTimeMs >= PARTIAL_THROTTLE_MS);
+        workerState = 'STREAMING';
 
-        if (isFinal || shouldEmitPartial) {
-          // Merge accumulated chunks into continuous buffer
-          const merged = new Float32Array(totalAccumulatedSamples);
-          let offset = 0;
-          for (const c of accumulatedAudio) {
-            merged.set(c, offset);
-            offset += c.length;
+        if (msg.isFinal) {
+          if (chunk.length > 0) {
+            await streamingSession.push(chunk);
           }
-          lastPartialTimeMs = now;
-          await processAudio(merged, isFinal, msg.chunkIndex);
+          const finalRes = await streamingSession.finish();
+          workerState = 'READY';
+          postWorkerMessage({
+            type: 'FINAL',
+            text: finalRes.text,
+            committed: finalRes.text,
+            volatile: '',
+            iast: currentLanguage === 'sa' ? (finalRes.iast ?? devanagariToIast(finalRes.text)) : undefined,
+            language: currentLanguage,
+            durationMs: finalRes.durationMs,
+            inferenceMs: finalRes.inferenceMs,
+            rtf: finalRes.rtf,
+            tokens: finalRes.tokens,
+          });
+          streamingSession.reset();
+        } else {
+          const partial = await streamingSession.push(chunk);
+          if (partial) {
+            postWorkerMessage({
+              type: 'PARTIAL',
+              text: partial.text,
+              committed: partial.committed,
+              volatile: partial.volatile,
+              iast: currentLanguage === 'sa' ? devanagariToIast(partial.text) : undefined,
+              language: currentLanguage,
+              rtf: partial.rtf,
+              durationMs: partial.durationMs,
+              inferenceMs: partial.inferenceMs,
+              tokens: partial.tokens,
+              chunkIndex: msg.chunkIndex,
+            });
+          }
         }
         break;
       }
@@ -522,20 +608,30 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
           return;
         }
 
-        const merged = new Float32Array(totalAccumulatedSamples);
-        let offset = 0;
-        for (const c of accumulatedAudio) {
-          merged.set(c, offset);
-          offset += c.length;
+        if (!streamingSession) {
+          return;
         }
-        await processAudio(merged, true);
+
+        const finalRes = await streamingSession.finish();
+        workerState = 'READY';
+        postWorkerMessage({
+          type: 'FINAL',
+          text: finalRes.text,
+          committed: finalRes.text,
+          volatile: '',
+          iast: currentLanguage === 'sa' ? (finalRes.iast ?? devanagariToIast(finalRes.text)) : undefined,
+          language: currentLanguage,
+          durationMs: finalRes.durationMs,
+          inferenceMs: finalRes.inferenceMs,
+          rtf: finalRes.rtf,
+          tokens: finalRes.tokens,
+        });
+        streamingSession.reset();
         break;
       }
 
       case 'RESET': {
-        accumulatedAudio = [];
-        totalAccumulatedSamples = 0;
-        ctcDecoder?.reset();
+        streamingSession?.reset();
         workerState = 'READY';
         break;
       }
@@ -566,9 +662,7 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
   }
 }
 
-// Global Worker Message Handler setup if running in Worker scope
-if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') {
-  self.addEventListener('message', (event: MessageEvent<IngoingMessage>) => {
-    handleIncomingMessage(event.data);
-  });
+workerReadyToDispatch = true;
+for (const m of startupMessageQueue.splice(0)) {
+  handleIncomingMessage(m);
 }

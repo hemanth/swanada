@@ -46,6 +46,7 @@ export class Swanada {
 
   static async create(config: SwanadaConfig = {}): Promise<Swanada> {
     const engine = await AcousticEngine.create(config);
+    await engine.warmup();
     return new Swanada(engine, config);
   }
 
@@ -99,9 +100,6 @@ export class Swanada {
    * Creates a streaming audio transcription session.
    */
   createStream(options?: StreamSessionOptions): SwanadaStream {
-    if ((this.engine as any).warmup) {
-      (this.engine as any).warmup().catch(() => {});
-    }
     const streamSession = new StreamingAcousticEngine(this.engine, this.engine.getVocab(), options);
     return {
       get audioBuffer(): Float32Array {
