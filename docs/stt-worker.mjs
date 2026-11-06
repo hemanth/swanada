@@ -1017,8 +1017,11 @@ async function drainWorkQueue() {
   if (isDrainingWorkQueue) return;
   isDrainingWorkQueue = true;
   try {
+    // Yield a macrotask turn so all queued postMessage IPC events land in pendingWorkQueue first
+    await new Promise((r) => setTimeout(r, 0));
     while (pendingWorkQueue.length > 0) {
       const next = pendingWorkQueue.shift();
+      if (!next) continue;
       if (
         (next.type === 'AUDIO_CHUNK' || next.type === 'PROCESS_CHUNK') &&
         !next.isFinal &&
@@ -1051,10 +1054,12 @@ async function drainWorkQueue() {
             chunk: undefined,
             chunkIndex: lastChunkIndex,
           });
+          await new Promise((r) => setTimeout(r, 0));
           continue;
         }
       }
       await handleIncomingMessage(next);
+      await new Promise((r) => setTimeout(r, 0));
     }
   } finally {
     isDrainingWorkQueue = false;

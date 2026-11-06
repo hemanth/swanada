@@ -753,6 +753,7 @@ async function drainWorkQueue(): Promise<void> {
   if (isDrainingWorkQueue) return;
   isDrainingWorkQueue = true;
   try {
+    await new Promise((r) => setTimeout(r, 0));
     while (pendingWorkQueue.length > 0) {
       if (activeSetupPromise) {
         try { await activeSetupPromise; } catch {}
@@ -790,10 +791,12 @@ async function drainWorkQueue(): Promise<void> {
             chunk: undefined,
             chunkIndex: lastChunkIndex,
           });
+          await new Promise((r) => setTimeout(r, 0));
           continue;
         }
       }
       await handleIncomingMessage(next);
+      await new Promise((r) => setTimeout(r, 0));
     }
   } finally {
     isDrainingWorkQueue = false;

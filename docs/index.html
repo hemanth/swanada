@@ -1282,7 +1282,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.2.2',
+              workerUrl: './stt-worker.mjs?v=1.2.6',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
