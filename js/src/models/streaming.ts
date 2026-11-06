@@ -102,8 +102,15 @@ export class StreamingAcousticEngine {
           // Flush unconfirmed tokens on natural speech pause (turn completion)
           const lastHyp = (this.decoder as any).lastHypTokens || [];
           const comm = this.decoder.getCommittedTokens();
-          if (lastHyp.length > comm.length) {
+          if (
+            lastHyp.length > comm.length &&
+            comm.every((tok: string, idx: number) => tok === lastHyp[idx])
+          ) {
             (this.decoder as any).committedTokens = [...lastHyp];
+            (this.decoder as any).committedText = normalizeIndicText(
+              lastHyp.join(''),
+              (this.decoder as any).options
+            );
           }
           this.baseCommittedTokens = this.decoder.getCommittedTokens();
           this.audioBuffer = new Float32Array(0);

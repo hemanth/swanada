@@ -194,6 +194,7 @@
       border: 1px solid var(--line);
       border-radius: 6px;
       padding: 20px;
+      min-width: 0;
     }
     .panel-title {
       font-family: var(--mono);
@@ -213,7 +214,7 @@
     /* 12-Language Selector Tabs */
     .lang-tabs {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 6px;
       margin-bottom: 20px;
     }

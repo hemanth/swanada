@@ -329,7 +329,10 @@ class SwanadaStream:
             if self.consecutive_silent_samples >= self.pause_threshold_samples:
                 if len(self.audio_buffer) > 0:
                     # Flush unconfirmed tokens on natural speech pause (turn completion)
-                    if len(self.decoder.last_hyp_tokens) > len(self.decoder.committed_tokens):
+                    if (
+                        len(self.decoder.last_hyp_tokens) > len(self.decoder.committed_tokens)
+                        and self.decoder.last_hyp_tokens[:len(self.decoder.committed_tokens)] == self.decoder.committed_tokens
+                    ):
                         self.decoder.committed_tokens = list(self.decoder.last_hyp_tokens)
                     self.base_committed_tokens = list(self.decoder.committed_tokens)
                     self.audio_buffer = np.zeros(0, dtype=np.float32)
