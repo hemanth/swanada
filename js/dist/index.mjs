@@ -2016,6 +2016,7 @@ class CTCGreedyDecoder {
                                                                                  
                                                                                    
                                                     
+                                                                                        
  
 
 class StreamingCTCDecoder {
@@ -2024,6 +2025,7 @@ class StreamingCTCDecoder {
           blankId        ;
           stabilityThreshold        ;
           trailTokens        ;
+          requireStabilityOnWordBoundary         ;
 
           committedTokens           = [];
           committedText         = '';
@@ -2039,6 +2041,7 @@ class StreamingCTCDecoder {
     this.blankId = this.options.blankId ?? 0;
     this.stabilityThreshold = this.options.stabilityThreshold ?? 2;
     this.trailTokens = this.options.trailTokens ?? 3;
+    this.requireStabilityOnWordBoundary = this.options.requireStabilityOnWordBoundary ?? false;
   }
 
   reset()       {
@@ -2068,7 +2071,8 @@ class StreamingCTCDecoder {
     rawTokens          ,
     isStreamEnd          = false,
     durationMs         = 0,
-    inferenceMs         = 0
+    inferenceMs         = 0,
+    allowCommit          = true
   )                      {
     if (isStreamEnd) {
       let allTokens          ;
@@ -2114,7 +2118,7 @@ class StreamingCTCDecoder {
     this.tokenStabilityCounts = newStability;
 
     // Tokens beyond already committed and before the trailing guard zone are lockable
-    const lockableLimit = Math.max(0, rawTokens.length - this.trailTokens);
+    const lockableLimit = allowCommit ? Math.max(0, rawTokens.length - this.trailTokens) : 0;
     const alreadyCommitted = this.committedTokens.length;
 
     for (let i = alreadyCommitted; i < lockableLimit; i++) {
@@ -2122,9 +2126,11 @@ class StreamingCTCDecoder {
       const isWordBoundaryAhead = rawTokens.slice(i + 1).some(
         (tok) => tok.startsWith('\u2581') || tok.startsWith('▁')
       );
-      const isStable = (this.tokenStabilityCounts[i] || 0) >= this.stabilityThreshold;
+      const count = this.tokenStabilityCounts[i] || 0;
+      const isStable = count >= this.stabilityThreshold;
+      const boundaryAllowed = isWordBoundaryAhead && (!this.requireStabilityOnWordBoundary || count >= 2);
 
-      if (isWordBoundaryAhead || isStable) {
+      if (boundaryAllowed || isStable) {
         this.committedTokens.push(rawTokens[i]);
       } else {
         break;
@@ -3027,7 +3033,9 @@ class StreamingAcousticEngine {
     options                       
   ) {
     this.engine = engine;
-    this.decoder = new StreamingCTCDecoder(vocab);
+    this.decoder = new StreamingCTCDecoder(vocab, {
+      requireStabilityOnWordBoundary: true,
+    });
     this.leftContextSamples = options?.leftContextSamples ?? 20480; // 1,280 ms
     this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
@@ -3138,17 +3146,22 @@ class StreamingAcousticEngine {
       const inferenceMs = performance.now() - startInference;
 
       // Track window offset with base committed tokens across segmented pauses
+      const committed = this.decoder.getCommittedTokens();
       let globalTokens          ;
       if (!this.isWindowSliding) {
-        globalTokens = [...this.baseCommittedTokens, ...res.tokens];
+        const windowTokens = [...this.baseCommittedTokens, ...res.tokens];
+        globalTokens = this.alignGrowingWindow(committed, windowTokens, this.baseCommittedTokens.length);
       } else {
-        const committed = this.decoder.getCommittedTokens();
         const [bestOffset, bestRawStart] = this.findWindowAlignment(committed, res.tokens);
         globalTokens = [...committed.slice(0, bestOffset), ...res.tokens.slice(bestRawStart)];
       }
 
+      // Hold irreversible prefix commits during the first <600ms of an utterance segment
+      // while still emitting live volatile partial transcripts from 100ms onward.
+      const allowCommit = this.isWindowSliding || this.audioBuffer.length >= 9600;
+
       // Update streaming decoder with aligned global tokens
-      const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs);
+      const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);
       this.lastPartialTranscript = st;
 
       // Emit new tokens if any
@@ -3194,15 +3207,16 @@ class StreamingAcousticEngine {
         ? this.audioBuffer.slice(-this.maxBufferSamples)
         : this.audioBuffer;
       const tailRes = await this.engine.transcribe(evalBuffer);
+      const committed = this.decoder.getCommittedTokens();
       let globalTokens          ;
       if (!this.isWindowSliding) {
-        globalTokens = [...this.baseCommittedTokens, ...tailRes.tokens];
+        const windowTokens = [...this.baseCommittedTokens, ...tailRes.tokens];
+        globalTokens = this.alignGrowingWindow(committed, windowTokens, this.baseCommittedTokens.length);
       } else {
-        const committed = this.decoder.getCommittedTokens();
         const [bestOffset, bestRawStart] = this.findWindowAlignment(committed, tailRes.tokens);
         globalTokens = [...committed.slice(0, bestOffset), ...tailRes.tokens.slice(bestRawStart)];
       }
-      this.decoder.update(globalTokens, false, durationMs, 0);
+      this.decoder.update(globalTokens, false, durationMs, 0, true);
     }
 
     const streamingTokens = (this.decoder       ).lastHypTokens?.length
@@ -3236,6 +3250,83 @@ class StreamingAcousticEngine {
     }
 
     return result;
+  }
+
+  /**
+   * Aligns committed prefix tokens against a full re-decoded growing window
+   * (`baseCommittedTokens + res.tokens`) so subword insertions/merges earlier in the
+   * window never shift uncommitted indices or duplicate syllables while strictly
+   * preserving `committedTokens` (0.00% churn).
+   */
+          alignGrowingWindow(
+    committedTokens          ,
+    windowTokens          ,
+    baseLen        
+  )           {
+    const cLen = committedTokens.length;
+    if (cLen <= baseLen || windowTokens.length === 0) {
+      return windowTokens;
+    }
+
+    const searchFrom = Math.max(baseLen, cLen - 8);
+    const minEnd = Math.max(baseLen + 1, cLen - 4);
+    const maxEnd = Math.min(windowTokens.length, cLen + 5);
+
+    let bestEnd = -1;
+    let bestMatchLen = 0;
+    let bestDist = 999;
+
+    // 1. Exact suffix match of committedTokens[j..cLen] ending near expected position cLen
+    for (let rEnd = minEnd; rEnd <= maxEnd; rEnd++) {
+      let matchLen = 0;
+      while (
+        cLen - 1 - matchLen >= searchFrom &&
+        rEnd - 1 - matchLen >= baseLen &&
+        committedTokens[cLen - 1 - matchLen] === windowTokens[rEnd - 1 - matchLen]
+      ) {
+        matchLen++;
+      }
+      if (matchLen > 0) {
+        const dist = Math.abs(rEnd - cLen);
+        if (matchLen > bestMatchLen || (matchLen === bestMatchLen && dist < bestDist)) {
+          bestMatchLen = matchLen;
+          bestEnd = rEnd;
+          bestDist = dist;
+        }
+      }
+    }
+
+    if (bestMatchLen > 0 && bestEnd >= 0) {
+      return [...committedTokens, ...windowTokens.slice(bestEnd)];
+    }
+
+    // 2. 1-token boundary revision near-suffix match (committedTokens[j..cLen-1])
+    if (cLen - 1 > baseLen) {
+      for (let rMid = Math.max(baseLen + 1, cLen - 5); rMid <= Math.min(windowTokens.length, cLen + 4); rMid++) {
+        let matchLen = 0;
+        while (
+          cLen - 2 - matchLen >= searchFrom &&
+          rMid - 1 - matchLen >= baseLen &&
+          committedTokens[cLen - 2 - matchLen] === windowTokens[rMid - 1 - matchLen]
+        ) {
+          matchLen++;
+        }
+        if (matchLen > 0) {
+          const rEnd = Math.min(windowTokens.length, rMid + 1);
+          const dist = Math.abs(rEnd - cLen);
+          if (matchLen > bestMatchLen || (matchLen === bestMatchLen && dist < bestDist)) {
+            bestMatchLen = matchLen;
+            bestEnd = rEnd;
+            bestDist = dist;
+          }
+        }
+      }
+      if (bestMatchLen > 0 && bestEnd >= 0) {
+        return [...committedTokens, ...windowTokens.slice(bestEnd)];
+      }
+    }
+
+    return [...committedTokens, ...windowTokens.slice(Math.min(windowTokens.length, cLen))];
   }
 
           findWindowAlignment(committedTokens          , rawTokens          )                   {

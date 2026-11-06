@@ -34,11 +34,13 @@ class StreamingCTCDecoder:
         stability_threshold: int = 2,
         trail_tokens: int = 3,
         suffix_window_tokens: int = 15,
+        require_stability_on_word_boundary: bool = False,
     ):
         self.vocab = vocab
         self.stability_threshold = stability_threshold
         self.trail_tokens = trail_tokens
         self.suffix_window_tokens = suffix_window_tokens
+        self.require_stability_on_word_boundary = require_stability_on_word_boundary
         self.committed_tokens: List[str] = []
         self.committed_text: str = ""
         self.last_hyp_tokens: List[str] = []
@@ -130,6 +132,7 @@ class StreamingCTCDecoder:
         is_stream_end: bool = False,
         duration_ms: float = 0.0,
         inference_ms: float = 0.0,
+        allow_commit: bool = True,
     ) -> StreamingTranscript:
         if is_stream_end:
             if len(raw_tokens) > len(self.committed_tokens):
@@ -167,16 +170,20 @@ class StreamingCTCDecoder:
                 new_stability.append(1)
         self.token_stability_counts = new_stability
 
-        lockable_limit = max(0, len(raw_tokens) - self.trail_tokens)
+        lockable_limit = max(0, len(raw_tokens) - self.trail_tokens) if allow_commit else 0
 
         for i in range(already_committed, lockable_limit):
             is_word_ahead = any(
                 raw_tokens[j].startswith("▁") or raw_tokens[j].startswith("\u2581")
                 for j in range(i + 1, len(raw_tokens))
             )
-            is_stable = self.token_stability_counts[i] >= self.stability_threshold
+            count = self.token_stability_counts[i]
+            is_stable = count >= self.stability_threshold
+            boundary_allowed = is_word_ahead and (
+                not self.require_stability_on_word_boundary or count >= 2
+            )
 
-            if is_word_ahead or is_stable:
+            if boundary_allowed or is_stable:
                 self.committed_tokens.append(raw_tokens[i])
             else:
                 break
@@ -214,7 +221,10 @@ class SwanadaStream:
         vad_silence_threshold: float = 0.005,
     ):
         self.engine = engine
-        self.decoder = StreamingCTCDecoder(engine.vocab)
+        self.decoder = StreamingCTCDecoder(
+            engine.vocab,
+            require_stability_on_word_boundary=True,
+        )
         self.chunk_size_samples = chunk_size_samples
         self.left_context_samples = left_context_samples
         self.max_buffer_samples = max_buffer_samples
@@ -260,6 +270,63 @@ class SwanadaStream:
         else:
             import sys
             print(f"[swanada] Stream callback error: {err}", file=sys.stderr)
+
+    def _align_growing_window(
+        self,
+        committed_tokens: List[str],
+        window_tokens: List[str],
+        base_len: int,
+    ) -> List[str]:
+        c_len = len(committed_tokens)
+        if c_len <= base_len or not window_tokens:
+            return window_tokens
+
+        search_from = max(base_len, c_len - 8)
+        min_end = max(base_len + 1, c_len - 4)
+        max_end = min(len(window_tokens), c_len + 5)
+
+        best_end = -1
+        best_match_len = 0
+        best_dist = 999
+
+        for r_end in range(min_end, max_end + 1):
+            match_len = 0
+            while (
+                c_len - 1 - match_len >= search_from
+                and r_end - 1 - match_len >= base_len
+                and committed_tokens[c_len - 1 - match_len] == window_tokens[r_end - 1 - match_len]
+            ):
+                match_len += 1
+            if match_len > 0:
+                dist = abs(r_end - c_len)
+                if match_len > best_match_len or (match_len == best_match_len and dist < best_dist):
+                    best_match_len = match_len
+                    best_end = r_end
+                    best_dist = dist
+
+        if best_match_len > 0 and best_end >= 0:
+            return list(committed_tokens) + window_tokens[best_end:]
+
+        if c_len - 1 > base_len:
+            for r_mid in range(max(base_len + 1, c_len - 5), min(len(window_tokens), c_len + 4) + 1):
+                match_len = 0
+                while (
+                    c_len - 2 - match_len >= search_from
+                    and r_mid - 1 - match_len >= base_len
+                    and committed_tokens[c_len - 2 - match_len] == window_tokens[r_mid - 1 - match_len]
+                ):
+                    match_len += 1
+                if match_len > 0:
+                    r_end = min(len(window_tokens), r_mid + 1)
+                    dist = abs(r_end - c_len)
+                    if match_len > best_match_len or (match_len == best_match_len and dist < best_dist):
+                        best_match_len = match_len
+                        best_end = r_end
+                        best_dist = dist
+            if best_match_len > 0 and best_end >= 0:
+                return list(committed_tokens) + window_tokens[best_end:]
+
+        return list(committed_tokens) + window_tokens[min(len(window_tokens), c_len):]
 
     def _find_window_alignment(self, committed_tokens: List[str], raw_tokens: List[str]) -> tuple[int, int]:
         if not committed_tokens or not raw_tokens:
@@ -353,14 +420,18 @@ class SwanadaStream:
 
         # Track window offset with base committed tokens across segmented pauses
         if not self.is_window_sliding:
-            global_tokens = self.base_committed_tokens + res.tokens
+            window_tokens = self.base_committed_tokens + res.tokens
+            global_tokens = self._align_growing_window(
+                self.decoder.committed_tokens, window_tokens, len(self.base_committed_tokens)
+            )
         else:
             best_offset, best_raw_start = self._find_window_alignment(
                 self.decoder.committed_tokens, res.tokens
             )
             global_tokens = self.decoder.committed_tokens[:best_offset] + res.tokens[best_raw_start:]
 
-        st = self.decoder.update(global_tokens, False, duration_ms, inference_ms)
+        allow_commit = self.is_window_sliding or len(self.audio_buffer) >= 9600
+        st = self.decoder.update(global_tokens, False, duration_ms, inference_ms, allow_commit=allow_commit)
 
         for cb in self.listeners_partial:
             try:
@@ -383,13 +454,16 @@ class SwanadaStream:
         if len(self.audio_buffer) >= 400 and (len(self.audio_buffer) < 1600 or not self.decoder.last_hyp_tokens):
             tail_res = self.engine.transcribe(self.audio_buffer)
             if not self.is_window_sliding:
-                global_tokens = self.base_committed_tokens + tail_res.tokens
+                window_tokens = self.base_committed_tokens + tail_res.tokens
+                global_tokens = self._align_growing_window(
+                    self.decoder.committed_tokens, window_tokens, len(self.base_committed_tokens)
+                )
             else:
                 best_offset, best_raw_start = self._find_window_alignment(
                     self.decoder.committed_tokens, tail_res.tokens
                 )
                 global_tokens = self.decoder.committed_tokens[:best_offset] + tail_res.tokens[best_raw_start:]
-            self.decoder.update(global_tokens, False, duration_ms, 0.0)
+            self.decoder.update(global_tokens, False, duration_ms, 0.0, allow_commit=True)
 
         streaming_tokens = (
             list(self.decoder.last_hyp_tokens)

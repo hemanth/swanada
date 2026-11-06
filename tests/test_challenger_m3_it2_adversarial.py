@@ -72,7 +72,7 @@ def test_continuous_speech_streaming_9s_monotonicity_and_zero_churn() -> None:
     final_res = stream.finish()
     assert chunks_emitted >= 28
     assert final_res.rtf < 1.0, f"RTF {final_res.rtf:.4f} exceeded 1.0"
-    assert "स्वातन्त्र्येणास्य्यज्ञानं" in final_res.text
+    assert "स्वातन्त्र्येणास्य विज्ञानं" in final_res.text
 
 
 def test_continuous_speech_streaming_18s_monotonicity_and_zero_churn() -> None:

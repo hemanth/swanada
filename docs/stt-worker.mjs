@@ -20,7 +20,8 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 
 let swanadaMod = null;
 try {
-  swanadaMod = await import('./swanada.mjs');
+  const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.1.1' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');

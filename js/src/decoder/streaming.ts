@@ -21,8 +21,9 @@ export interface StreamingTranscript {
 export interface StreamingDecoderOptions extends NormalizeOptions {
   blankId?: number;             // Default: 0
   stabilityThreshold?: number;  // Consecutive chunk matches to lock (Default: 2)
-  trailTokens?: number;         // Minimum uncommitted trailing tokens (Default: 2)
+  trailTokens?: number;         // Minimum uncommitted trailing tokens (Default: 3)
   spaceMarker?: string;         // Default: '\u2581'
+  requireStabilityOnWordBoundary?: boolean; // Require >=2 matches even when space ahead
 }
 
 export class StreamingCTCDecoder {
@@ -31,6 +32,7 @@ export class StreamingCTCDecoder {
   private blankId: number;
   private stabilityThreshold: number;
   private trailTokens: number;
+  private requireStabilityOnWordBoundary: boolean;
 
   private committedTokens: string[] = [];
   private committedText: string = '';
@@ -46,6 +48,7 @@ export class StreamingCTCDecoder {
     this.blankId = this.options.blankId ?? 0;
     this.stabilityThreshold = this.options.stabilityThreshold ?? 2;
     this.trailTokens = this.options.trailTokens ?? 3;
+    this.requireStabilityOnWordBoundary = this.options.requireStabilityOnWordBoundary ?? false;
   }
 
   reset(): void {
@@ -75,7 +78,8 @@ export class StreamingCTCDecoder {
     rawTokens: string[],
     isStreamEnd: boolean = false,
     durationMs: number = 0,
-    inferenceMs: number = 0
+    inferenceMs: number = 0,
+    allowCommit: boolean = true
   ): StreamingTranscript {
     if (isStreamEnd) {
       let allTokens: string[];
@@ -121,7 +125,7 @@ export class StreamingCTCDecoder {
     this.tokenStabilityCounts = newStability;
 
     // Tokens beyond already committed and before the trailing guard zone are lockable
-    const lockableLimit = Math.max(0, rawTokens.length - this.trailTokens);
+    const lockableLimit = allowCommit ? Math.max(0, rawTokens.length - this.trailTokens) : 0;
     const alreadyCommitted = this.committedTokens.length;
 
     for (let i = alreadyCommitted; i < lockableLimit; i++) {
@@ -129,9 +133,11 @@ export class StreamingCTCDecoder {
       const isWordBoundaryAhead = rawTokens.slice(i + 1).some(
         (tok) => tok.startsWith('\u2581') || tok.startsWith('▁')
       );
-      const isStable = (this.tokenStabilityCounts[i] || 0) >= this.stabilityThreshold;
+      const count = this.tokenStabilityCounts[i] || 0;
+      const isStable = count >= this.stabilityThreshold;
+      const boundaryAllowed = isWordBoundaryAhead && (!this.requireStabilityOnWordBoundary || count >= 2);
 
-      if (isWordBoundaryAhead || isStable) {
+      if (boundaryAllowed || isStable) {
         this.committedTokens.push(rawTokens[i]);
       } else {
         break;
