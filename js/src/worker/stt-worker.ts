@@ -741,22 +741,81 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
   }
 }
 
+function toFloat32Chunk(rawAudio: any): Float32Array {
+  if (!rawAudio) return new Float32Array(0);
+  return rawAudio instanceof Float32Array ? rawAudio : new Float32Array(rawAudio);
+}
+
+const pendingWorkQueue: any[] = [];
+let isDrainingWorkQueue = false;
+
+async function drainWorkQueue(): Promise<void> {
+  if (isDrainingWorkQueue) return;
+  isDrainingWorkQueue = true;
+  try {
+    while (pendingWorkQueue.length > 0) {
+      if (activeSetupPromise) {
+        try { await activeSetupPromise; } catch {}
+      }
+      const next = pendingWorkQueue.shift();
+      if (!next) continue;
+      if (
+        (next.type === 'AUDIO_CHUNK' || next.type === 'PROCESS_CHUNK') &&
+        !next.isFinal &&
+        pendingWorkQueue.length > 0
+      ) {
+        const chunks = [toFloat32Chunk(next.audio || next.chunk)];
+        let lastChunkIndex = next.chunkIndex;
+        while (
+          pendingWorkQueue.length > 0 &&
+          (pendingWorkQueue[0].type === 'AUDIO_CHUNK' || pendingWorkQueue[0].type === 'PROCESS_CHUNK') &&
+          !pendingWorkQueue[0].isFinal
+        ) {
+          const m = pendingWorkQueue.shift();
+          chunks.push(toFloat32Chunk(m.audio || m.chunk));
+          if (m.chunkIndex !== undefined) lastChunkIndex = m.chunkIndex;
+        }
+        if (chunks.length > 1) {
+          let totalLen = 0;
+          for (const c of chunks) totalLen += c.length;
+          const merged = new Float32Array(totalLen);
+          let offset = 0;
+          for (const c of chunks) {
+            merged.set(c, offset);
+            offset += c.length;
+          }
+          await handleIncomingMessage({
+            ...next,
+            audio: merged,
+            chunk: undefined,
+            chunkIndex: lastChunkIndex,
+          });
+          continue;
+        }
+      }
+      await handleIncomingMessage(next);
+    }
+  } finally {
+    isDrainingWorkQueue = false;
+  }
+}
+
 function dispatchIncomingMessage(msg: any): void {
   if (!msg || !msg.type) return;
   if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE' || msg.type === 'SET_DENOISE') {
+    if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE') {
+      pendingWorkQueue.length = 0;
+    }
     const p = handleIncomingMessage(msg);
     if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE') {
       activeSetupPromise = p;
     }
   } else {
-    inferenceQueue = inferenceQueue
-      .then(async () => {
-        if (activeSetupPromise) {
-          try { await activeSetupPromise; } catch {}
-        }
-        await handleIncomingMessage(msg);
-      })
-      .catch(() => {});
+    if (msg.type === 'RESET') {
+      pendingWorkQueue.length = 0;
+    }
+    pendingWorkQueue.push(msg);
+    drainWorkQueue().catch(() => {});
   }
 }
 

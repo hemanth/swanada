@@ -28,8 +28,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const fetchPromise =
+    req.mode === 'navigate' ? fetch(req, { cache: 'no-cache' }) : fetch(req);
+
   event.respondWith(
-    fetch(req)
+    fetchPromise
       .then((res) => {
         if (!res || res.status === 0) return res;
         const headers = new Headers(res.headers);

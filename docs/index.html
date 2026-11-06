@@ -827,7 +827,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm } from './swanada.mjs?v=1.2.0';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm } from './swanada.mjs?v=1.2.1';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -1193,7 +1193,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.2.0',
+              workerUrl: './stt-worker.mjs?v=1.2.1',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
