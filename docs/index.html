@@ -1105,10 +1105,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         // Reset worker stream
         workerClient.startStream();
 
-        // Stream chunk-by-chunk (1600 samples = 100ms at 100ms intervals)
+        // Stream chunk-by-chunk paced by real wall-clock time (immune to mobile timer throttling)
         const chunkSize = 1600;
         let offset = 0;
         const total = pcm.length;
+        const streamStartMs = performance.now();
 
         presetIntervalId = setInterval(() => {
           if (offset >= total) {
@@ -1118,7 +1119,8 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             return;
           }
 
-          const end = Math.min(offset + chunkSize, total);
+          const elapsedSamples = Math.floor(((performance.now() - streamStartMs) / 1000) * 16000);
+          const end = Math.min(total, Math.max(offset + chunkSize, elapsedSamples));
           const chunk = pcm.subarray(offset, end);
           offset = end;
 
@@ -1530,10 +1532,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       }
       workerClient.startStream();
 
-      // Stream file chunk-by-chunk in real time
+      // Stream file chunk-by-chunk in real time (wall-clock paced)
       const chunkSize = 1600;
       let offset = 0;
       const total = pcm.length;
+      const fileStartMs = performance.now();
 
       return new Promise((resolve) => {
         const intervalId = setInterval(() => {
@@ -1543,7 +1546,8 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             return;
           }
 
-          const end = Math.min(offset + chunkSize, total);
+          const elapsedSamples = Math.floor(((performance.now() - fileStartMs) / 1000) * 32000);
+          const end = Math.min(total, Math.max(offset + chunkSize, elapsedSamples));
           const chunk = pcm.subarray(offset, end);
           offset = end;
 
