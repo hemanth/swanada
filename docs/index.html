@@ -1028,6 +1028,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     let presetPlaybackNode = null;
     let presetIntervalId = null;
+    let activeStreamCancel = null;
 
     function stopPresetPlayback() {
       if (presetPlaybackNode) {
@@ -1038,6 +1039,100 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         clearInterval(presetIntervalId);
         presetIntervalId = null;
       }
+      if (activeStreamCancel) {
+        activeStreamCancel();
+        activeStreamCancel = null;
+      }
+    }
+
+    function streamPcmToWorker(pcm, rateMultiplier = 1) {
+      const chunkSize = 1600;
+      let offset = 0;
+      const total = pcm.length;
+      const streamStartMs = performance.now();
+      let cancelled = false;
+      let finished = false;
+
+      return new Promise((resolve, reject) => {
+        const cleanup = () => {
+          if (presetIntervalId) {
+            clearInterval(presetIntervalId);
+            presetIntervalId = null;
+          }
+          document.removeEventListener('visibilitychange', onVisChange);
+        };
+
+        activeStreamCancel = () => {
+          cancelled = true;
+          cleanup();
+        };
+
+        const flushViaMessageChannel = () => {
+          cleanup();
+          const ch = new MessageChannel();
+          const bgChunk = 8000; // 500ms slices keep partials flowing even when screen is locked
+          ch.port1.onmessage = () => {
+            if (cancelled || finished) return;
+            if (offset >= total) {
+              finished = true;
+              workerClient.finishStream().then(resolve).catch(reject);
+              return;
+            }
+            const end = Math.min(total, offset + bgChunk);
+            const slice = pcm.subarray(offset, end);
+            offset = end;
+            oscilloscopeData.set(slice.subarray(0, Math.min(slice.length, oscilloscopeData.length)));
+            workerClient.pushAudio(slice, false);
+            if (offset >= total) {
+              finished = true;
+              workerClient.finishStream().then(resolve).catch(reject);
+            } else {
+              ch.port2.postMessage(0);
+            }
+          };
+          ch.port2.postMessage(0);
+        };
+
+        const onVisChange = () => {
+          if (document.hidden && !cancelled && !finished) {
+            flushViaMessageChannel();
+          }
+        };
+
+        if (document.hidden) {
+          flushViaMessageChannel();
+          return;
+        }
+
+        document.addEventListener('visibilitychange', onVisChange);
+        presetIntervalId = setInterval(() => {
+          if (cancelled || finished) {
+            cleanup();
+            return;
+          }
+          if (document.hidden) {
+            flushViaMessageChannel();
+            return;
+          }
+          if (offset >= total) {
+            finished = true;
+            cleanup();
+            workerClient.finishStream().then(resolve).catch(reject);
+            return;
+          }
+          const elapsedSamples = Math.floor(((performance.now() - streamStartMs) / 1000) * 16000 * rateMultiplier);
+          const end = Math.min(total, Math.max(offset + chunkSize, elapsedSamples));
+          const chunk = pcm.subarray(offset, end);
+          offset = end;
+          oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
+          workerClient.pushAudio(chunk, false);
+          if (offset >= total) {
+            finished = true;
+            cleanup();
+            workerClient.finishStream().then(resolve).catch(reject);
+          }
+        }, rateMultiplier > 1 ? 50 : 100);
+      });
     }
 
     function resetTranscriptSurface(showPlaceholder = false) {
@@ -1102,38 +1197,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           }
         } catch (_) {}
 
-        // Reset worker stream
+        // Reset worker stream and stream PCM chunks (foreground timer + background MessageChannel fallback)
         workerClient.startStream();
-
-        // Stream chunk-by-chunk paced by real wall-clock time (immune to mobile timer throttling)
-        const chunkSize = 1600;
-        let offset = 0;
-        const total = pcm.length;
-        const streamStartMs = performance.now();
-
-        presetIntervalId = setInterval(() => {
-          if (offset >= total) {
-            clearInterval(presetIntervalId);
-            presetIntervalId = null;
-            workerClient.finishStream();
-            return;
-          }
-
-          const elapsedSamples = Math.floor(((performance.now() - streamStartMs) / 1000) * 16000);
-          const end = Math.min(total, Math.max(offset + chunkSize, elapsedSamples));
-          const chunk = pcm.subarray(offset, end);
-          offset = end;
-
-          // Update oscilloscope so visualizer bounces live
-          oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
-
-          workerClient.pushAudio(chunk, false);
-          if (offset >= total) {
-            clearInterval(presetIntervalId);
-            presetIntervalId = null;
-            workerClient.finishStream();
-          }
-        }, 100);
+        streamPcmToWorker(pcm, 1).catch((err) => {
+          console.error('Preset stream completion error:', err);
+        });
       } catch (err) {
         console.error('Preset streaming error:', err);
         liveBadge.textContent = 'Error';
@@ -1536,34 +1604,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         await activeInitPromise;
       }
       workerClient.startStream();
-
-      // Stream file chunk-by-chunk in real time (wall-clock paced)
-      const chunkSize = 1600;
-      let offset = 0;
-      const total = pcm.length;
-      const fileStartMs = performance.now();
-
-      return new Promise((resolve) => {
-        const intervalId = setInterval(() => {
-          if (offset >= total) {
-            clearInterval(intervalId);
-            workerClient.finishStream().then(resolve);
-            return;
-          }
-
-          const elapsedSamples = Math.floor(((performance.now() - fileStartMs) / 1000) * 32000);
-          const end = Math.min(total, Math.max(offset + chunkSize, elapsedSamples));
-          const chunk = pcm.subarray(offset, end);
-          offset = end;
-
-          oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
-          workerClient.pushAudio(chunk, false);
-          if (offset >= total) {
-            clearInterval(intervalId);
-            workerClient.finishStream().then(resolve);
-          }
-        }, 50);
-      });
+      return streamPcmToWorker(pcm, 2);
     }
 
     // Setup Event Listeners
