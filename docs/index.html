@@ -1128,6 +1128,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
 
           workerClient.pushAudio(chunk, false);
+          if (offset >= total) {
+            clearInterval(presetIntervalId);
+            presetIntervalId = null;
+            workerClient.finishStream();
+          }
         }, 100);
       } catch (err) {
         console.error('Preset streaming error:', err);
@@ -1553,6 +1558,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
           workerClient.pushAudio(chunk, false);
+          if (offset >= total) {
+            clearInterval(intervalId);
+            workerClient.finishStream().then(resolve);
+          }
         }, 50);
       });
     }
