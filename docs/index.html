@@ -913,29 +913,35 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       const clean = (text || '').trim();
       if (!clean) return false;
       let copied = false;
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        try {
-          await navigator.clipboard.writeText(clean);
-          copied = true;
-        } catch (_) {}
-      }
-      if (!copied) {
-        try {
-          const ta = document.createElement('textarea');
-          ta.value = clean;
-          ta.setAttribute('readonly', '');
-          ta.style.position = 'fixed';
-          ta.style.top = '-9999px';
-          ta.style.left = '-9999px';
-          ta.style.opacity = '0';
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          ta.setSelectionRange(0, clean.length);
-          copied = document.execCommand('copy');
-          document.body.removeChild(ta);
-        } catch (_) {}
-      }
+
+      // 1. Synchronous copy while transient user activation is guaranteed active on mobile browsers
+      try {
+        const sel = window.getSelection ? window.getSelection() : null;
+        const savedRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+        const ta = document.createElement('textarea');
+        ta.value = clean;
+        ta.setAttribute('readonly', '');
+        ta.setAttribute('aria-hidden', 'true');
+        ta.style.position = 'fixed';
+        ta.style.top = '0';
+        ta.style.left = '0';
+        ta.style.width = '1px';
+        ta.style.height = '1px';
+        ta.style.opacity = '0';
+        ta.style.pointerEvents = 'none';
+        document.body.appendChild(ta);
+        ta.focus({ preventScroll: true });
+        ta.select();
+        ta.setSelectionRange(0, clean.length);
+        copied = Boolean(document.execCommand && document.execCommand('copy'));
+        document.body.removeChild(ta);
+        if (sel) {
+          sel.removeAllRanges();
+          if (savedRange) sel.addRange(savedRange);
+        }
+      } catch (_) {}
+
+      // 2. Update UI state & telemetry immediately (never hang on unfocused mobile clipboard prompts)
       window.__swanadaLastCopiedText = clean;
       if (btnEl) {
         btnEl.textContent = 'Copied';
@@ -946,6 +952,18 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           btnEl.classList.remove('copied');
         }, 1400);
       }
+
+      // 3. Modern async Clipboard API write with bounded timeout
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+          await Promise.race([
+            navigator.clipboard.writeText(clean),
+            new Promise((resolve) => setTimeout(resolve, 400)),
+          ]);
+          copied = true;
+        } catch (_) {}
+      }
+
       return copied;
     }
 
