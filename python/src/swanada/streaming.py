@@ -209,8 +209,8 @@ class SwanadaStream:
         self,
         engine: AcousticEngine,
         chunk_size_samples: int = 5120,     # 320 ms
-        left_context_samples: int = 16000,   # 1,000 ms
-        max_buffer_samples: int = 32000,     # 2,000 ms
+        left_context_samples: int = 20480,   # 1,280 ms
+        max_buffer_samples: int = 61440,     # 3,840 ms
         vad_silence_threshold: float = 0.005,
     ):
         self.engine = engine

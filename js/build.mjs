@@ -36,6 +36,11 @@ const frontendSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'audio', 'front
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
 
+const denoiseSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'audio', 'denoise.ts'), 'utf8'))
+  .replace(/import .*? from '\.\/frontend\.ts';/g, '')
+  .replace(/import type .*?;/g, '')
+  .replace(/^export /gm, '');
+
 const captureSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'audio', 'audio-capture.ts'), 'utf8'))
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
@@ -60,6 +65,7 @@ const cacheSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'cache.t
 
 const engineSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'engine.ts'), 'utf8'))
   .replace(/import .*? from '\.\.\/audio\/frontend\.ts';/g, '')
+  .replace(/import .*? from '\.\.\/audio\/denoise\.ts';/g, '')
   .replace(/import .*? from '\.\.\/decoder\/ctc\.ts';/g, '')
   .replace(/import .*? from '\.\/cache\.ts';/g, '')
   .replace(/import type .*?;/g, '')
@@ -86,6 +92,7 @@ const workerClientSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'worker', '
 
 const workerHandlerSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'worker', 'stt-worker.ts'), 'utf8'))
   .replace(/import .*? from '\.\.\/audio\/frontend\.ts';/g, '')
+  .replace(/import .*? from '\.\.\/audio\/denoise\.ts';/g, '')
   .replace(/import .*? from '\.\.\/decoder\/ctc\.ts';/g, '')
   .replace(/import .*? from '\.\.\/tokenizers\/iast\.ts';/g, '')
   .replace(/import .*? from '\.\.\/models\/cache\.ts';/g, '')
@@ -133,7 +140,10 @@ export {
   STATIC_WINDOW,
   STATIC_MEL_FB,
   extractLogMelFeatures,
+  enhanceSpeechWithTelemetry,
+  denoisePcm16k,
   dedupMarks,
+  repairBrahmicOrthography,
   normalizeIndicText,
   assembleText,
   isSpecialToken,
@@ -169,6 +179,7 @@ const esmBundle = `// Auto-generated ESM bundle for swanada v1.0.0
 ${ingestSrc}
 ${resampleSrc}
 ${frontendSrc}
+${denoiseSrc}
 ${captureSrc}
 ${normalizerSrc}
 ${ctcSrc}
@@ -215,6 +226,7 @@ const cjsBody = `// Auto-generated CommonJS bundle for swanada v1.0.0
 ${ingestSrc}
 ${resampleSrc}
 ${frontendSrc}
+${denoiseSrc}
 ${captureSrc}
 ${normalizerSrc}
 ${ctcSrc}
@@ -251,7 +263,10 @@ module.exports = {
   STATIC_WINDOW,
   STATIC_MEL_FB,
   extractLogMelFeatures,
+  enhanceSpeechWithTelemetry,
+  denoisePcm16k,
   dedupMarks,
+  repairBrahmicOrthography,
   normalizeIndicText,
   assembleText,
   isSpecialToken,

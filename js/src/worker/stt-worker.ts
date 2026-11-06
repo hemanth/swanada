@@ -6,6 +6,7 @@
  */
 
 import { extractLogMelFeatures } from '../audio/frontend.ts';
+import { enhanceSpeechWithTelemetry } from '../audio/denoise.ts';
 import { decodeCTC, CTCGreedyDecoder } from '../decoder/ctc.ts';
 import { devanagariToIast } from '../tokenizers/iast.ts';
 import { loadModelAsset, CACHE_STORAGE_NAME } from '../models/cache.ts';
@@ -75,12 +76,18 @@ export interface SetLanguageMessage {
   vocabUrl?: string;
 }
 
+export interface SetDenoiseMessage {
+  type: 'SET_DENOISE';
+  enabled: boolean;
+}
+
 export type IngoingMessage =
   | InitMessage
   | AudioChunkMessage
   | FinishMessage
   | ResetMessage
-  | SetLanguageMessage;
+  | SetLanguageMessage
+  | SetDenoiseMessage;
 
 // State management
 let workerState: WorkerState = 'UNINITIALIZED';
@@ -91,6 +98,8 @@ let activeVocab: string[] = [];
 let ctcDecoder: CTCGreedyDecoder | null = null;
 let executionProvider: ExecutionProvider = 'wasm';
 let cacheStorageName: string = CACHE_STORAGE_NAME;
+let denoiseEnabled: boolean = true;
+let lastEstimatedSnrDb: number = 0;
 
 // Session cache (LRU) for instant language switching without redownloading
 const sessionCache = new Map<string, { session: any; vocab: string[] }>();
@@ -176,12 +185,16 @@ function configureWasm(ortInstance: any, numThreads?: number, wasmPaths?: string
   }
 
   const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const devMem = typeof navigator !== 'undefined' ? (navigator as any)?.deviceMemory || 8 : 8;
+  const isMobileRuntime = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4;
+  const maxThreads = isMobileRuntime ? 2 : 4;
   let threads = 1;
   if (numThreads && numThreads >= 1) {
-    threads = isIsolated ? Math.min(4, numThreads) : 1;
+    threads = isIsolated ? Math.min(maxThreads, numThreads) : 1;
   } else if (isIsolated) {
     const cores = typeof navigator !== 'undefined' ? navigator?.hardwareConcurrency || 4 : 4;
-    threads = Math.min(4, Math.max(1, cores - 1));
+    threads = Math.min(maxThreads, Math.max(1, cores - 1));
   }
   ortInstance.env.wasm.numThreads = threads;
   return threads;
@@ -303,8 +316,8 @@ async function setupLanguage(
       },
     };
     streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-      leftContextSamples: 16000,
-      maxBufferSamples: 32000,
+      leftContextSamples: 20480,
+      maxBufferSamples: 61440,
       vadSilenceThreshold: 0.005,
     });
     workerState = 'READY';
@@ -337,7 +350,7 @@ async function setupLanguage(
     fromCache: false,
   });
 
-  const modelBytes = await loadModelAsset(effectiveModelUrl, cacheStorageName, (p) => {
+  const progressHandler = (p: any) => {
     postWorkerMessage({
       type: 'PROGRESS',
       stage: p.phase === 'cache' ? 'downloading' : 'downloading',
@@ -346,7 +359,36 @@ async function setupLanguage(
       totalBytes: p.totalBytes,
       fromCache: p.fromCache,
     });
-  });
+  };
+
+  const isNodeEnv = typeof process !== 'undefined' && Boolean(process.versions?.node);
+  let modelBytes: Uint8Array;
+  try {
+    modelBytes = await loadModelAsset(effectiveModelUrl, cacheStorageName, progressHandler);
+  } catch (err) {
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (!isNodeEnv && !isOffline && !effectiveModelUrl.startsWith('https://huggingface.co/')) {
+      const hfFile = lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`;
+      const hfFallbackUrl = `https://huggingface.co/gnumanth/swanada/resolve/main/onnx/${hfFile}`;
+      modelBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
+    } else {
+      throw err;
+    }
+  }
+
+  // Evict oldest cached ONNX session before allocating a new 187.5 MB model on mobile / constrained RAM
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const devMem = typeof navigator !== 'undefined' ? (navigator as any)?.deviceMemory || 8 : 8;
+  const maxCachedSessions = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4 ? 1 : 2;
+  while (sessionCache.size >= maxCachedSessions) {
+    const oldestKey = sessionCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    const oldEntry = sessionCache.get(oldestKey);
+    sessionCache.delete(oldestKey);
+    try {
+      await oldEntry?.session?.release?.();
+    } catch {}
+  }
 
   // 4. Compile Session
   postWorkerMessage({
@@ -409,8 +451,8 @@ async function setupLanguage(
     },
   };
   streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-    leftContextSamples: 16000,
-    maxBufferSamples: 32000,
+    leftContextSamples: 20480,
+    maxBufferSamples: 61440,
     vadSilenceThreshold: 0.005,
   });
 
@@ -455,8 +497,30 @@ async function runAcousticInference(pcm: Float32Array): Promise<TranscriptionRes
     };
   }
 
+  // 0. Multi-Stage Background Noise Cancellation & Speech Enhancement Layer
+  let cleanPcm = pcm;
+  if (denoiseEnabled) {
+    const enhanced = enhanceSpeechWithTelemetry(pcm);
+    lastEstimatedSnrDb = enhanced.estimatedSnrDb;
+    if (!enhanced.isSpeechLikely) {
+      const elapsed = performance.now() - startMs;
+      const rtf = durationMs > 0 ? elapsed / durationMs : 0;
+      return {
+        text: '',
+        iast: currentLanguage === 'sa' ? '' : undefined,
+        language: currentLanguage,
+        durationMs,
+        inferenceMs: elapsed,
+        rtf,
+        tokens: [],
+        snrDb: lastEstimatedSnrDb,
+      };
+    }
+    cleanPcm = enhanced.pcm;
+  }
+
   // 1. Analytical Log-Mel Spectrogram Extraction
-  const mel = extractLogMelFeatures(pcm);
+  const mel = extractLogMelFeatures(cleanPcm);
 
   // 2. Acoustic Model Inference
   let featsTensor: any = null;
@@ -574,6 +638,7 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
             durationMs: finalRes.durationMs,
             inferenceMs: finalRes.inferenceMs,
             rtf: finalRes.rtf,
+            snrDb: lastEstimatedSnrDb,
             tokens: finalRes.tokens,
           });
           streamingSession.reset();
@@ -588,6 +653,7 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
               iast: currentLanguage === 'sa' ? devanagariToIast(partial.text) : undefined,
               language: currentLanguage,
               rtf: partial.rtf,
+              snrDb: lastEstimatedSnrDb,
               durationMs: partial.durationMs,
               inferenceMs: partial.inferenceMs,
               tokens: partial.tokens,
@@ -638,6 +704,11 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
 
       case 'SET_LANGUAGE': {
         await setupLanguage(msg.language, msg.modelUrl, msg.vocabUrl);
+        break;
+      }
+
+      case 'SET_DENOISE': {
+        denoiseEnabled = Boolean(msg.enabled);
         break;
       }
 

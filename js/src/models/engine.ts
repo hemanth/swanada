@@ -5,6 +5,7 @@
  */
 
 import { extractLogMelFeatures } from '../audio/frontend.ts';
+import { enhanceSpeechWithTelemetry } from '../audio/denoise.ts';
 import { decodeCTC, CTCGreedyDecoder } from '../decoder/ctc.ts';
 import { loadModelAsset } from './cache.ts';
 import type {
@@ -415,6 +416,31 @@ export class AcousticEngine {
       };
     }
 
+    if (!this.acousticSession) {
+      throw new Error('Acoustic model session is not initialized. Ensure models are available at modelPath.');
+    }
+
+    // Multi-stage background noise cancellation & speech enhancement layer (default: enabled)
+    let cleanPcm = pcm;
+    let snrDb: number | undefined = undefined;
+    if (this.config.denoise !== false) {
+      const enhanced = enhanceSpeechWithTelemetry(pcm);
+      snrDb = enhanced.estimatedSnrDb;
+      if (!enhanced.isSpeechLikely) {
+        const elapsedMs = performance.now() - startTotal;
+        return {
+          text: '',
+          language: this.config.language || 'sa',
+          durationMs,
+          inferenceMs: elapsedMs,
+          rtf: durationMs > 0 ? (elapsedMs / durationMs) : 0,
+          tokens: [],
+          snrDb,
+        };
+      }
+      cleanPcm = enhanced.pcm;
+    }
+
     // 1. Feature extraction
     let features: Float32Array;
     let numFrames: number;
@@ -424,8 +450,8 @@ export class AcousticEngine {
       let lenTensor: any = null;
       let outputs: any = null;
       try {
-        audioTensor = new this.ort.Tensor('float32', pcm, [1, pcm.length]);
-        lenTensor = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(pcm.length)]), [1]);
+        audioTensor = new this.ort.Tensor('float32', cleanPcm, [1, cleanPcm.length]);
+        lenTensor = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(cleanPcm.length)]), [1]);
         outputs = await this.preprocessorSession.run({
           audio_signal: audioTensor,
           length: lenTensor,
@@ -442,13 +468,9 @@ export class AcousticEngine {
       }
     } else {
       // Analytical frontend (default fast path)
-      const melResult = extractLogMelFeatures(pcm);
+      const melResult = extractLogMelFeatures(cleanPcm);
       features = melResult.features;
       numFrames = melResult.numFrames;
-    }
-
-    if (!this.acousticSession) {
-      throw new Error('Acoustic model session is not initialized. Ensure models are available at modelPath.');
     }
 
     // 2. Acoustic inference
@@ -471,6 +493,7 @@ export class AcousticEngine {
       inferenceMs: totalInferenceMs,
       rtf,
       tokens: decodeRes.tokens,
+      snrDb,
     };
   }
 

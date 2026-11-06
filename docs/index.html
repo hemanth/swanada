@@ -31,7 +31,7 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin="anonymous" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Noto+Sans+Bengali:wght@400;500&family=Noto+Sans+Gujarati:wght@400;500&family=Noto+Sans+Gurmukhi:wght@400;500&family=Noto+Sans+Kannada:wght@400;500&family=Noto+Sans+Malayalam:wght@400;500&family=Noto+Sans+Oriya:wght@400;500&family=Noto+Sans+Tamil:wght@400;500&family=Noto+Sans+Telugu:wght@400;500&family=Noto+Serif+Devanagari:wght@400;500;600&family=Playfair+Display:ital,wght@0,600;0,700;1,500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Noto+Sans+Bengali:wght@400;500&family=Noto+Sans+Gujarati:wght@400;500&family=Noto+Sans+Gurmukhi:wght@400;500&family=Noto+Sans+Kannada:wght@400;500&family=Noto+Sans+Malayalam:wght@400;500&family=Noto+Sans+Oriya:wght@400;500&family=Noto+Sans+Tamil:wght@400;500&family=Noto+Sans+Telugu:wght@400;500&family=Noto+Serif+Devanagari:wght@400;500;600&family=Playfair+Display:ital,wght@0,600;0,700;1,500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous" />
 
   <style>
     :root {
@@ -158,12 +158,18 @@
       border-radius: 4px;
       display: flex;
       align-items: center;
-      gap: 14px;
+      flex-wrap: wrap;
+      gap: 10px 14px;
       font-family: var(--mono);
       font-size: 12px;
     }
+    #loaderMsg {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
     .progress-track {
-      flex: 1;
+      flex: 1 1 120px;
+      min-width: 80px;
       height: 6px;
       background: var(--line);
       border-radius: 3px;
@@ -209,6 +215,47 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+    }
+    .transcript-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .copy-btn {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      text-transform: none;
+      letter-spacing: 0;
+      transition: all 0.15s ease;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+    .copy-btn:hover:not(:disabled) {
+      border-color: var(--line-strong);
+      background: #eae6db;
+    }
+    .copy-btn:disabled {
+      opacity: 0.42;
+      cursor: not-allowed;
+    }
+    .copy-btn.copied {
+      background: var(--ok-soft);
+      border-color: var(--ok);
+      color: var(--ok);
     }
 
     /* 12-Language Selector Tabs */
@@ -379,20 +426,32 @@
       font-size: 20px;
       line-height: 1.6;
       color: var(--ink);
+      user-select: text;
+      -webkit-user-select: text;
+      cursor: text;
+      overflow-wrap: anywhere;
     }
     .committed-text {
       color: var(--ink);
       font-weight: 500;
+      user-select: text;
+      -webkit-user-select: text;
+      cursor: text;
     }
     .volatile-text {
       color: var(--ink-muted);
       opacity: 0.6;
       font-style: italic;
+      user-select: text;
+      -webkit-user-select: text;
+      cursor: text;
     }
     .placeholder-text {
       color: var(--ink-faint);
       font-size: 14px;
       font-family: var(--mono);
+      user-select: none;
+      -webkit-user-select: none;
     }
 
     .iast-box {
@@ -403,6 +462,10 @@
       font-size: 14px;
       color: var(--ink-muted);
       font-style: italic;
+      user-select: text;
+      -webkit-user-select: text;
+      cursor: text;
+      overflow-wrap: anywhere;
     }
 
     .token-ribbon {
@@ -410,6 +473,8 @@
       flex-wrap: wrap;
       gap: 4px;
       margin-top: 12px;
+      user-select: none;
+      -webkit-user-select: none;
     }
     .token-pill {
       font-family: var(--mono);
@@ -427,6 +492,14 @@
       grid-template-columns: repeat(4, 1fr);
       gap: 10px;
       margin-bottom: 20px;
+    }
+    @media (max-width: 520px) {
+      .telemetry-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .lang-tabs {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
     }
     .telem-card {
       background: var(--surface);
@@ -457,6 +530,7 @@
     }
     .code-tabs {
       display: flex;
+      flex-wrap: wrap;
       gap: 6px;
       margin-bottom: 12px;
     }
@@ -609,7 +683,10 @@
           </div>
         </div>
 
-        <div class="panel-title">Audio Input Mode</div>
+        <div class="panel-title">
+          <span>Audio Input Mode</span>
+          <button type="button" class="copy-btn copied" id="denoiseBtn" title="Toggle multi-stage 80Hz HPF + 50/60Hz Hum Notch + Ephraim-Malah Spectral Wiener Noise Cancellation" aria-pressed="true">ANC + Wiener: ON</button>
+        </div>
         <div class="input-section">
           <div class="mic-row">
             <button class="btn" id="micBtn">
@@ -622,8 +699,8 @@
           <div class="drop-zone" id="dropZone">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             <p><strong>Drop audio file here</strong> or click to upload</p>
-            <p style="font-size: 11px; margin-top: 4px; color: var(--ink-faint);">WAV, MP3, OGG, FLAC (Auto-resampled to 16 kHz)</p>
-            <input type="file" id="fileInput" accept="audio/*,.wav,.mp3,.ogg,.flac" style="display: none;" />
+            <p style="font-size: 11px; margin-top: 4px; color: var(--ink-faint);">WAV, MP3, M4A, OGG, FLAC, WEBM (Auto-resampled to 16 kHz)</p>
+            <input type="file" id="fileInput" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm,.aac" style="display: none;" />
           </div>
 
           <div class="presets-wrap">
@@ -639,7 +716,11 @@
       <div class="panel">
         <div class="panel-title">
           <span>Oscilloscope &amp; Waveform Trace</span>
-          <span style="font-size: 11px; color: var(--ink-muted);" id="sampleRateLabel">16 kHz Mono</span>
+          <span class="transcript-actions" style="font-size: 11px; color: var(--ink-muted);">
+            <span id="snrBadge">SNR --</span>
+            <span>·</span>
+            <span id="sampleRateLabel">16 kHz Mono</span>
+          </span>
         </div>
         <div class="screen-panel">
           <canvas id="waveCanvas"></canvas>
@@ -647,7 +728,11 @@
 
         <div class="panel-title">
           <span>Live Transcription Display</span>
-          <span id="liveBadge" style="font-size: 11px; color: var(--ink-muted);">Idle</span>
+          <span class="transcript-actions">
+            <span id="liveBadge" style="font-size: 11px; color: var(--ink-muted);">Idle</span>
+            <button type="button" class="copy-btn" id="copyIastBtn" title="Copy Roman IAST transliteration" aria-label="Copy Roman IAST transliteration" style="display: none;" disabled>Copy IAST</button>
+            <button type="button" class="copy-btn" id="copyTranscriptBtn" title="Copy streamed transcript" aria-label="Copy streamed transcript" disabled>Copy</button>
+          </span>
         </div>
         <div class="transcription-wrap" id="transcriptionWrap">
           <div id="transcriptionBox">
@@ -755,11 +840,19 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     let workerClient = null;
     let audioCtx = null;
+    let workletModuleLoaded = false;
     let micStream = null;
+    let micSourceNode = null;
     let workletNode = null;
+    let silentSinkNode = null;
     let isRecording = false;
+    let denoiseEnabled = true;
     let activeLanguage = 'sa';
+    let currentFullTranscript = '';
+    let currentIastTranscript = '';
     let oscilloscopeData = new Float32Array(512);
+
+    const HF_MODEL_BASE = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx';
 
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -769,6 +862,9 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     const loaderWrap = document.getElementById('loaderWrap');
     const cacheBadge = document.getElementById('cacheBadge');
     const waveCanvas = document.getElementById('waveCanvas');
+    const sampleRateLabel = document.getElementById('sampleRateLabel');
+    const snrBadge = document.getElementById('snrBadge');
+    const denoiseBtn = document.getElementById('denoiseBtn');
     const committedText = document.getElementById('committedText');
     const volatileText = document.getElementById('volatileText');
     const placeholder = document.getElementById('placeholder');
@@ -777,7 +873,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     const rtfVal = document.getElementById('rtfVal');
     const durationVal = document.getElementById('durationVal');
     const latencyVal = document.getElementById('latencyVal');
+    const engineVal = document.getElementById('engineVal');
     const liveBadge = document.getElementById('liveBadge');
+    const copyTranscriptBtn = document.getElementById('copyTranscriptBtn');
+    const copyIastBtn = document.getElementById('copyIastBtn');
     const micBtn = document.getElementById('micBtn');
     const micBtnText = document.getElementById('micBtnText');
     const dropZone = document.getElementById('dropZone');
@@ -785,6 +884,87 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     const clearBtn = document.getElementById('clearBtn');
     const presetChips = document.getElementById('presetChips');
     const activeLangCode = document.getElementById('activeLangCode');
+
+    window.__swanadaLastCopiedText = '';
+    window.__swanadaGetStreamedText = () => currentFullTranscript;
+
+    function isLocalDevHost() {
+      const h = location.hostname || '';
+      return (
+        h === 'localhost' ||
+        h === '127.0.0.1' ||
+        /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)
+      );
+    }
+
+    function syncCopyButtons() {
+      const hasTranscript = currentFullTranscript.trim().length > 0;
+      copyTranscriptBtn.disabled = !hasTranscript;
+      if (activeLanguage === 'sa' && currentIastTranscript.trim().length > 0) {
+        copyIastBtn.style.display = 'inline-flex';
+        copyIastBtn.disabled = false;
+      } else {
+        copyIastBtn.style.display = 'none';
+        copyIastBtn.disabled = true;
+      }
+    }
+
+    async function copyTextToClipboard(text, btnEl, defaultLabel) {
+      const clean = (text || '').trim();
+      if (!clean) return false;
+      let copied = false;
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+          await navigator.clipboard.writeText(clean);
+          copied = true;
+        } catch (_) {}
+      }
+      if (!copied) {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = clean;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.top = '-9999px';
+          ta.style.left = '-9999px';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          ta.setSelectionRange(0, clean.length);
+          copied = document.execCommand('copy');
+          document.body.removeChild(ta);
+        } catch (_) {}
+      }
+      window.__swanadaLastCopiedText = clean;
+      if (btnEl) {
+        btnEl.textContent = 'Copied';
+        btnEl.classList.add('copied');
+        clearTimeout(btnEl._copyResetTimer);
+        btnEl._copyResetTimer = setTimeout(() => {
+          btnEl.textContent = defaultLabel;
+          btnEl.classList.remove('copied');
+        }, 1400);
+      }
+      return copied;
+    }
+
+    async function ensureAudioContext() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        try {
+          await Promise.race([
+            audioCtx.resume(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('AudioContext resume timeout')), 600))
+          ]);
+        } catch (_) {
+          // Non-gesture automated environment: continue gracefully
+        }
+      }
+      return audioCtx;
+    }
 
     // Preset evaluation utterances
     const PRESETS = {
@@ -816,6 +996,18 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       }
     }
 
+    function resetTranscriptSurface(showPlaceholder = false) {
+      placeholder.style.display = showPlaceholder ? 'block' : 'none';
+      committedText.textContent = '';
+      volatileText.textContent = '';
+      currentFullTranscript = '';
+      currentIastTranscript = '';
+      iastBox.textContent = '';
+      iastBox.style.display = 'none';
+      tokenRibbon.innerHTML = '';
+      syncCopyButtons();
+    }
+
     function updatePresets(lang) {
       presetChips.innerHTML = '';
       const list = PRESETS[lang] || [];
@@ -833,17 +1025,13 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         stopRecording();
         stopPresetPlayback();
 
-        if (!workerClient) await initEngine(lang);
-        if (activeLanguage !== lang) await initEngine(lang);
+        if (!workerClient || activeLanguage !== lang) {
+          await initEngine(lang);
+        }
 
-        placeholder.style.display = 'none';
-        committedText.textContent = '';
-        volatileText.textContent = '';
+        resetTranscriptSurface(false);
         if (lang === 'sa') {
           iastBox.style.display = 'block';
-          iastBox.textContent = '';
-        } else {
-          iastBox.style.display = 'none';
         }
         liveBadge.textContent = 'Streaming...';
 
@@ -852,19 +1040,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         if (!res.ok) throw new Error(`Could not load audio sample from ${sampleUrl}`);
         const arrayBuf = await res.arrayBuffer();
 
-        if (!audioCtx) {
-          audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        }
-        if (audioCtx.state === 'suspended') {
-          try {
-            await Promise.race([
-              audioCtx.resume(),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('AudioContext resume timeout')), 500))
-            ]);
-          } catch (_) {
-            // Non-gesture automated environment: resume suspended gracefully
-          }
-        }
+        await ensureAudioContext();
 
         let audioBuffer;
         try {
@@ -925,17 +1101,27 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     // Canvas Oscilloscope Loop
     function initCanvas() {
-      const dpr = window.devicePixelRatio || 1;
-      const rect = waveCanvas.getBoundingClientRect();
-      waveCanvas.width = rect.width * dpr;
-      waveCanvas.height = rect.height * dpr;
       const ctx = waveCanvas.getContext('2d');
-      ctx.scale(dpr, dpr);
+      let cssWidth = 300;
+      let cssHeight = 90;
+
+      function resizeCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = waveCanvas.getBoundingClientRect();
+        cssWidth = Math.max(1, rect.width);
+        cssHeight = Math.max(1, rect.height);
+        waveCanvas.width = Math.round(cssWidth * dpr);
+        waveCanvas.height = Math.round(cssHeight * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
 
       function render() {
         requestAnimationFrame(render);
-        const w = rect.width;
-        const h = rect.height;
+        const w = cssWidth;
+        const h = cssHeight;
         ctx.fillStyle = '#0a0a0c';
         ctx.fillRect(0, 0, w, h);
 
@@ -967,14 +1153,14 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     async function initEngine(lang = 'sa') {
       try {
         activeLanguage = lang;
-        window.__swanadaLoadedLang = lang;
         activeLangCode.textContent = lang;
         updatePresets(lang);
+        syncCopyButtons();
 
         loaderWrap.style.display = 'flex';
         loaderMsg.textContent = `Loading acoustic model for [${lang}]...`;
-        progressBar.style.width = '30%';
-        loaderPct.textContent = '30%';
+        progressBar.style.width = '12%';
+        loaderPct.textContent = '12%';
 
         if (!workerClient) {
           workerClient = new SwanadaWorkerClient({
@@ -988,13 +1174,26 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             const pct = Math.round((p.progress || 0) * 100);
             progressBar.style.width = `${pct}%`;
             loaderPct.textContent = `${pct}%`;
-            loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()}: Loading acoustic model [${activeLanguage}]...`;
+            if (p.loadedBytes && p.totalBytes && p.totalBytes > 1048576) {
+              const mbDone = (p.loadedBytes / 1048576).toFixed(1);
+              const mbTotal = (p.totalBytes / 1048576).toFixed(1);
+              loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()} ${mbDone} / ${mbTotal} MB [${activeLanguage}]...`;
+            } else {
+              loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()}: Loading acoustic model [${activeLanguage}]...`;
+            }
           });
 
           workerClient.on('ready', (readyEvt) => {
             window.__swanadaReady = true;
-            statusDot.className = 'status-dot ready';
             const langCode = (readyEvt && readyEvt.language) || activeLanguage;
+            window.__swanadaLoadedLang = langCode;
+            if (readyEvt && readyEvt.fromCache) {
+              window.__swanadaCacheHit = true;
+            }
+            if (readyEvt && readyEvt.numThreads) {
+              engineVal.textContent = `WASM ${readyEvt.numThreads}T`;
+            }
+            statusDot.className = 'status-dot ready';
             statusText.textContent = `Swanada Engine Ready (${langCode.toUpperCase()})`;
             progressBar.style.width = '100%';
             loaderPct.textContent = '100%';
@@ -1003,29 +1202,53 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           workerClient.on('partial', (data) => {
             placeholder.style.display = 'none';
-            committedText.textContent = data.committed || '';
-            volatileText.textContent = data.volatile ? ' ' + data.volatile : '';
-            if (activeLanguage === 'sa' && data.text) {
+            const nextCommitted = data.committed || '';
+            const nextVolatile = data.volatile ? (nextCommitted ? ' ' + data.volatile : data.volatile) : '';
+            if (committedText.textContent !== nextCommitted) {
+              committedText.textContent = nextCommitted;
+            }
+            if (volatileText.textContent !== nextVolatile) {
+              volatileText.textContent = nextVolatile;
+            }
+            currentFullTranscript = (data.text || (nextCommitted + nextVolatile)).trim();
+            if (activeLanguage === 'sa' && currentFullTranscript) {
+              currentIastTranscript = data.iast || transliterateIast(currentFullTranscript);
               iastBox.style.display = 'block';
-              iastBox.textContent = transliterateIast(data.text);
+              if (iastBox.textContent !== currentIastTranscript) {
+                iastBox.textContent = currentIastTranscript;
+              }
             } else {
+              currentIastTranscript = '';
               iastBox.style.display = 'none';
             }
+            syncCopyButtons();
             if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
+            if (typeof data.snrDb === 'number' && data.snrDb > 0) snrBadge.textContent = `SNR ${Math.round(data.snrDb)}dB`;
             if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
             if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
           });
 
           workerClient.on('final', (data) => {
             placeholder.style.display = 'none';
-            committedText.textContent = data.text;
-            volatileText.textContent = '';
-            if (activeLanguage === 'sa' && data.text) {
+            const finalText = (data.text || currentFullTranscript || '').trim();
+            if (committedText.textContent !== finalText) {
+              committedText.textContent = finalText;
+            }
+            if (volatileText.textContent !== '') {
+              volatileText.textContent = '';
+            }
+            currentFullTranscript = finalText;
+            if (activeLanguage === 'sa' && finalText) {
+              currentIastTranscript = data.iast || transliterateIast(finalText);
               iastBox.style.display = 'block';
-              iastBox.textContent = transliterateIast(data.text);
+              if (iastBox.textContent !== currentIastTranscript) {
+                iastBox.textContent = currentIastTranscript;
+              }
             } else {
+              currentIastTranscript = '';
               iastBox.style.display = 'none';
             }
+            syncCopyButtons();
             window.__swanadaLastResult = data;
             window.__swanadaMetrics = {
               rtf: data.rtf,
@@ -1033,6 +1256,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
               latencyMs: data.inferenceMs,
             };
             if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
+            if (typeof data.snrDb === 'number' && data.snrDb > 0) snrBadge.textContent = `SNR ${Math.round(data.snrDb)}dB`;
             if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
             if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
             liveBadge.textContent = 'Completed';
@@ -1052,18 +1276,25 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
         const modelFile = lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`;
         const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
+        const modelUrl = isLocalDevHost()
+          ? `../models/onnx/${modelFile}`
+          : `${HF_MODEL_BASE}/${modelFile}`;
+        const vocabUrl = `./vocabularies/${vocabFile}`;
 
         await workerClient.init({
           language: lang,
-          modelUrl: `../models/onnx/${modelFile}`,
-          vocabUrl: `../models/vocabularies/${vocabFile}`,
+          modelUrl,
+          vocabUrl,
         });
 
+        window.__swanadaLoadedLang = lang;
         statusDot.className = 'status-dot ready';
         statusText.textContent = `Swanada Engine Ready (${lang.toUpperCase()})`;
         if (lang !== 'sa') {
+          currentIastTranscript = '';
           iastBox.style.display = 'none';
         }
+        syncCopyButtons();
 
         // Check CacheStorage
         if ('caches' in window) {
@@ -1089,7 +1320,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       return workerClient.transcribe(pcm);
     };
 
-    // Live Microphone Capture
+    // Live Microphone Capture (Desktop & Mobile Hardware Sample-Rate Safe)
     async function toggleMicrophone() {
       if (isRecording) {
         stopRecording();
@@ -1100,42 +1331,79 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     async function startRecording() {
       try {
-        if (!audioCtx) {
-          audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        stopPresetPlayback();
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+          throw new Error('Microphone capture requires HTTPS or localhost secure context.');
         }
+
+        if (!workerClient) {
+          await initEngine(activeLanguage);
+        } else {
+          await workerClient.whenReady();
+        }
+
+        await ensureAudioContext();
         if (audioCtx.state === 'suspended') {
           await audioCtx.resume();
         }
 
         micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            channelCount: 1,
-            sampleRate: 16000,
+            channelCount: { ideal: 1 },
             echoCancellation: true,
             noiseSuppression: true,
+            autoGainControl: true,
           }
         });
 
-        await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js');
-        const source = audioCtx.createMediaStreamSource(micStream);
+        if (!workletModuleLoaded) {
+          await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js');
+          workletModuleLoaded = true;
+        }
+
+        micSourceNode = audioCtx.createMediaStreamSource(micStream);
         workletNode = new AudioWorkletNode(audioCtx, 'swanada-audio-capture-processor', {
-          processorOptions: { chunkSamples: 1600, sampleRate: audioCtx.sampleRate }
+          processorOptions: {
+            chunkSamples: 1600,
+            sampleRate: audioCtx.sampleRate,
+            noiseSuppressionEnabled: denoiseEnabled,
+          }
         });
+
+        // Connect through a zero-gain sink so iOS Safari and Android Chrome pump AudioWorklet frames continuously
+        silentSinkNode = audioCtx.createGain();
+        silentSinkNode.gain.value = 0;
+
+        resetTranscriptSurface(false);
+        if (activeLanguage === 'sa') {
+          iastBox.style.display = 'block';
+        }
+        workerClient.startStream();
 
         workletNode.port.onmessage = (event) => {
           const payload = event.data;
           if (payload && payload.audioChunk) {
             const chunk = payload.audioChunk;
             oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
+            if (typeof payload.snrDb === 'number' && isFinite(payload.snrDb)) {
+              snrBadge.textContent = `SNR ${Math.max(0, Math.round(payload.snrDb))}dB`;
+            }
             if (workerClient) {
               const sendChunk = new Float32Array(chunk);
               workerClient.pushAudio(sendChunk, false);
             }
-            workletNode.port.postMessage({ type: 'recycle', buffer: chunk.buffer }, [chunk.buffer]);
+            if (!payload.isTail) {
+              workletNode.port.postMessage({ type: 'recycle', buffer: chunk.buffer }, [chunk.buffer]);
+            }
           }
         };
 
-        source.connect(workletNode);
+        micSourceNode.connect(workletNode);
+        workletNode.connect(silentSinkNode);
+        silentSinkNode.connect(audioCtx.destination);
+
+        const hwKhz = Math.round(audioCtx.sampleRate / 100) / 10;
+        sampleRateLabel.textContent = audioCtx.sampleRate === 16000 ? '16 kHz Mono' : `${hwKhz}k→16kHz Mono`;
         isRecording = true;
         micBtn.className = 'btn recording';
         micBtnText.textContent = 'Stop Recording';
@@ -1150,19 +1418,29 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       if (!isRecording) return;
       isRecording = false;
       if (workletNode) {
-        workletNode.disconnect();
+        try { workletNode.port.postMessage({ type: 'flush' }); } catch {}
+        try { workletNode.disconnect(); } catch {}
         workletNode = null;
+      }
+      if (micSourceNode) {
+        try { micSourceNode.disconnect(); } catch {}
+        micSourceNode = null;
+      }
+      if (silentSinkNode) {
+        try { silentSinkNode.disconnect(); } catch {}
+        silentSinkNode = null;
       }
       if (micStream) {
         micStream.getTracks().forEach(t => t.stop());
         micStream = null;
       }
+      sampleRateLabel.textContent = '16 kHz Mono';
       micBtn.className = 'btn';
       micBtnText.textContent = 'Record Mic';
       statusDot.className = 'status-dot ready';
       liveBadge.textContent = 'Processing Final...';
       if (workerClient) {
-        workerClient.pushAudio(new Float32Array(0), true);
+        workerClient.finishStream().catch(() => {});
       }
     }
 
@@ -1178,9 +1456,14 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       loaderPct.textContent = '40%';
 
       const arrayBuf = await file.arrayBuffer();
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      if (audioCtx.state === 'suspended') await audioCtx.resume();
-      const audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+      await ensureAudioContext();
+      let audioBuffer;
+      try {
+        audioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
+      } catch (_) {
+        const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 16000, 16000);
+        audioBuffer = await offlineCtx.decodeAudioData(arrayBuf.slice(0));
+      }
 
       let pcm = audioBuffer.getChannelData(0);
       if (audioBuffer.sampleRate !== 16000) {
@@ -1188,9 +1471,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       }
 
       loaderWrap.style.display = 'none';
-      placeholder.style.display = 'none';
-      committedText.textContent = '';
-      volatileText.textContent = '';
+      resetTranscriptSurface(false);
+      if (activeLanguage === 'sa') {
+        iastBox.style.display = 'block';
+      }
       liveBadge.textContent = 'Streaming...';
 
       if (!workerClient) await initEngine(activeLanguage);
@@ -1220,16 +1504,41 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     }
 
     // Setup Event Listeners
+    denoiseBtn.addEventListener('click', () => {
+      denoiseEnabled = !denoiseEnabled;
+      denoiseBtn.setAttribute('aria-pressed', String(denoiseEnabled));
+      denoiseBtn.textContent = denoiseEnabled ? 'ANC + Wiener: ON' : 'ANC + Wiener: OFF';
+      if (denoiseEnabled) {
+        denoiseBtn.classList.add('copied');
+      } else {
+        denoiseBtn.classList.remove('copied');
+      }
+      if (workerClient) {
+        workerClient.setDenoise(denoiseEnabled);
+      }
+      if (workletNode) {
+        try {
+          workletNode.port.postMessage({ type: 'config', noiseSuppressionEnabled: denoiseEnabled });
+        } catch {}
+      }
+    });
+
+    copyTranscriptBtn.addEventListener('click', () => {
+      const liveText = currentFullTranscript || `${committedText.textContent || ''}${volatileText.textContent || ''}`.trim();
+      copyTextToClipboard(liveText, copyTranscriptBtn, 'Copy');
+    });
+
+    copyIastBtn.addEventListener('click', () => {
+      const liveIast = currentIastTranscript || (iastBox.textContent || '').trim();
+      copyTextToClipboard(liveIast, copyIastBtn, 'Copy IAST');
+    });
+
     micBtn.addEventListener('click', toggleMicrophone);
     clearBtn.addEventListener('click', () => {
       stopPresetPlayback();
       stopRecording();
       if (workerClient) workerClient.reset();
-      placeholder.style.display = 'block';
-      committedText.textContent = '';
-      volatileText.textContent = '';
-      iastBox.style.display = 'none';
-      tokenRibbon.innerHTML = '';
+      resetTranscriptSurface(true);
       rtfVal.textContent = '0.00x';
       durationVal.textContent = '0.00s';
       latencyVal.textContent = '0ms';

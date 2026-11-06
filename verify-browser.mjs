@@ -199,7 +199,51 @@ async function main() {
     assert.equal(streamingResult.iastDisplay, 'block', 'IAST transliteration box should be visible for Sanskrit');
     assert.ok(streamingResult.iastContent.trim().length > 0, 'IAST transliterated text should not be empty');
     assert.ok(streamingResult.metrics, 'Metrics object must be populated on completion');
-    console.log('Step 3 Passed: Audio streaming, non-empty transcript, and double-FINAL regression resolved.');
+
+    // Step 3b: Streamed text selectability, 1-tap Copy & Copy IAST buttons, and ANC/Wiener toggle
+    const copyAndAncCheck = await page.evaluate(async () => {
+      const committedEl = document.querySelector('#committedText');
+      const userSelect = committedEl ? getComputedStyle(committedEl).userSelect : '';
+      const copyBtn = document.querySelector('#copyTranscriptBtn');
+      const copyIastBtn = document.querySelector('#copyIastBtn');
+      const denoiseBtn = document.querySelector('#denoiseBtn');
+
+      const copyDisabledBefore = copyBtn ? copyBtn.disabled : true;
+      copyBtn?.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const copiedDevanagari = window.__swanadaLastCopiedText || '';
+      const copyLabelAfter = copyBtn?.textContent || '';
+
+      copyIastBtn?.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const copiedIast = window.__swanadaLastCopiedText || '';
+
+      const ancInitial = denoiseBtn?.getAttribute('aria-pressed');
+      denoiseBtn?.click();
+      const ancToggledOff = denoiseBtn?.getAttribute('aria-pressed');
+      denoiseBtn?.click();
+      const ancRestoredOn = denoiseBtn?.getAttribute('aria-pressed');
+
+      return {
+        userSelect,
+        copyDisabledBefore,
+        copiedDevanagari,
+        copyLabelAfter,
+        copiedIast,
+        ancInitial,
+        ancToggledOff,
+        ancRestoredOn,
+      };
+    });
+    assert.equal(copyAndAncCheck.userSelect, 'text', 'Streamed transcript must have user-select: text');
+    assert.equal(copyAndAncCheck.copyDisabledBefore, false, 'Copy button must be enabled when streamed text exists');
+    assert.equal(copyAndAncCheck.copiedDevanagari, streamingResult.committedText.trim(), 'Copy button must copy streamed transcript');
+    assert.equal(copyAndAncCheck.copyLabelAfter, 'Copied', 'Copy button should show Copied confirmation');
+    assert.equal(copyAndAncCheck.copiedIast, streamingResult.iastContent.trim(), 'Copy IAST button must copy Roman IAST');
+    assert.equal(copyAndAncCheck.ancInitial, 'true', 'ANC + Wiener noise cancellation should default to ON');
+    assert.equal(copyAndAncCheck.ancToggledOff, 'false', 'ANC + Wiener button should toggle OFF');
+    assert.equal(copyAndAncCheck.ancRestoredOn, 'true', 'ANC + Wiener button should toggle back ON');
+    console.log('Step 3 Passed: Audio streaming, copiable transcript, and ANC/Wiener toggle verified.');
 
     // Step 4: Multi-language tab switching verification
     console.log('Testing language tab switching (kn, hi, en)...');
@@ -250,6 +294,7 @@ async function main() {
 
     // Step 7: Viewport responsiveness without horizontal overflow
     const viewports = [
+      { width: 320, height: 680 },
       { width: 360, height: 740 },
       { width: 390, height: 844 },
       { width: 412, height: 915 },

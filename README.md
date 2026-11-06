@@ -74,11 +74,16 @@ cat stream.wav | swanada -l ta --stream
 ## Architecture & Pipeline
 
 ```
-[ Audio Input (PCM 16 kHz Mono) ]
+[ Audio Input (Native 44.1/48 kHz Mic or 16 kHz PCM) ]
                │
                ▼
-   [ Audio Frontend: preprocessor.onnx ]
-   (80-channel Log-Mel Filterbank, 25ms window, 10ms hop)
+   [ Multi-Stage ASR Background Noise Cancellation ]
+   (80 Hz Butterworth HPF -> 50/60 Hz Hum Notches ->
+    SNR-Adaptive Ephraim-Malah Spectral Wiener Filter)
+               │
+               ▼
+   [ Audio Frontend: 80-Channel Log-Mel Filterbank ]
+   (25ms Hann window, 10ms hop, per-feature CMVN)
                │
                ▼
    [ Acoustic Encoder: Conformer Backbone ]
@@ -89,12 +94,16 @@ cat stream.wav | swanada -l ta --stream
    (257-token language-specific linear projection: 512 -> 257)
                │
                ▼
-   [ Linear-Time CTC Greedy Decoder ]
-   (Argmax -> Dedup consecutive tokens -> Drop blank 0 -> NFC normalization)
+   [ Stabilized Prefix-Locking CTC Decoder + Orthographic Normalizer ]
+   (Two-zone committed/volatile streaming + Brahmic matra repair + NFC)
                │
                ▼
-   [ Transcription: Native Script / Classical Sanskrit IAST ]
+   [ Transcription: Copiable Native Script / Classical Sanskrit IAST ]
 ```
+
+## Live Playground
+
+- Interactive Web Studio (Desktop & Mobile Streaming + ANC + 1-Tap Copy): [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
 
 ## Model Weights & Hugging Face Hub
 

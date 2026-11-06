@@ -18,8 +18,14 @@ from .frontend import (
 )
 from .normalizer import (
     dedup_marks,
+    repair_brahmic_orthography,
     normalize_indic_text,
     assemble_text,
+)
+from .denoise import (
+    DenoiseTelemetry,
+    enhance_speech_with_telemetry,
+    denoise_pcm_16k,
 )
 from .decoder import (
     decode_ctc,
@@ -80,8 +86,12 @@ __all__ = [
     "hz_to_mel",
     "mel_to_hz",
     "dedup_marks",
+    "repair_brahmic_orthography",
     "normalize_indic_text",
     "assemble_text",
+    "DenoiseTelemetry",
+    "enhance_speech_with_telemetry",
+    "denoise_pcm_16k",
     "decode_ctc",
     "decode_ctc_tokens",
     "is_special_token",

@@ -25,6 +25,8 @@ import numpy as np
 import onnxruntime as ort
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "python" / "src"))
+from swanada.normalizer import normalize_indic_text
 
 
 def levenshtein_distance(ref: list, hyp: list) -> int:
@@ -99,8 +101,8 @@ def ctc_greedy_decode(logits: np.ndarray, vocab: list[str]) -> str:
             if p != 0 and p < len(vocab):  # class 0 is <blank>
                 tokens.append(vocab[p])
             prev = p
-    raw_text = "".join(tokens).replace("\u2581", " ").replace("▁", " ")
-    return unicodedata.normalize("NFC", raw_text)
+    raw_text = "".join(tokens)
+    return normalize_indic_text(raw_text)
 
 
 def load_audio_pcm(wav_path: Path) -> np.ndarray:

@@ -1,0 +1,26 @@
+# Swanada (स्वनद) — In-Browser 16 kHz Multilingual Speech-to-Text
+
+> Sub-second client-side streaming & batch speech-to-text for Classical Sanskrit (`sa`), Indian English (`en`), and 10 Indic languages (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) powered by INT8 Conformer-CTC ONNX + WebAssembly SIMD with zero server dependencies.
+
+- Live Studio: https://hemanth.github.io/swanada/
+- Source Repository: https://github.com/hemanth/swanada
+- Model Weights & Vocabularies: https://huggingface.co/gnumanth/swanada
+
+## Supported Languages (12)
+- `sa` — Classical Sanskrit (Devanagari + deterministic Roman IAST transliteration)
+- `en` — Indian English
+- `hi` — Hindi
+- `kn` — Kannada
+- `mr` — Marathi
+- `bn` — Bengali
+- `ta` — Tamil
+- `te` — Telugu
+- `ml` — Malayalam
+- `gu` — Gujarati
+- `pa` — Punjabi
+- `or` — Odia
+
+## Key Capabilities
+- Real-time in-browser streaming via `AudioWorklet` (anti-aliased 16 kHz resampling) + `Web Worker` (`onnxruntime-web` WASM SIMD) with two-zone (`committed` + `volatile`) prefix-locked CTC decoding (`0.00%` pause churn).
+- Offline persistence via browser `CacheStorage` + `IndexedDB` (`swanada-onnx-v1.0.0`).
+- Multi-runtime API parity across Browser ESM, Node.js CJS/ESM, Python (`swanada`), and CLI (`swanada`).

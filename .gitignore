@@ -27,6 +27,7 @@ models/onnx/*.onnx
 
 # Temporary / Scratch audio files & benchmark cache
 *.wav
+!docs/samples/*.wav
 *.mp3
 *.flac
 *.ogg

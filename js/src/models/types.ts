@@ -17,6 +17,8 @@ export interface SwanadaEngineConfig {
   numThreads?: number;                     // Default: auto (up to 4)
   wasmPaths?: string;
   cacheStorageName?: string;
+  /** Enable multi-stage background noise cancellation & speech enhancement (default: true) */
+  denoise?: boolean;
 }
 
 export interface ModelAssetProgress {
@@ -41,4 +43,5 @@ export interface TranscriptionResult {
   inferenceMs: number;
   rtf: number;
   tokens: string[];
+  snrDb?: number;
 }

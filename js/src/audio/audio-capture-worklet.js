@@ -15,6 +15,47 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
     this.vadEnabled = opts.vadEnabled !== false;
     this.silenceGateEnabled = Boolean(opts.silenceGateEnabled);
     this.vadHangoverFrames = Number(opts.vadHangoverFrames) || 2;
+    this.noiseSuppressionEnabled = Boolean(opts.noiseSuppressionEnabled);
+
+    // 16 kHz post-decimation biquad states for 80 Hz HPF + 50 Hz / 60 Hz hum notch + online noise floor
+    // 80 Hz 2nd-order Butterworth HPF @ 16000 Hz
+    const hpOmega = (2.0 * Math.PI * 80.0) / 16000.0;
+    const hpSin = Math.sin(hpOmega);
+    const hpCos = Math.cos(hpOmega);
+    const hpAlpha = hpSin / (2.0 * 0.7071067811865476);
+    const hpA0 = 1.0 + hpAlpha;
+    this.hpB0 = ((1.0 + hpCos) * 0.5) / hpA0;
+    this.hpB1 = -(1.0 + hpCos) / hpA0;
+    this.hpB2 = ((1.0 + hpCos) * 0.5) / hpA0;
+    this.hpA1 = (-2.0 * hpCos) / hpA0;
+    this.hpA2 = (1.0 - hpAlpha) / hpA0;
+    this.hpX1 = 0.0; this.hpX2 = 0.0; this.hpY1 = 0.0; this.hpY2 = 0.0;
+
+    // 50 Hz & 60 Hz Q=22 hum notch biquads @ 16000 Hz
+    const n50W = (2.0 * Math.PI * 50.0) / 16000.0;
+    const n50Cos = Math.cos(n50W);
+    const n50Alpha = Math.sin(n50W) / 44.0;
+    const n50A0 = 1.0 + n50Alpha;
+    this.n50B0 = 1.0 / n50A0;
+    this.n50B1 = (-2.0 * n50Cos) / n50A0;
+    this.n50A1 = this.n50B1;
+    this.n50A2 = (1.0 - n50Alpha) / n50A0;
+    this.n50X1 = 0.0; this.n50X2 = 0.0; this.n50Y1 = 0.0; this.n50Y2 = 0.0;
+
+    const n60W = (2.0 * Math.PI * 60.0) / 16000.0;
+    const n60Cos = Math.cos(n60W);
+    const n60Alpha = Math.sin(n60W) / 44.0;
+    const n60A0 = 1.0 + n60Alpha;
+    this.n60B0 = 1.0 / n60A0;
+    this.n60B1 = (-2.0 * n60Cos) / n60A0;
+    this.n60A1 = this.n60B1;
+    this.n60A2 = (1.0 - n60Alpha) / n60A0;
+    this.n60X1 = 0.0; this.n60X2 = 0.0; this.n60Y1 = 0.0; this.n60Y2 = 0.0;
+
+    // Online causal noise-floor envelope tracker & expander gain
+    this.noiseFloorRms = 0.002;
+    this.smoothEnv = 0.0;
+    this.expanderGain = 1.0;
 
     this.isActive = true;
     this.hangoverRemaining = 0;
@@ -94,11 +135,20 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
           this.y1 = 0.0;
           this.y2 = 0.0;
         }
+        this.hpX1 = 0.0; this.hpX2 = 0.0; this.hpY1 = 0.0; this.hpY2 = 0.0;
+        this.n50X1 = 0.0; this.n50X2 = 0.0; this.n50Y1 = 0.0; this.n50Y2 = 0.0;
+        this.n60X1 = 0.0; this.n60X2 = 0.0; this.n60Y1 = 0.0; this.n60Y2 = 0.0;
+        this.noiseFloorRms = 0.002;
+        this.smoothEnv = 0.0;
+        this.expanderGain = 1.0;
       } else if (type === 'config') {
         if (typeof msg.vadThreshold === 'number') this.vadThreshold = msg.vadThreshold;
         if (typeof msg.silenceGateEnabled === 'boolean') this.silenceGateEnabled = msg.silenceGateEnabled;
         if (typeof msg.vadHangoverFrames === 'number') this.vadHangoverFrames = msg.vadHangoverFrames;
         if (typeof msg.vadEnabled === 'boolean') this.vadEnabled = msg.vadEnabled;
+        if (typeof msg.noiseSuppressionEnabled === 'boolean') {
+          this.noiseSuppressionEnabled = msg.noiseSuppressionEnabled;
+        }
       } else if (type === 'pause') {
         this.isActive = false;
       } else if (type === 'resume') {
@@ -201,8 +251,43 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
   }
 
   _pushSample(sample) {
-    // Clamping to standard PCM range [-1.0, 1.0]
     let s = sample;
+
+    if (this.noiseSuppressionEnabled) {
+      // 1. 80 Hz 2nd-order Butterworth HPF (wind, breath thump, HVAC rumble, DC offset)
+      const hpY = this.hpB0 * s + this.hpB1 * this.hpX1 + this.hpB2 * this.hpX2 - this.hpA1 * this.hpY1 - this.hpA2 * this.hpY2;
+      this.hpX2 = this.hpX1; this.hpX1 = s;
+      this.hpY2 = this.hpY1; this.hpY1 = hpY;
+
+      // 2. 50 Hz & 60 Hz mains hum notch biquads
+      const n50Y = this.n50B0 * hpY + this.n50B1 * this.n50X1 + this.n50B0 * this.n50X2 - this.n50A1 * this.n50Y1 - this.n50A2 * this.n50Y2;
+      this.n50X2 = this.n50X1; this.n50X1 = hpY;
+      this.n50Y2 = this.n50Y1; this.n50Y1 = n50Y;
+
+      const n60Y = this.n60B0 * n50Y + this.n60B1 * this.n60X1 + this.n60B0 * this.n60X2 - this.n60A1 * this.n60Y1 - this.n60A2 * this.n60Y2;
+      this.n60X2 = this.n60X1; this.n60X1 = n50Y;
+      this.n60Y2 = this.n60Y1; this.n60Y1 = n60Y;
+
+      // 3. Online causal noise-floor envelope & soft downward expander between syllables
+      const absVal = n60Y >= 0.0 ? n60Y : -n60Y;
+      this.smoothEnv = 0.992 * this.smoothEnv + 0.008 * absVal;
+      if (this.smoothEnv < this.noiseFloorRms) {
+        this.noiseFloorRms = 0.96 * this.noiseFloorRms + 0.04 * this.smoothEnv;
+      } else {
+        this.noiseFloorRms = 0.99985 * this.noiseFloorRms + 0.00015 * this.smoothEnv;
+      }
+      if (this.noiseFloorRms < 0.0003) this.noiseFloorRms = 0.0003;
+      if (this.noiseFloorRms > 0.03) this.noiseFloorRms = 0.03;
+
+      const gateThresh = this.noiseFloorRms * 1.8;
+      const targetG = this.smoothEnv >= gateThresh
+        ? 1.0
+        : Math.max(0.18, this.smoothEnv / (gateThresh + 1e-8));
+      this.expanderGain = 0.985 * this.expanderGain + 0.015 * targetG;
+      s = n60Y * this.expanderGain;
+    }
+
+    // Clamping to standard PCM range [-1.0, 1.0]
     if (s > 1.0) s = 1.0;
     else if (s < -1.0) s = -1.0;
 
@@ -217,6 +302,7 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
 
   _emitChunk() {
     const rms = Math.sqrt(this.sumSquares / this.chunkSamples);
+    const snrDb = 20.0 * Math.log10((rms + 1e-6) / (this.noiseFloorRms + 1e-6));
     let isSpeech = true;
 
     if (this.vadEnabled) {
@@ -252,6 +338,8 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
           audioChunk: outChunk,
           data: outChunk,
           rms,
+          snrDb,
+          noiseFloorRms: this.noiseFloorRms,
           isSpeech,
           sampleRate: this.targetRate,
           timestampMs: (this.totalProcessedSamples / this.targetRate) * 1000.0,

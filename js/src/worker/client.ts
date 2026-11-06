@@ -15,6 +15,7 @@ export interface SwanadaWorkerConfig {
   numThreads?: number;
   wasmPaths?: string;
   cacheName?: string;
+  denoise?: boolean;
 }
 
 export interface WorkerProgressEvent {
@@ -31,6 +32,7 @@ export interface WorkerPartialEvent {
   volatile?: string;
   iast?: string;
   rtf: number;
+  snrDb?: number;
   durationMs?: number;
   inferenceMs?: number;
   tokens: string[];
@@ -133,6 +135,7 @@ export class SwanadaWorkerClient {
             volatile: msg.volatile ?? '',
             iast: msg.iast,
             rtf: msg.rtf,
+            snrDb: msg.snrDb,
             durationMs: msg.durationMs,
             inferenceMs: msg.inferenceMs,
             tokens: msg.tokens,
@@ -149,6 +152,7 @@ export class SwanadaWorkerClient {
             durationMs: msg.durationMs,
             inferenceMs: msg.inferenceMs,
             rtf: msg.rtf,
+            snrDb: msg.snrDb,
             tokens: msg.tokens,
           };
           this.emit('final', result);
@@ -198,6 +202,10 @@ export class SwanadaWorkerClient {
    */
   async init(config: SwanadaWorkerConfig): Promise<WorkerReadyEvent> {
     if (this.isTerminated) throw new Error('Cannot initialize terminated worker.');
+    this.readyPromise = new Promise<WorkerReadyEvent>((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
     this.worker.postMessage({
       type: 'INIT',
       language: config.language || 'sa',
@@ -224,14 +232,31 @@ export class SwanadaWorkerClient {
   async setLanguage(
     language: SupportedLanguage,
     options: { modelUrl?: string; vocabUrl?: string } = {}
-  ): Promise<void> {
+  ): Promise<WorkerReadyEvent> {
     await this.whenReady();
+    this.readyPromise = new Promise<WorkerReadyEvent>((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
     this.worker.postMessage({
       type: 'SET_LANGUAGE',
       language,
       modelUrl: options.modelUrl,
       vocabUrl: options.vocabUrl,
     });
+    return this.readyPromise;
+  }
+
+  /**
+   * Toggles multi-stage background noise cancellation & speech enhancement in the worker.
+   */
+  setDenoise(enabled: boolean): void {
+    if (!this.isTerminated) {
+      this.worker.postMessage({
+        type: 'SET_DENOISE',
+        enabled: Boolean(enabled),
+      });
+    }
   }
 
   /**

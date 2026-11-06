@@ -595,6 +595,537 @@ function extractLogMelFeatures(
 }
 
 /**
+ * Multi-Stage Real-Time ASR Background Noise Cancellation & Speech Enhancement Layer.
+ *
+ * Zero-dependency 16 kHz DSP pipeline:
+ * 1. DC Offset Removal + 80 Hz 2nd-Order Butterworth High-Pass Filter (wind, desk thump, HVAC rumble)
+ * 2. 50 Hz & 60 Hz High-Q Biquad Notch Cascade (India 50 Hz & Americas 60 Hz mains hum rejection)
+ * 3. SNR-Adaptive Ephraim-Malah Decision-Directed Spectral Wiener Filter (512-pt sqrt-Hann exact NOLA OLA)
+ * 4. Formant-Band Speech Presence Ratio + Stationary Noise Gate & Peak Safety Limiter
+ */
+
+
+
+                                 
+                                           
+                      
+                                                       
+                      
+                                                                                   
+                     
+                                                                               
+                            
+                                                                       
+                            
+                                                                                          
+                         
+                                                                                                       
+                          
+                                                                                           
+                         
+ 
+
+                                   
+                    
+                         
+                         
+                        
+                          
+ 
+
+const STFT_N = 512;
+const STFT_HOP = 256;
+const NUM_BINS = 257;
+
+// Precomputed sqrt(periodic Hann) window so w[n]^2 + w[n + 256]^2 === 1.0 (Exact NOLA reconstruction)
+const SQRT_HANN_512 = (() => {
+  const w = new Float32Array(STFT_N);
+  for (let n = 0; n < STFT_N; n++) {
+    const hann = 0.5 * (1.0 - Math.cos((2.0 * Math.PI * n) / STFT_N));
+    w[n] = Math.sqrt(Math.max(0.0, hann));
+  }
+  return w;
+})();
+
+                        
+             
+             
+             
+             
+             
+ 
+
+function designHighPassBiquad(fc        , sr        , q         = Math.SQRT1_2)               {
+  const omega = (2.0 * Math.PI * fc) / sr;
+  const sinW = Math.sin(omega);
+  const cosW = Math.cos(omega);
+  const alpha = sinW / (2.0 * q);
+  const b0 = (1.0 + cosW) * 0.5;
+  const b1 = -(1.0 + cosW);
+  const b2 = (1.0 + cosW) * 0.5;
+  const a0 = 1.0 + alpha;
+  const a1 = -2.0 * cosW;
+  const a2 = 1.0 - alpha;
+  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+}
+
+function designNotchBiquad(f0        , sr        , q         = 22.0)               {
+  const omega = (2.0 * Math.PI * f0) / sr;
+  const sinW = Math.sin(omega);
+  const cosW = Math.cos(omega);
+  const alpha = sinW / (2.0 * q);
+  const b0 = 1.0;
+  const b1 = -2.0 * cosW;
+  const b2 = 1.0;
+  const a0 = 1.0 + alpha;
+  const a1 = -2.0 * cosW;
+  const a2 = 1.0 - alpha;
+  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+}
+
+function applyBiquadInPlace(buf              , c              )       {
+  let x1 = 0.0;
+  let x2 = 0.0;
+  let y1 = 0.0;
+  let y2 = 0.0;
+  for (let i = 0; i < buf.length; i++) {
+    const x = buf[i];
+    const y = c.b0 * x + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2;
+    x2 = x1;
+    x1 = x;
+    y2 = y1;
+    y1 = y;
+    buf[i] = y;
+  }
+}
+
+const HPF_80_16K = designHighPassBiquad(80.0, SAMPLE_RATE);
+const NOTCH_50_16K = designNotchBiquad(50.0, SAMPLE_RATE, 22.0);
+const NOTCH_60_16K = designNotchBiquad(60.0, SAMPLE_RATE, 22.0);
+
+                      
+                        
+                        
+                         
+                    
+                    
+ 
+
+function computeStft(signal              )             {
+  const N = signal.length;
+  const pad = STFT_HOP;
+  const paddedLen = N + 2 * pad + STFT_N;
+  const numFrames = Math.floor((N + 2 * pad - STFT_N) / STFT_HOP) + 1;
+  const padded = new Float32Array(paddedLen);
+  padded.set(signal, pad);
+
+  const allReal = new Float32Array(numFrames * NUM_BINS);
+  const allImag = new Float32Array(numFrames * NUM_BINS);
+  const allPower = new Float32Array(numFrames * NUM_BINS);
+  const fftRe = new Float32Array(STFT_N);
+  const fftIm = new Float32Array(STFT_N);
+
+  for (let t = 0; t < numFrames; t++) {
+    const start = t * STFT_HOP;
+    for (let n = 0; n < STFT_N; n++) {
+      fftRe[n] = padded[start + n] * SQRT_HANN_512[n];
+      fftIm[n] = 0.0;
+    }
+    fft512(fftRe, fftIm);
+    const base = t * NUM_BINS;
+    for (let k = 0; k < NUM_BINS; k++) {
+      const re = fftRe[k];
+      const im = fftIm[k];
+      allReal[base + k] = re;
+      allImag[base + k] = im;
+      allPower[base + k] = re * re + im * im;
+    }
+  }
+  return { allReal, allImag, allPower, numFrames, paddedLen };
+}
+
+function percentileFloat(arr              , q        )         {
+  if (arr.length === 0) return 0.0;
+  const sorted = Float32Array.from(arr).sort();
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.min(sorted.length - 1, lo + 1);
+  const frac = pos - lo;
+  return sorted[lo] * (1.0 - frac) + sorted[hi] * frac;
+}
+
+/**
+ * Enhances 16 kHz mono speech PCM by cancelling rumble, 50/60 Hz mains hum,
+ * and broadband background noise via SNR-adaptive Ephraim-Malah Wiener filtering,
+ * while preserving clean studio speech bit-for-bit.
+ */
+function enhanceSpeechWithTelemetry(
+  pcm              ,
+  options                 = {}
+)                   {
+  const N = pcm.length;
+  if (N === 0) {
+    return {
+      pcm: new Float32Array(0),
+      estimatedSnrDb: 0,
+      noiseFloorDbfs: -100,
+      suppressionDb: 0,
+      isSpeechLikely: false,
+    };
+  }
+
+  const sr = options.sampleRate ?? SAMPLE_RATE;
+  const highPassHz = options.highPassHz ?? 80;
+  const humNotch = options.humNotch !== false;
+  const spectralDenoise = options.spectralDenoise !== false;
+  const cleanBypassSnrDb = options.cleanBypassSnrDb ?? 26.0;
+  const spectralFloor = Math.max(0.05, Math.min(1.0, options.spectralFloor ?? 0.14));
+  const nonSpeechGate = options.nonSpeechGate !== false;
+  const adaptiveGain = options.adaptiveGain === true;
+
+  let rawSumSq = 0.0;
+  let dcSum = 0.0;
+  for (let i = 0; i < N; i++) {
+    const v = pcm[i];
+    dcSum += v;
+    rawSumSq += v * v;
+  }
+  const rawRms = Math.sqrt(rawSumSq / N);
+  if (rawRms < 1e-4) {
+    return {
+      pcm: new Float32Array(N),
+      estimatedSnrDb: 0,
+      noiseFloorDbfs: -100,
+      suppressionDb: 0,
+      isSpeechLikely: false,
+    };
+  }
+
+  const dcMean = dcSum / N;
+  const zeroMean = new Float32Array(N);
+  let acSumSq = 0.0;
+  for (let i = 0; i < N; i++) {
+    const z = pcm[i] - dcMean;
+    zeroMean[i] = z;
+    acSumSq += z * z;
+  }
+  const acRms = Math.sqrt(acSumSq / N);
+  const hasDcOffset = Math.abs(dcMean) > 0.015;
+
+  if (N < STFT_N) {
+    if (hasDcOffset) {
+      const work = new Float32Array(zeroMean);
+      const hpf = sr === SAMPLE_RATE && highPassHz === 80 ? HPF_80_16K : designHighPassBiquad(highPassHz, sr);
+      applyBiquadInPlace(work, hpf);
+      if (humNotch && sr >= 4000) {
+        applyBiquadInPlace(work, sr === SAMPLE_RATE ? NOTCH_50_16K : designNotchBiquad(50.0, sr, 22.0));
+        applyBiquadInPlace(work, sr === SAMPLE_RATE ? NOTCH_60_16K : designNotchBiquad(60.0, sr, 22.0));
+      }
+      return {
+        pcm: work,
+        estimatedSnrDb: 20,
+        noiseFloorDbfs: 20 * Math.log10(Math.max(acRms * 0.1, 1e-5)),
+        suppressionDb: 6,
+        isSpeechLikely: true,
+      };
+    }
+    return {
+      pcm: new Float32Array(pcm),
+      estimatedSnrDb: 35,
+      noiseFloorDbfs: -70,
+      suppressionDb: 0,
+      isSpeechLikely: true,
+    };
+  }
+
+  // Pre-scan interior STFT frames to detect stationary mains hum/rumble vs clean studio audio
+  let stft = computeStft(zeroMean);
+  const normScale = 1.0 / (STFT_HOP * STFT_N);
+  const interiorStart = stft.numFrames > 4 ? 1 : 0;
+  const interiorEnd = stft.numFrames > 4 ? stft.numFrames - 1 : stft.numFrames;
+  const interiorCount = Math.max(1, interiorEnd - interiorStart);
+
+  const kLfMax = Math.max(2, Math.round((85 * STFT_N) / sr));
+  const lfFrameRms = new Float32Array(interiorCount);
+  let lfMeanSum = 0.0;
+  for (let idx = 0; idx < interiorCount; idx++) {
+    const base = (interiorStart + idx) * NUM_BINS;
+    let lfSum = 0.0;
+    for (let k = 0; k <= kLfMax; k++) {
+      lfSum += stft.allPower[base + k] * normScale;
+    }
+    const r = Math.sqrt(lfSum);
+    lfFrameRms[idx] = r;
+    lfMeanSum += r;
+  }
+  const lfP30 = percentileFloat(lfFrameRms, 0.3);
+  const lfMean = lfMeanSum / interiorCount;
+  const hasHumOrRumble = hasDcOffset || (lfP30 > 0.0075 && lfMean / (acRms + 1e-9) > 0.16);
+
+  let work              ;
+  if (hasHumOrRumble) {
+    work = new Float32Array(zeroMean);
+    const hpf = sr === SAMPLE_RATE && highPassHz === 80 ? HPF_80_16K : designHighPassBiquad(highPassHz, sr);
+    applyBiquadInPlace(work, hpf);
+    if (humNotch && sr >= 4000) {
+      applyBiquadInPlace(work, sr === SAMPLE_RATE ? NOTCH_50_16K : designNotchBiquad(50.0, sr, 22.0));
+      applyBiquadInPlace(work, sr === SAMPLE_RATE ? NOTCH_60_16K : designNotchBiquad(60.0, sr, 22.0));
+    }
+    if (!spectralDenoise) {
+      let postSq = 0.0;
+      for (let i = 0; i < N; i++) postSq += work[i] * work[i];
+      const postRms = Math.sqrt(postSq / N) + 1e-9;
+      const supp = Math.max(0.0, 20.0 * Math.log10(Math.max(rawRms, 1e-9) / postRms));
+      return {
+        pcm: work,
+        estimatedSnrDb: 22,
+        noiseFloorDbfs: -50,
+        suppressionDb: supp,
+        isSpeechLikely: true,
+      };
+    }
+    stft = computeStft(work);
+  } else {
+    work = pcm;
+    if (!spectralDenoise) {
+      return {
+        pcm: new Float32Array(pcm),
+        estimatedSnrDb: 35,
+        noiseFloorDbfs: -70,
+        suppressionDb: 0,
+        isSpeechLikely: true,
+      };
+    }
+  }
+
+  const { allReal, allImag, allPower, numFrames, paddedLen } = stft;
+  const kSpeechMin = Math.max(3, Math.round((250 * STFT_N) / sr));
+  const kSpeechMax = Math.min(NUM_BINS - 1, Math.round((3800 * STFT_N) / sr));
+  const kHfMin = Math.min(NUM_BINS - 8, Math.max(kSpeechMin + 8, Math.round((3500 * STFT_N) / sr)));
+  const kHfMax = Math.min(NUM_BINS - 2, Math.round((7800 * STFT_N) / sr));
+  const sfmBinStart = Math.max(8, kSpeechMin);
+  const sfmBinCount = Math.max(1, kHfMax - sfmBinStart + 1);
+
+  const speechBandEnergy = new Float32Array(numFrames);
+  const totalBandEnergy = new Float32Array(numFrames);
+  const hfFrameRms = new Float32Array(interiorCount);
+  const frameSfm = new Float32Array(interiorCount);
+  const midHighRms = new Float32Array(interiorCount);
+
+  for (let t = 0; t < numFrames; t++) {
+    const base = t * NUM_BINS;
+    let sbSum = 0.0;
+    let totSum = 0.0;
+    for (let k = 0; k < NUM_BINS; k++) {
+      const p = allPower[base + k];
+      totSum += p;
+      if (k >= kSpeechMin && k <= kSpeechMax) sbSum += p;
+    }
+    speechBandEnergy[t] = sbSum;
+    totalBandEnergy[t] = totSum;
+
+    if (t >= interiorStart && t < interiorEnd) {
+      const ii = t - interiorStart;
+      let hfSum = 0.0;
+      let mhSum = 0.0;
+      let logSum = 0.0;
+      let linSum = 0.0;
+      for (let k = 3; k < NUM_BINS; k++) {
+        const pn = allPower[base + k] * normScale;
+        mhSum += pn;
+        if (k >= kHfMin && k <= kHfMax) hfSum += pn;
+        if (k >= sfmBinStart && k <= kHfMax) {
+          const pv = pn + 1e-18;
+          logSum += Math.log(pv);
+          linSum += pv;
+        }
+      }
+      hfFrameRms[ii] = Math.sqrt(hfSum);
+      midHighRms[ii] = Math.sqrt(mhSum);
+      frameSfm[ii] = Math.exp(logSum / sfmBinCount) / (linSum / sfmBinCount);
+    }
+  }
+
+  const frameIndices = new Int32Array(interiorCount);
+  for (let i = 0; i < interiorCount; i++) frameIndices[i] = interiorStart + i;
+  const sortedIndices = Array.from(frameIndices).sort((a, b) => totalBandEnergy[a] - totalBandEnergy[b]);
+
+  const nQuiet = Math.max(1, Math.floor(interiorCount * 0.2));
+  const idx90 = sortedIndices[Math.min(interiorCount - 1, Math.floor(interiorCount * 0.9))];
+  const idx15 = sortedIndices[Math.min(interiorCount - 1, Math.floor(interiorCount * 0.15))];
+
+  const eSpeech90 = speechBandEnergy[idx90];
+  const eNoise15 = Math.max(1e-12, speechBandEnergy[idx15]);
+  const modSnrDb = Math.max(0.0, Math.min(60.0, 10.0 * Math.log10((eSpeech90 + 1e-12) / eNoise15)));
+
+  const hfP25 = percentileFloat(hfFrameRms, 0.25);
+  const sfmP30 = percentileFloat(frameSfm, 0.3);
+  const quietRmsP15 = percentileFloat(midHighRms, 0.15);
+
+  let totalSpeechRatio = 0.0;
+  const halfIdx = Math.floor(interiorCount * 0.5);
+  for (let i = halfIdx; i < interiorCount; i++) {
+    const ti = sortedIndices[i];
+    totalSpeechRatio += speechBandEnergy[ti] / (totalBandEnergy[ti] + 1e-12);
+  }
+  const avgFormantRatio = totalSpeechRatio / Math.max(1, interiorCount - halfIdx);
+
+  // Stationary Non-Speech Gate: pure unmodulated background hiss/buzz
+  if (
+    nonSpeechGate &&
+    numFrames >= 10 &&
+    modSnrDb < 2.2 &&
+    acRms < 0.025 &&
+    avgFormantRatio < 0.52
+  ) {
+    return {
+      pcm: new Float32Array(N),
+      estimatedSnrDb: modSnrDb,
+      noiseFloorDbfs: 20.0 * Math.log10(Math.max(acRms, 1e-5)),
+      suppressionDb: 40.0,
+      isSpeechLikely: false,
+    };
+  }
+
+  // Genuine broadband/colored background noise check (requires >= 300ms = 4800 samples)
+  const hasBroadbandNoise =
+    N >= 4800 &&
+    modSnrDb < cleanBypassSnrDb &&
+    ((hfP25 > 0.0024 && sfmP30 > 0.032) ||
+      (N >= 12000 && modSnrDb < 22.0 && quietRmsP15 > 0.0045 && sfmP30 > 0.022));
+
+  if (!hasBroadbandNoise) {
+    const effectiveSnr = !hasHumOrRumble ? Math.max(modSnrDb, 32.0) : Math.max(modSnrDb, 20.0);
+    let suppDb = 0.0;
+    if (hasHumOrRumble) {
+      let postSq = 0.0;
+      for (let i = 0; i < N; i++) postSq += work[i] * work[i];
+      const postRmsH = Math.sqrt(postSq / N) + 1e-9;
+      suppDb = Math.max(0.0, 20.0 * Math.log10(Math.max(rawRms, 1e-9) / postRmsH));
+    }
+    return {
+      pcm: work === pcm ? new Float32Array(pcm) : work,
+      estimatedSnrDb: effectiveSnr,
+      noiseFloorDbfs: 20.0 * Math.log10(Math.max(acRms * Math.pow(10, -effectiveSnr / 20), 1e-5)),
+      suppressionDb: suppDb,
+      isSpeechLikely: true,
+    };
+  }
+
+  // Hybrid quiet-frame + unbiased Rayleigh 25th-percentile minimum-statistics noise PSD (-1/ln(0.75) = 3.476)
+  const noisePsd = new Float32Array(NUM_BINS);
+  const binScratch = new Float32Array(interiorCount);
+  const invQuiet = 1.0 / nQuiet;
+  for (let k = 0; k < NUM_BINS; k++) {
+    let qSum = 0.0;
+    for (let qi = 0; qi < nQuiet; qi++) {
+      qSum += allPower[sortedIndices[qi] * NUM_BINS + k];
+    }
+    const quietMean = qSum * invQuiet;
+    for (let ii = 0; ii < interiorCount; ii++) {
+      binScratch[ii] = allPower[(interiorStart + ii) * NUM_BINS + k];
+    }
+    const minStatBin = percentileFloat(binScratch, 0.25) * 3.48;
+    noisePsd[k] = Math.max(1e-12, Math.min(quietMean * 1.25, minStatBin));
+  }
+
+  const estimatedSnrDb = modSnrDb;
+  const strength = Math.max(0.0, Math.min(1.0, (cleanBypassSnrDb - estimatedSnrDb) / 8.0));
+  const oversub = 1.0 + 0.85 * strength;
+  const gMin = 1.0 - (1.0 - spectralFloor) * strength;
+  const ddBeta = 0.92;
+
+  const prevGain = new Float32Array(NUM_BINS).fill(1.0);
+  const prevGamma = new Float32Array(NUM_BINS).fill(1.0);
+  const rawGain = new Float32Array(NUM_BINS);
+  const smoothGain = new Float32Array(NUM_BINS);
+
+  const outOverlap = new Float32Array(paddedLen);
+  const invFftScale = 1.0 / STFT_N;
+  const fftRe = new Float32Array(STFT_N);
+  const fftIm = new Float32Array(STFT_N);
+
+  for (let t = 0; t < numFrames; t++) {
+    const base = t * NUM_BINS;
+    for (let k = 0; k < NUM_BINS; k++) {
+      const gamma = allPower[base + k] / noisePsd[k];
+      const instXi = Math.max(gamma - 1.0, 0.0);
+      const xi = ddBeta * prevGain[k] * prevGain[k] * prevGamma[k] + (1.0 - ddBeta) * instXi;
+      rawGain[k] = Math.max(gMin, xi / (xi + oversub));
+      prevGamma[k] = gamma;
+    }
+
+    smoothGain[0] = 0.75 * rawGain[0] + 0.25 * rawGain[1];
+    for (let k = 1; k < NUM_BINS - 1; k++) {
+      smoothGain[k] = 0.2 * rawGain[k - 1] + 0.6 * rawGain[k] + 0.2 * rawGain[k + 1];
+    }
+    smoothGain[NUM_BINS - 1] = 0.25 * rawGain[NUM_BINS - 2] + 0.75 * rawGain[NUM_BINS - 1];
+    prevGain.set(smoothGain);
+
+    fftRe[0] = allReal[base] * smoothGain[0];
+    fftIm[0] = 0.0;
+    fftRe[256] = allReal[base + 256] * smoothGain[256];
+    fftIm[256] = 0.0;
+
+    for (let k = 1; k < 256; k++) {
+      const g = smoothGain[k];
+      const r = allReal[base + k] * g;
+      const im = allImag[base + k] * g;
+      fftRe[k] = r;
+      fftIm[k] = -im;
+      fftRe[STFT_N - k] = r;
+      fftIm[STFT_N - k] = im;
+    }
+
+    fft512(fftRe, fftIm);
+
+    const outStart = t * STFT_HOP;
+    for (let n = 0; n < STFT_N; n++) {
+      outOverlap[outStart + n] += fftRe[n] * invFftScale * SQRT_HANN_512[n];
+    }
+  }
+
+  const pad = STFT_HOP;
+  const enhanced = outOverlap.slice(pad, pad + N);
+
+  let postSumSq = 0.0;
+  for (let i = 0; i < N; i++) postSumSq += enhanced[i] * enhanced[i];
+  const postRms = Math.sqrt(postSumSq / N);
+
+  if (adaptiveGain && postRms > 0.002 && postRms < 0.035 && estimatedSnrDb >= 5.0) {
+    const targetGain = Math.min(2.4, 0.045 / postRms);
+    for (let i = 0; i < N; i++) {
+      const scaled = enhanced[i] * targetGain;
+      enhanced[i] = Math.abs(scaled) > 0.9 ? Math.tanh(scaled) : scaled;
+    }
+  } else {
+    for (let i = 0; i < N; i++) {
+      const v = enhanced[i];
+      if (v > 1.0) enhanced[i] = 1.0;
+      else if (v < -1.0) enhanced[i] = -1.0;
+    }
+  }
+
+  const noiseFloorRms = acRms * Math.pow(10, -estimatedSnrDb / 20);
+  const suppressionDb = Math.abs(20.0 * Math.log10(Math.max(gMin, 1e-3)));
+
+  return {
+    pcm: enhanced,
+    estimatedSnrDb,
+    noiseFloorDbfs: 20.0 * Math.log10(Math.max(noiseFloorRms, 1e-5)),
+    suppressionDb,
+    isSpeechLikely: true,
+  };
+}
+
+/**
+ * Convenience wrapper returning enhanced 16 kHz mono Float32Array PCM.
+ */
+function denoisePcm16k(pcm              , options                 = {})               {
+  return enhanceSpeechWithTelemetry(pcm, options).pcm;
+}
+
+/**
  * SwanadaAudioCapture: Browser Microphone Ingestion Controller with AudioWorklet & ScriptProcessorNode fallback.
  */
 
@@ -1126,8 +1657,42 @@ registerProcessor('swanada-audio-capture-processor', SwanadaAudioCaptureProcesso
 
 /**
  * Multilingual Indic and Latin text normalizer for ASR outputs.
- * Implements NFD -> Combining Mark Deduplication -> NFC -> Whitespace collapse.
+ * Implements NFC/NFD Combining Mark Deduplication + Brahmic Phonotactic Repair + Whitespace collapse.
  */
+
+// Primary NFC dependent vowel signs (matras) across 9 Brahmic blocks (excluding anusvara/visarga/nukta/vedic tone/length marks)
+const BRAHMIC_PRIMARY_MATRA_CLASS =
+  '\\u093E-\\u094C\\u094E-\\u094F\\u0962-\\u0963' +
+  '\\u09BE-\\u09C4\\u09C7-\\u09C8\\u09CB-\\u09CC\\u09E2-\\u09E3' +
+  '\\u0A3E-\\u0A42\\u0A47-\\u0A48\\u0A4B-\\u0A4C' +
+  '\\u0ABE-\\u0AC5\\u0AC7-\\u0AC9\\u0ACB-\\u0ACC\\u0AE2-\\u0AE3' +
+  '\\u0B3E-\\u0B44\\u0B47-\\u0B48\\u0B4B-\\u0B4C\\u0B62-\\u0B63' +
+  '\\u0BBE-\\u0BC2\\u0BC6-\\u0BC8\\u0BCA-\\u0BCC' +
+  '\\u0C3E-\\u0C44\\u0C46-\\u0C48\\u0C4A-\\u0C4C\\u0C62-\\u0C63' +
+  '\\u0CBE-\\u0CC4\\u0CC6-\\u0CC8\\u0CCA-\\u0CCC\\u0CE2-\\u0CE3' +
+  '\\u0D3E-\\u0D44\\u0D46-\\u0D48\\u0D4A-\\u0D4C\\u0D62-\\u0D63';
+
+// Virama / Halant signs across all 9 Brahmic blocks
+const BRAHMIC_VIRAMA_CLASS = '\\u094D\\u09CD\\u0A4D\\u0ACD\\u0B4D\\u0BCD\\u0C4D\\u0CCD\\u0D4D';
+
+// Independent vowels across all 9 Brahmic blocks
+const BRAHMIC_INDEP_VOWEL_CLASS =
+  '\\u0904-\\u0914\\u0960-\\u0961' +
+  '\\u0985-\\u0994\\u09E0-\\u09E1' +
+  '\\u0A05-\\u0A14' +
+  '\\u0A85-\\u0A94\\u0AE0-\\u0AE1' +
+  '\\u0B05-\\u0B14\\u0B60-\\u0B61' +
+  '\\u0B85-\\u0B94' +
+  '\\u0C05-\\u0C14\\u0C60-\\u0C61' +
+  '\\u0C85-\\u0C94\\u0CE0-\\u0CE1' +
+  '\\u0D05-\\u0D14\\u0D60-\\u0D61';
+
+const RE_COLLIDING_MATRAS = new RegExp(`([${BRAHMIC_PRIMARY_MATRA_CLASS}])[${BRAHMIC_PRIMARY_MATRA_CLASS}]+`, 'gu');
+const RE_MATRA_THEN_VIRAMA = new RegExp(`([${BRAHMIC_PRIMARY_MATRA_CLASS}])[${BRAHMIC_VIRAMA_CLASS}]+`, 'gu');
+const RE_INDEP_VOWEL_ILLEGAL_MARK = new RegExp(
+  `([${BRAHMIC_INDEP_VOWEL_CLASS}])[${BRAHMIC_PRIMARY_MATRA_CLASS}${BRAHMIC_VIRAMA_CLASS}]+`,
+  'gu'
+);
 
 /**
  * Deduplicate consecutive identical combining marks (Unicode category M: Mn, Mc, Me).
@@ -1136,8 +1701,21 @@ registerProcessor('swanada-audio-capture-processor', SwanadaAudioCaptureProcesso
  * Consonants and letters (e.g. double 'l' in "hello", or geminates in Indic scripts) are preserved.
  */
 function dedupMarks(text        )         {
-  // \p{M} matches any Unicode mark (Mn = Nonspacing Mark, Mc = Spacing Mark, Me = Enclosing Mark)
   return text.replace(/(\p{M})\1+/gu, '$1');
+}
+
+/**
+ * Repairs orthographically impossible CTC boundary collisions on NFC-composed Brahmic text:
+ * 1. Collapses colliding primary dependent vowel signs on a single consonant (e.g. 'हीि' -> 'ही').
+ * 2. Strips illegal virama/halant immediately following a dependent vowel sign.
+ * 3. Strips illegal dependent vowel sign or virama immediately following an independent vowel (e.g. 'ಇ್' -> 'ಇ').
+ * Preserves all valid conjuncts (C + virama + C), geminates, and vowel + anusvara/visarga/chandrabindu sequences.
+ */
+function repairBrahmicOrthography(nfcText        )         {
+  return nfcText
+    .replace(RE_COLLIDING_MATRAS, '$1')
+    .replace(RE_MATRA_THEN_VIRAMA, '$1')
+    .replace(RE_INDEP_VOWEL_ILLEGAL_MARK, '$1');
 }
 
                                    
@@ -1163,15 +1741,13 @@ function normalizeIndicText(
   if (spaceMarker) {
     text = text.replaceAll(spaceMarker, ' ');
   }
-  // Replace legacy space markers if present
   text = text.replace(/[\u2581\u2582\u2583▁]/g, ' ');
 
-  // 2. Deduplicate combining marks
-  // Two-pass deduplication: NFC handles composite two-part vowel signs (e.g. Bengali \u09cb, Tamil \u0bca),
-  // followed by NFD to handle decomposed combining sequences, before final recomposition.
+  // 2. Deduplicate combining marks and repair Brahmic matra boundary collisions
   if (shouldDedup) {
     text = text.normalize('NFC');
     text = dedupMarks(text);
+    text = repairBrahmicOrthography(text);
     text = text.normalize('NFD');
     text = dedupMarks(text);
   }
@@ -1179,6 +1755,9 @@ function normalizeIndicText(
   // 3. Recompose to canonical NFC
   if (shouldNFC) {
     text = text.normalize('NFC');
+    if (shouldDedup) {
+      text = repairBrahmicOrthography(text);
+    }
   }
 
   // 4. Collapse whitespace and trim
@@ -1859,6 +2438,7 @@ async function loadModelAsset(
 
 
 
+
              
                                                  
                     
@@ -2267,6 +2847,31 @@ class AcousticEngine {
       };
     }
 
+    if (!this.acousticSession) {
+      throw new Error('Acoustic model session is not initialized. Ensure models are available at modelPath.');
+    }
+
+    // Multi-stage background noise cancellation & speech enhancement layer (default: enabled)
+    let cleanPcm = pcm;
+    let snrDb                     = undefined;
+    if (this.config.denoise !== false) {
+      const enhanced = enhanceSpeechWithTelemetry(pcm);
+      snrDb = enhanced.estimatedSnrDb;
+      if (!enhanced.isSpeechLikely) {
+        const elapsedMs = performance.now() - startTotal;
+        return {
+          text: '',
+          language: this.config.language || 'sa',
+          durationMs,
+          inferenceMs: elapsedMs,
+          rtf: durationMs > 0 ? (elapsedMs / durationMs) : 0,
+          tokens: [],
+          snrDb,
+        };
+      }
+      cleanPcm = enhanced.pcm;
+    }
+
     // 1. Feature extraction
     let features              ;
     let numFrames        ;
@@ -2276,8 +2881,8 @@ class AcousticEngine {
       let lenTensor      = null;
       let outputs      = null;
       try {
-        audioTensor = new this.ort.Tensor('float32', pcm, [1, pcm.length]);
-        lenTensor = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(pcm.length)]), [1]);
+        audioTensor = new this.ort.Tensor('float32', cleanPcm, [1, cleanPcm.length]);
+        lenTensor = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(cleanPcm.length)]), [1]);
         outputs = await this.preprocessorSession.run({
           audio_signal: audioTensor,
           length: lenTensor,
@@ -2294,13 +2899,9 @@ class AcousticEngine {
       }
     } else {
       // Analytical frontend (default fast path)
-      const melResult = extractLogMelFeatures(pcm);
+      const melResult = extractLogMelFeatures(cleanPcm);
       features = melResult.features;
       numFrames = melResult.numFrames;
-    }
-
-    if (!this.acousticSession) {
-      throw new Error('Acoustic model session is not initialized. Ensure models are available at modelPath.');
     }
 
     // 2. Acoustic inference
@@ -2323,6 +2924,7 @@ class AcousticEngine {
       inferenceMs: totalInferenceMs,
       rtf,
       tokens: decodeRes.tokens,
+      snrDb,
     };
   }
 
@@ -2426,8 +3028,8 @@ class StreamingAcousticEngine {
   ) {
     this.engine = engine;
     this.decoder = new StreamingCTCDecoder(vocab);
-    this.leftContextSamples = options?.leftContextSamples ?? 16000; // 1,000 ms
-    this.maxBufferSamples = options?.maxBufferSamples ?? 32000; // 2,000 ms
+    this.leftContextSamples = options?.leftContextSamples ?? 20480; // 1,280 ms
+    this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
   }
 
@@ -2660,11 +3262,13 @@ class StreamingAcousticEngine {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
+          if (matchLen >= 2) break;
         }
       }
+      if (bestMatchLen >= 2) break;
     }
 
-    if (bestMatchLen >= 3) {
+    if (bestMatchLen > 0) {
       return [bestOffset, bestRawStart];
     }
 
@@ -2683,11 +3287,13 @@ class StreamingAcousticEngine {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
+          if (matchLen >= 2) break;
         }
       }
+      if (bestMatchLen >= 2) break;
     }
 
-    if (bestMatchLen >= 3) {
+    if (bestMatchLen >= 2) {
       return [bestOffset, bestRawStart];
     }
 
@@ -2970,6 +3576,7 @@ function transliterateIast(text        )         {
                       
                      
                      
+                    
  
 
                                       
@@ -2986,6 +3593,7 @@ function transliterateIast(text        )         {
                     
                 
               
+                 
                       
                        
                    
@@ -3088,6 +3696,7 @@ class SwanadaWorkerClient {
             volatile: msg.volatile ?? '',
             iast: msg.iast,
             rtf: msg.rtf,
+            snrDb: msg.snrDb,
             durationMs: msg.durationMs,
             inferenceMs: msg.inferenceMs,
             tokens: msg.tokens,
@@ -3104,6 +3713,7 @@ class SwanadaWorkerClient {
             durationMs: msg.durationMs,
             inferenceMs: msg.inferenceMs,
             rtf: msg.rtf,
+            snrDb: msg.snrDb,
             tokens: msg.tokens,
           };
           this.emit('final', result);
@@ -3153,6 +3763,10 @@ class SwanadaWorkerClient {
    */
   async init(config                     )                            {
     if (this.isTerminated) throw new Error('Cannot initialize terminated worker.');
+    this.readyPromise = new Promise                  ((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
     this.worker.postMessage({
       type: 'INIT',
       language: config.language || 'sa',
@@ -3179,14 +3793,31 @@ class SwanadaWorkerClient {
   async setLanguage(
     language                   ,
     options                                           = {}
-  )                {
+  )                            {
     await this.whenReady();
+    this.readyPromise = new Promise                  ((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
     this.worker.postMessage({
       type: 'SET_LANGUAGE',
       language,
       modelUrl: options.modelUrl,
       vocabUrl: options.vocabUrl,
     });
+    return this.readyPromise;
+  }
+
+  /**
+   * Toggles multi-stage background noise cancellation & speech enhancement in the worker.
+   */
+  setDenoise(enabled         )       {
+    if (!this.isTerminated) {
+      this.worker.postMessage({
+        type: 'SET_DENOISE',
+        enabled: Boolean(enabled),
+      });
+    }
   }
 
   /**
@@ -3307,6 +3938,7 @@ class SwanadaWorkerClient {
 
 
 
+
                                                                                                         
 
 // Worker global scope declaration
@@ -3372,12 +4004,18 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
                     
  
 
+                                    
+                      
+                   
+ 
+
                             
                
                      
                  
                 
-                       
+                      
+                      
 
 // State management
 let workerState              = 'UNINITIALIZED';
@@ -3388,6 +4026,8 @@ let activeVocab           = [];
 let ctcDecoder                          = null;
 let executionProvider                    = 'wasm';
 let cacheStorageName         = CACHE_STORAGE_NAME;
+let denoiseEnabled          = true;
+let lastEstimatedSnrDb         = 0;
 
 // Session cache (LRU) for instant language switching without redownloading
 const sessionCache = new Map                                           ();
@@ -3473,12 +4113,16 @@ function configureWasm(ortInstance     , numThreads         , wasmPaths         
   }
 
   const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const devMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory || 8 : 8;
+  const isMobileRuntime = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4;
+  const maxThreads = isMobileRuntime ? 2 : 4;
   let threads = 1;
   if (numThreads && numThreads >= 1) {
-    threads = isIsolated ? Math.min(4, numThreads) : 1;
+    threads = isIsolated ? Math.min(maxThreads, numThreads) : 1;
   } else if (isIsolated) {
     const cores = typeof navigator !== 'undefined' ? navigator?.hardwareConcurrency || 4 : 4;
-    threads = Math.min(4, Math.max(1, cores - 1));
+    threads = Math.min(maxThreads, Math.max(1, cores - 1));
   }
   ortInstance.env.wasm.numThreads = threads;
   return threads;
@@ -3600,8 +4244,8 @@ async function setupLanguage(
       },
     };
     streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-      leftContextSamples: 16000,
-      maxBufferSamples: 32000,
+      leftContextSamples: 20480,
+      maxBufferSamples: 61440,
       vadSilenceThreshold: 0.005,
     });
     workerState = 'READY';
@@ -3634,7 +4278,7 @@ async function setupLanguage(
     fromCache: false,
   });
 
-  const modelBytes = await loadModelAsset(effectiveModelUrl, cacheStorageName, (p) => {
+  const progressHandler = (p     ) => {
     postWorkerMessage({
       type: 'PROGRESS',
       stage: p.phase === 'cache' ? 'downloading' : 'downloading',
@@ -3643,7 +4287,36 @@ async function setupLanguage(
       totalBytes: p.totalBytes,
       fromCache: p.fromCache,
     });
-  });
+  };
+
+  const isNodeEnv = typeof process !== 'undefined' && Boolean(process.versions?.node);
+  let modelBytes            ;
+  try {
+    modelBytes = await loadModelAsset(effectiveModelUrl, cacheStorageName, progressHandler);
+  } catch (err) {
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (!isNodeEnv && !isOffline && !effectiveModelUrl.startsWith('https://huggingface.co/')) {
+      const hfFile = lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`;
+      const hfFallbackUrl = `https://huggingface.co/gnumanth/swanada/resolve/main/onnx/${hfFile}`;
+      modelBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
+    } else {
+      throw err;
+    }
+  }
+
+  // Evict oldest cached ONNX session before allocating a new 187.5 MB model on mobile / constrained RAM
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const devMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory || 8 : 8;
+  const maxCachedSessions = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4 ? 1 : 2;
+  while (sessionCache.size >= maxCachedSessions) {
+    const oldestKey = sessionCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    const oldEntry = sessionCache.get(oldestKey);
+    sessionCache.delete(oldestKey);
+    try {
+      await oldEntry?.session?.release?.();
+    } catch {}
+  }
 
   // 4. Compile Session
   postWorkerMessage({
@@ -3706,8 +4379,8 @@ async function setupLanguage(
     },
   };
   streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-    leftContextSamples: 16000,
-    maxBufferSamples: 32000,
+    leftContextSamples: 20480,
+    maxBufferSamples: 61440,
     vadSilenceThreshold: 0.005,
   });
 
@@ -3752,8 +4425,30 @@ async function runAcousticInference(pcm              )                          
     };
   }
 
+  // 0. Multi-Stage Background Noise Cancellation & Speech Enhancement Layer
+  let cleanPcm = pcm;
+  if (denoiseEnabled) {
+    const enhanced = enhanceSpeechWithTelemetry(pcm);
+    lastEstimatedSnrDb = enhanced.estimatedSnrDb;
+    if (!enhanced.isSpeechLikely) {
+      const elapsed = performance.now() - startMs;
+      const rtf = durationMs > 0 ? elapsed / durationMs : 0;
+      return {
+        text: '',
+        iast: currentLanguage === 'sa' ? '' : undefined,
+        language: currentLanguage,
+        durationMs,
+        inferenceMs: elapsed,
+        rtf,
+        tokens: [],
+        snrDb: lastEstimatedSnrDb,
+      };
+    }
+    cleanPcm = enhanced.pcm;
+  }
+
   // 1. Analytical Log-Mel Spectrogram Extraction
-  const mel = extractLogMelFeatures(pcm);
+  const mel = extractLogMelFeatures(cleanPcm);
 
   // 2. Acoustic Model Inference
   let featsTensor      = null;
@@ -3871,6 +4566,7 @@ async function handleIncomingMessage(msg                )                {
             durationMs: finalRes.durationMs,
             inferenceMs: finalRes.inferenceMs,
             rtf: finalRes.rtf,
+            snrDb: lastEstimatedSnrDb,
             tokens: finalRes.tokens,
           });
           streamingSession.reset();
@@ -3885,6 +4581,7 @@ async function handleIncomingMessage(msg                )                {
               iast: currentLanguage === 'sa' ? devanagariToIast(partial.text) : undefined,
               language: currentLanguage,
               rtf: partial.rtf,
+              snrDb: lastEstimatedSnrDb,
               durationMs: partial.durationMs,
               inferenceMs: partial.inferenceMs,
               tokens: partial.tokens,
@@ -3935,6 +4632,11 @@ async function handleIncomingMessage(msg                )                {
 
       case 'SET_LANGUAGE': {
         await setupLanguage(msg.language, msg.modelUrl, msg.vocabUrl);
+        break;
+      }
+
+      case 'SET_DENOISE': {
+        denoiseEnabled = Boolean(msg.enabled);
         break;
       }
 
@@ -4125,7 +4827,10 @@ module.exports = {
   STATIC_WINDOW,
   STATIC_MEL_FB,
   extractLogMelFeatures,
+  enhanceSpeechWithTelemetry,
+  denoisePcm16k,
   dedupMarks,
+  repairBrahmicOrthography,
   normalizeIndicText,
   assembleText,
   isSpecialToken,

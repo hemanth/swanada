@@ -10,6 +10,7 @@ import onnxruntime as ort
 
 from .audio import load_audio
 from .decoder import CTCDecodeResult, decode_ctc
+from .denoise import enhance_speech_with_telemetry
 from .frontend import extract_log_mel_features, extract_log_mel_onnx
 
 
@@ -21,6 +22,7 @@ class TranscriptionResult:
     inference_ms: float
     rtf: float
     tokens: List[str]
+    snr_db: Optional[float] = None
 
 
 class AcousticEngine:
@@ -34,10 +36,12 @@ class AcousticEngine:
         language: str = "sa",
         num_threads: int = 4,
         preprocessor_mode: str = "analytical",
+        denoise: bool = True,
     ):
         self.language = language
         self.num_threads = num_threads
         self.preprocessor_mode = preprocessor_mode
+        self.denoise = denoise
         self.acoustic_session: Optional[ort.InferenceSession] = None
         self.preprocessor_session: Optional[ort.InferenceSession] = None
         self.vocab: List[str] = []
@@ -117,15 +121,34 @@ class AcousticEngine:
                 tokens=[],
             )
 
+        # 0. Multi-stage background noise cancellation & speech enhancement
+        snr_db: Optional[float] = None
+        clean_pcm = pcm
+        if self.denoise:
+            enhanced = enhance_speech_with_telemetry(pcm, sr=sample_rate)
+            snr_db = enhanced.estimated_snr_db
+            if not enhanced.is_speech_likely:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                return TranscriptionResult(
+                    text="",
+                    language=self.language,
+                    duration_ms=duration_ms,
+                    inference_ms=elapsed_ms,
+                    rtf=elapsed_ms / duration_ms if duration_ms > 0 else 0.0,
+                    tokens=[],
+                    snr_db=snr_db,
+                )
+            clean_pcm = enhanced.pcm
+
         # 1. Feature extraction
         if self.preprocessor_mode == "onnx" and self.preprocessor_session is not None:
-            audio_sig = np.ascontiguousarray(pcm.reshape(1, -1), dtype=np.float32)
-            length = np.array([len(pcm)], dtype=np.int64)
+            audio_sig = np.ascontiguousarray(clean_pcm.reshape(1, -1), dtype=np.float32)
+            length = np.array([len(clean_pcm)], dtype=np.int64)
             outputs = self.preprocessor_session.run(None, {"audio_signal": audio_sig, "length": length})
             features = outputs[0]
             feature_length = int(outputs[1][0])
         else:
-            features, feature_length = extract_log_mel_features(pcm, sr=sample_rate)
+            features, feature_length = extract_log_mel_features(clean_pcm, sr=sample_rate)
 
         if self.acoustic_session is None:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
@@ -162,4 +185,5 @@ class AcousticEngine:
             inference_ms=total_elapsed_ms,
             rtf=rtf,
             tokens=decode_res.tokens,
+            snr_db=snr_db,
         )

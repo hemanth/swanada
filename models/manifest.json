@@ -20,7 +20,7 @@
     },
     "onnx/heads/head_en.onnx.data": {
       "size_bytes": 527364,
-      "sha256": "7c77450c2a530c96155a0c000e44b5cb39fdcbd3067a91eab2863d48a56b0335"
+      "sha256": "6875c9c49922ef27e63de285933c8039ce75bda0e2b8eef6dc7c0f9191286e3c"
     },
     "onnx/heads/head_gu.onnx": {
       "size_bytes": 743,
@@ -112,7 +112,7 @@
     },
     "onnx/swanada_en_ctc_int8.onnx": {
       "size_bytes": 187484185,
-      "sha256": "5dd2d081bdd2c18301c05b9f7928523847be9451fb9d3dcb046d10b3e82b3140"
+      "sha256": "4606ff28976c21f5f77dfbf4997fffeeb0b5d2dd3de6ab607b07ad82ed0f78e7"
     },
     "onnx/swanada_gu_ctc_int8.onnx": {
       "size_bytes": 187484185,

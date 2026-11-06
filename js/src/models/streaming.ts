@@ -60,8 +60,8 @@ export class StreamingAcousticEngine {
   ) {
     this.engine = engine;
     this.decoder = new StreamingCTCDecoder(vocab);
-    this.leftContextSamples = options?.leftContextSamples ?? 16000; // 1,000 ms
-    this.maxBufferSamples = options?.maxBufferSamples ?? 32000; // 2,000 ms
+    this.leftContextSamples = options?.leftContextSamples ?? 20480; // 1,280 ms
+    this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
   }
 
@@ -294,11 +294,13 @@ export class StreamingAcousticEngine {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
+          if (matchLen >= 2) break;
         }
       }
+      if (bestMatchLen >= 2) break;
     }
 
-    if (bestMatchLen >= 3) {
+    if (bestMatchLen > 0) {
       return [bestOffset, bestRawStart];
     }
 
@@ -317,11 +319,13 @@ export class StreamingAcousticEngine {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
+          if (matchLen >= 2) break;
         }
       }
+      if (bestMatchLen >= 2) break;
     }
 
-    if (bestMatchLen >= 3) {
+    if (bestMatchLen >= 2) {
       return [bestOffset, bestRawStart];
     }
 
