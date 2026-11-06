@@ -3000,7 +3000,7 @@ class StreamingAcousticEngine {
           vadSilenceThreshold        ;
           totalAudioSamples         = 0;
           consecutiveSilentSamples         = 0;
-          pauseThresholdSamples         = 8000; // 500 ms @ 16 kHz
+          pauseThresholdSamples         = 16000; // 1,000 ms @ 16 kHz (true turn boundary, never mid-clause breath)
           baseCommittedTokens           = [];
           isFinished          = false;
           isWindowSliding          = false;
@@ -3034,10 +3034,11 @@ class StreamingAcousticEngine {
   ) {
     this.engine = engine;
     this.decoder = new StreamingCTCDecoder(vocab, {
+      trailTokens: 5,
       requireStabilityOnWordBoundary: true,
     });
-    this.leftContextSamples = options?.leftContextSamples ?? 20480; // 1,280 ms
-    this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms
+    this.leftContextSamples = options?.leftContextSamples ?? 30720; // 1,920 ms overlap guarantees committed tail stays in window
+    this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms window cap
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
   }
 
@@ -3074,7 +3075,7 @@ class StreamingAcousticEngine {
     if (rms < this.vadSilenceThreshold) {
       this.consecutiveSilentSamples += chunk.length;
       if (this.consecutiveSilentSamples >= this.pauseThresholdSamples) {
-        if (this.audioBuffer.length > 0) {
+        if (this.audioBuffer.length >= 24000) {
           // Flush unconfirmed tokens on natural speech pause (turn completion)
           const lastHyp = (this.decoder       ).lastHypTokens || [];
           const comm = this.decoder.getCommittedTokens();
@@ -3156,9 +3157,9 @@ class StreamingAcousticEngine {
         globalTokens = [...committed.slice(0, bestOffset), ...res.tokens.slice(bestRawStart)];
       }
 
-      // Hold irreversible prefix commits during the first <600ms of an utterance segment
+      // Hold irreversible prefix commits during the first <1000ms of an utterance segment
       // while still emitting live volatile partial transcripts from 100ms onward.
-      const allowCommit = this.isWindowSliding || this.audioBuffer.length >= 9600;
+      const allowCommit = this.isWindowSliding || this.audioBuffer.length >= 16000;
 
       // Update streaming decoder with aligned global tokens
       const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);
@@ -3662,6 +3663,7 @@ function transliterateIast(text        )         {
                            
                                
                     
+                   
                     
                                         
                       
@@ -3712,6 +3714,7 @@ class SwanadaWorkerClient {
           readyPromise                           ;
           readyResolve                                    ;
           readyReject                         ;
+          expectedLanguage                           = null;
           finalResolve                                                                     = null;
           finalReject                                  = null;
           isTerminated = false;
@@ -3758,6 +3761,9 @@ class SwanadaWorkerClient {
 
       switch (msg.type) {
         case 'READY': {
+          if (this.expectedLanguage && msg.language && msg.language !== this.expectedLanguage) {
+            break;
+          }
           const readyEvent                   = {
             language: msg.language,
             executionProvider: msg.executionProvider,
@@ -3844,9 +3850,10 @@ class SwanadaWorkerClient {
     if (typeof this.worker.addEventListener === 'function') {
       this.worker.addEventListener('message', onMessage);
       this.worker.addEventListener('error', onError);
+    } else {
+      this.worker.onmessage = onMessage;
+      this.worker.onerror = onError;
     }
-    this.worker.onmessage = onMessage;
-    this.worker.onerror = onError;
   }
 
   /**
@@ -3854,14 +3861,23 @@ class SwanadaWorkerClient {
    */
   async init(config                     )                            {
     if (this.isTerminated) throw new Error('Cannot initialize terminated worker.');
+    const targetLang = (config.language || 'sa')                     ;
+    this.expectedLanguage = targetLang;
+    const prevResolve = this.readyResolve;
     this.readyPromise = new Promise                  ((resolve, reject) => {
-      this.readyResolve = resolve;
+      this.readyResolve = (evt) => {
+        if (prevResolve && prevResolve !== resolve) {
+          try { prevResolve(evt); } catch {}
+        }
+        resolve(evt);
+      };
       this.readyReject = reject;
     });
     this.worker.postMessage({
       type: 'INIT',
-      language: config.language || 'sa',
+      language: targetLang,
       modelUrl: config.modelUrl,
+      headUrl: config.headUrl,
       vocabUrl: config.vocabUrl,
       executionProvider: config.executionProvider || 'wasm',
       numThreads: config.numThreads,
@@ -3883,17 +3899,24 @@ class SwanadaWorkerClient {
    */
   async setLanguage(
     language                   ,
-    options                                           = {}
+    options                                                             = {}
   )                            {
-    await this.whenReady();
+    this.expectedLanguage = language;
+    const prevResolve = this.readyResolve;
     this.readyPromise = new Promise                  ((resolve, reject) => {
-      this.readyResolve = resolve;
+      this.readyResolve = (evt) => {
+        if (prevResolve && prevResolve !== resolve) {
+          try { prevResolve(evt); } catch {}
+        }
+        resolve(evt);
+      };
       this.readyReject = reject;
     });
     this.worker.postMessage({
       type: 'SET_LANGUAGE',
       language,
       modelUrl: options.modelUrl,
+      headUrl: options.headUrl,
       vocabUrl: options.vocabUrl,
     });
     return this.readyPromise;
@@ -4044,7 +4067,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
       if (!workerReadyToDispatch) {
         startupMessageQueue.push(event.data);
       } else {
-        handleIncomingMessage(event.data);
+        dispatchIncomingMessage(event.data);
       }
     });
   }
@@ -4125,6 +4148,9 @@ const sessionCache = new Map                                           ();
 
 // Streaming session for bounded O(1) real-time transcription
 let streamingSession                                 = null;
+let latestSetupEpoch = 0;
+let activeSetupPromise                       = null;
+let inferenceQueue                = Promise.resolve();
 
 function getWorkerState()              {
   return workerState;
@@ -4319,10 +4345,12 @@ async function setupLanguage(
   userThreads         ,
   wasmPaths         
 )                {
+  const myEpoch = ++latestSetupEpoch;
   workerState = 'INITIALIZING';
-  currentLanguage = lang;
 
   if (sessionCache.has(lang)) {
+    if (myEpoch !== latestSetupEpoch) return;
+    currentLanguage = lang;
     const cached = sessionCache.get(lang) ;
     activeSession = cached.session;
     activeVocab = cached.vocab;
@@ -4335,7 +4363,7 @@ async function setupLanguage(
       },
     };
     streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-      leftContextSamples: 20480,
+      leftContextSamples: 30720,
       maxBufferSamples: 61440,
       vadSilenceThreshold: 0.005,
     });
@@ -4459,7 +4487,10 @@ async function setupLanguage(
     }
   }
 
+  if (myEpoch !== latestSetupEpoch) return;
+
   // Save to LRU cache
+  currentLanguage = lang;
   sessionCache.set(lang, { session: activeSession, vocab: activeVocab });
 
   const engineAdapter      = {
@@ -4470,7 +4501,7 @@ async function setupLanguage(
     },
   };
   streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-    leftContextSamples: 20480,
+    leftContextSamples: 30720,
     maxBufferSamples: 61440,
     vadSilenceThreshold: 0.005,
   });
@@ -4752,9 +4783,28 @@ async function handleIncomingMessage(msg                )                {
   }
 }
 
+function dispatchIncomingMessage(msg     )       {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE' || msg.type === 'SET_DENOISE') {
+    const p = handleIncomingMessage(msg);
+    if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE') {
+      activeSetupPromise = p;
+    }
+  } else {
+    inferenceQueue = inferenceQueue
+      .then(async () => {
+        if (activeSetupPromise) {
+          try { await activeSetupPromise; } catch {}
+        }
+        await handleIncomingMessage(msg);
+      })
+      .catch(() => {});
+  }
+}
+
 workerReadyToDispatch = true;
 for (const m of startupMessageQueue.splice(0)) {
-  handleIncomingMessage(m);
+  dispatchIncomingMessage(m);
 }
 
 /**

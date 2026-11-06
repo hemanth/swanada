@@ -25,7 +25,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
       if (!workerReadyToDispatch) {
         startupMessageQueue.push(event.data);
       } else {
-        handleIncomingMessage(event.data);
+        dispatchIncomingMessage(event.data);
       }
     });
   }
@@ -106,6 +106,9 @@ const sessionCache = new Map<string, { session: any; vocab: string[] }>();
 
 // Streaming session for bounded O(1) real-time transcription
 let streamingSession: StreamingAcousticEngine | null = null;
+let latestSetupEpoch = 0;
+let activeSetupPromise: Promise<void> | null = null;
+let inferenceQueue: Promise<void> = Promise.resolve();
 
 export function getWorkerState(): WorkerState {
   return workerState;
@@ -300,10 +303,12 @@ async function setupLanguage(
   userThreads?: number,
   wasmPaths?: string
 ): Promise<void> {
+  const myEpoch = ++latestSetupEpoch;
   workerState = 'INITIALIZING';
-  currentLanguage = lang;
 
   if (sessionCache.has(lang)) {
+    if (myEpoch !== latestSetupEpoch) return;
+    currentLanguage = lang;
     const cached = sessionCache.get(lang)!;
     activeSession = cached.session;
     activeVocab = cached.vocab;
@@ -316,7 +321,7 @@ async function setupLanguage(
       },
     };
     streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-      leftContextSamples: 20480,
+      leftContextSamples: 30720,
       maxBufferSamples: 61440,
       vadSilenceThreshold: 0.005,
     });
@@ -440,7 +445,10 @@ async function setupLanguage(
     }
   }
 
+  if (myEpoch !== latestSetupEpoch) return;
+
   // Save to LRU cache
+  currentLanguage = lang;
   sessionCache.set(lang, { session: activeSession, vocab: activeVocab });
 
   const engineAdapter: any = {
@@ -451,7 +459,7 @@ async function setupLanguage(
     },
   };
   streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-    leftContextSamples: 20480,
+    leftContextSamples: 30720,
     maxBufferSamples: 61440,
     vadSilenceThreshold: 0.005,
   });
@@ -733,7 +741,26 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
   }
 }
 
+function dispatchIncomingMessage(msg: any): void {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE' || msg.type === 'SET_DENOISE') {
+    const p = handleIncomingMessage(msg);
+    if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE') {
+      activeSetupPromise = p;
+    }
+  } else {
+    inferenceQueue = inferenceQueue
+      .then(async () => {
+        if (activeSetupPromise) {
+          try { await activeSetupPromise; } catch {}
+        }
+        await handleIncomingMessage(msg);
+      })
+      .catch(() => {});
+  }
+}
+
 workerReadyToDispatch = true;
 for (const m of startupMessageQueue.splice(0)) {
-  handleIncomingMessage(m);
+  dispatchIncomingMessage(m);
 }

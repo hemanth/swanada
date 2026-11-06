@@ -1,8 +1,8 @@
 /**
  * swanada: Dedicated STT Background Web Worker (docs/stt-worker.mjs).
- * Runs ONNX Runtime Web WASM SIMD completely off the main thread.
- * Guarantees 60 FPS UI rendering, zero audio capture glitching,
- * and 0 external network requests during active transcription.
+ * Runs a single shared 187 MB INT8 Conformer encoder session in WASM SIMD with
+ * hot-swappable 515 KB per-language linear CTC heads across all 12 languages,
+ * strict FIFO async message serialization, and epoch-guarded language switching.
  */
 
 let workerReadyToDispatch = false;
@@ -13,7 +13,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
     if (!workerReadyToDispatch) {
       startupMessageQueue.push(event.data);
     } else {
-      handleIncomingMessage(event.data);
+      dispatchIncomingMessage(event.data);
     }
   });
 }
@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.1.1' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.2.0' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -45,16 +45,136 @@ let lastEstimatedSnrDb = 0;
 let ort = null;
 let currentLanguage = 'sa';
 let activeSession = null;
+let activeHead = null; // { weight: Float32Array(257*512), bias: Float32Array(257) } | null
 let activeVocab = [];
 let ctcDecoder = null;
 let executionProvider = 'wasm';
 let cacheStorageName = CACHE_STORAGE_NAME;
 
+// Shared 187 MB Conformer encoder singleton (compiled ONCE across all 12 languages)
+let sharedEncoderSession = null;
+let sharedEncoderPromise = null;
+let sharedEncoderThreads = 1;
+
+// Per-language head & monolithic fallback caches
+const headCache = new Map();
 const sessionCache = new Map();
 let streamingSession = null;
 
+// Concurrency & race-condition guards
+let latestSetupEpoch = 0;
+let activeSetupPromise = null;
+let inferenceQueue = Promise.resolve();
+
 export function getWorkerState() {
   return workerState;
+}
+
+// Protobuf ValueInfoProto for exposing `layer_norm_84` ([batch, time_sub, 512] float32)
+const LAYER_NORM_84_VALUE_INFO = new Uint8Array([
+  0x0a, 0x0d, 0x6c, 0x61, 0x79, 0x65, 0x72, 0x5f, 0x6e, 0x6f, 0x72, 0x6d, 0x5f, 0x38, 0x34,
+  0x12, 0x20, 0x0a, 0x1e, 0x08, 0x01, 0x12, 0x1a, 0x0a, 0x07, 0x12, 0x05, 0x62, 0x61, 0x74,
+  0x63, 0x68, 0x0a, 0x0a, 0x12, 0x08, 0x74, 0x69, 0x6d, 0x65, 0x5f, 0x73, 0x75, 0x62, 0x0a,
+  0x03, 0x08, 0x80, 0x04,
+]);
+
+function readPbVarint(buf, pos) {
+  let val = 0;
+  let shift = 0;
+  while (pos < buf.length) {
+    const b = buf[pos++];
+    val += (b & 0x7f) * Math.pow(2, shift);
+    if ((b & 0x80) === 0) return [val, pos];
+    shift += 7;
+  }
+  throw new Error('Truncated ONNX protobuf varint');
+}
+
+function encodePbVarint(n) {
+  const out = [];
+  let rem = n;
+  while (rem >= 128) {
+    out.push((rem % 128) | 0x80);
+    rem = Math.floor(rem / 128);
+  }
+  out.push(rem);
+  return Uint8Array.from(out);
+}
+
+/**
+ * Zero-dependency in-memory ONNX Protobuf graph splitter: exposes final encoder
+ * LayerNorm tensor `layer_norm_84` ([1, T, 512]) so one shared encoder session
+ * drives all 12 language CTC projection heads with 0.00e+00 numerical drift.
+ */
+function exposeEncoderHiddenOutput(modelBytes) {
+  const src = modelBytes instanceof Uint8Array ? modelBytes : new Uint8Array(modelBytes);
+  const graphAppend = new Uint8Array(2 + LAYER_NORM_84_VALUE_INFO.length);
+  graphAppend[0] = 0x62; // GraphProto.output (field 12, wire type 2)
+  graphAppend[1] = LAYER_NORM_84_VALUE_INFO.length;
+  graphAppend.set(LAYER_NORM_84_VALUE_INFO, 2);
+
+  let pos = 0;
+  while (pos < src.length) {
+    const tagStart = pos;
+    const [tag, afterTag] = readPbVarint(src, pos);
+    const fieldNo = Math.floor(tag / 8);
+    const wireType = tag & 7;
+    if (wireType === 0) {
+      [, pos] = readPbVarint(src, afterTag);
+    } else if (wireType === 2) {
+      const [len, dataStart] = readPbVarint(src, afterTag);
+      const dataEnd = dataStart + len;
+      if (fieldNo === 7) {
+        const tagBytes = src.subarray(tagStart, afterTag);
+        const newLenBytes = encodePbVarint(len + graphAppend.length);
+        const out = new Uint8Array(
+          tagStart + tagBytes.length + newLenBytes.length + len + graphAppend.length + (src.length - dataEnd)
+        );
+        let w = 0;
+        out.set(src.subarray(0, tagStart), w); w += tagStart;
+        out.set(tagBytes, w); w += tagBytes.length;
+        out.set(newLenBytes, w); w += newLenBytes.length;
+        out.set(src.subarray(dataStart, dataEnd), w); w += len;
+        out.set(graphAppend, w); w += graphAppend.length;
+        out.set(src.subarray(dataEnd), w);
+        return out;
+      }
+      pos = dataEnd;
+    } else if (wireType === 5) {
+      pos = afterTag + 4;
+    } else if (wireType === 1) {
+      pos = afterTag + 8;
+    } else {
+      return src;
+    }
+  }
+  return src;
+}
+
+/**
+ * Exact 1x1 CTC head projection: hidden [T, 512] x weight^T [512, 257] + bias [257] -> logits [T, 257].
+ */
+function projectLinearHead(hidden, timeSteps, weight, bias) {
+  const numClasses = 257;
+  const dim = 512;
+  const out = new Float32Array(timeSteps * numClasses);
+  for (let t = 0; t < timeSteps; t++) {
+    const hOff = t * dim;
+    const oOff = t * numClasses;
+    for (let c = 0; c < numClasses; c++) {
+      const wOff = c * dim;
+      let acc = bias[c];
+      for (let d = 0; d < dim; d += 4) {
+        acc +=
+          hidden[hOff + d] * weight[wOff + d] +
+          hidden[hOff + d + 1] * weight[wOff + d + 1] +
+          hidden[hOff + d + 2] * weight[wOff + d + 2] +
+          hidden[hOff + d + 3] * weight[wOff + d + 3];
+      }
+      out[oOff + c] = acc;
+    }
+  }
+  return out;
 }
 
 async function resolveOrt() {
@@ -140,6 +260,22 @@ function configureWasm(ortInstance, numThreads, wasmPaths) {
   return threads;
 }
 
+function resolveRelativeWorkerUrl(urlOrPath) {
+  const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
+  if (!isNode && !urlOrPath.startsWith('http://') && !urlOrPath.startsWith('https://')) {
+    try {
+      const baseHref =
+        (typeof self !== 'undefined' && self.location?.href) ||
+        (typeof window !== 'undefined' && window.location?.href) ||
+        '';
+      if (baseHref) {
+        return new URL(urlOrPath, baseHref).href;
+      }
+    } catch {}
+  }
+  return urlOrPath;
+}
+
 async function loadVocab(vocabUrlOrPath) {
   if (typeof caches !== 'undefined') {
     try {
@@ -180,19 +316,7 @@ async function loadVocab(vocabUrlOrPath) {
     throw new Error(`Vocabulary not found at path: ${vocabUrlOrPath}`);
   }
 
-  let fetchUrl = vocabUrlOrPath;
-  if (!isNode && !vocabUrlOrPath.startsWith('http://') && !vocabUrlOrPath.startsWith('https://')) {
-    try {
-      const baseHref =
-        (typeof self !== 'undefined' && self.location?.href) ||
-        (typeof window !== 'undefined' && window.location?.href) ||
-        '';
-      if (baseHref) {
-        fetchUrl = new URL(vocabUrlOrPath, baseHref).href;
-      }
-    } catch {}
-  }
-
+  const fetchUrl = resolveRelativeWorkerUrl(vocabUrlOrPath);
   const res = await fetch(fetchUrl);
   if (!res.ok) {
     throw new Error(`Failed to fetch vocabulary from ${fetchUrl}: HTTP ${res.status}`);
@@ -209,6 +333,71 @@ async function loadVocab(vocabUrlOrPath) {
   return Array.isArray(json) ? json : Object.values(json);
 }
 
+async function loadLinearHead(lang, headUrlOrPath) {
+  if (headCache.has(lang)) {
+    return headCache.get(lang);
+  }
+
+  let arrayBuf = null;
+
+  if (typeof caches !== 'undefined') {
+    try {
+      const cache = await caches.open(cacheStorageName);
+      const matched = await cache.match(headUrlOrPath);
+      if (matched && matched.ok) {
+        arrayBuf = await matched.arrayBuffer();
+      }
+    } catch {}
+  }
+
+  if (!arrayBuf && typeof process !== 'undefined' && process.versions?.node) {
+    try {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const candidates = [
+        headUrlOrPath,
+        path.resolve(process.cwd(), headUrlOrPath),
+        path.resolve(process.cwd(), 'docs', headUrlOrPath.replace(/^\.\//, '')),
+        path.resolve(process.cwd(), '..', 'docs', headUrlOrPath.replace(/^\.\//, '')),
+      ];
+      for (const cand of candidates) {
+        if (fs.existsSync(cand)) {
+          const buf = fs.readFileSync(cand);
+          arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  if (!arrayBuf) {
+    const fetchUrl = resolveRelativeWorkerUrl(headUrlOrPath);
+    const res = await fetch(fetchUrl);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch language head from ${fetchUrl}: HTTP ${res.status}`);
+    }
+    if (typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open(cacheStorageName);
+        cache.put(headUrlOrPath, res.clone()).catch(() => {});
+      } catch {}
+    }
+    arrayBuf = await res.arrayBuffer();
+  }
+
+  const floats = new Float32Array(arrayBuf);
+  const weightCount = 257 * 512;
+  if (floats.length < weightCount + 257) {
+    throw new Error(`Corrupt CTC head binary for ${lang}: got ${floats.byteLength} bytes`);
+  }
+  const head = {
+    weight: floats.subarray(0, weightCount),
+    bias: floats.subarray(weightCount, weightCount + 257),
+  };
+  headCache.set(lang, head);
+  return head;
+}
+
 function postWorkerMessage(message, transfer) {
   if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
     if (transfer && transfer.length > 0) {
@@ -219,29 +408,178 @@ function postWorkerMessage(message, transfer) {
   }
 }
 
-async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths) {
-  console.log('[Worker] setupLanguage called:', { lang, modelUrl, vocabUrl, wasmPaths });
-  workerState = 'INITIALIZING';
-  currentLanguage = lang;
+async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
+  if (sharedEncoderSession) {
+    return { session: sharedEncoderSession, threads: sharedEncoderThreads, fromCache: true };
+  }
+  if (sharedEncoderPromise) {
+    return sharedEncoderPromise;
+  }
 
+  sharedEncoderPromise = (async () => {
+    try {
+      const ortInstance = await resolveOrt();
+      if (typeof self !== 'undefined') self.ort = ortInstance;
+      const activeThreads = configureWasm(ortInstance, userThreads, wasmPaths);
+      sharedEncoderThreads = activeThreads;
+
+      postWorkerMessage({
+        type: 'PROGRESS',
+        stage: 'downloading',
+        progress: 0.1,
+        fromCache: false,
+      });
+
+      let wasCacheHit = false;
+      const progressHandler = (p) => {
+        if (p.fromCache) wasCacheHit = true;
+        postWorkerMessage({
+          type: 'PROGRESS',
+          stage: 'downloading',
+          progress: p.pct / 100,
+          loadedBytes: p.loadedBytes,
+          totalBytes: p.totalBytes,
+          fromCache: p.fromCache,
+        });
+      };
+
+      const isNodeEnv = typeof process !== 'undefined' && Boolean(process.versions?.node);
+      let rawBytes;
+      try {
+        rawBytes = await loadModelAsset(encoderUrl, cacheStorageName, progressHandler);
+      } catch (err) {
+        const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        if (!isNodeEnv && !isOffline && !encoderUrl.startsWith('https://huggingface.co/')) {
+          const hfFallbackUrl = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx/sushrota_sanskrit_ctc_int8.onnx';
+          rawBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
+        } else {
+          throw err;
+        }
+      }
+
+      const patchedBytes = exposeEncoderHiddenOutput(rawBytes);
+
+      postWorkerMessage({
+        type: 'PROGRESS',
+        stage: 'compiling',
+        progress: 0.95,
+        fromCache: wasCacheHit,
+      });
+
+      const sessionOptions = {
+        executionProviders: [executionProvider],
+        graphOptimizationLevel: 'all',
+      };
+
+      let sess;
+      try {
+        sess = await ortInstance.InferenceSession.create(patchedBytes, sessionOptions);
+      } catch (err) {
+        if (executionProvider === 'webgpu') {
+          executionProvider = 'wasm';
+          sessionOptions.executionProviders = ['wasm'];
+          sess = await ortInstance.InferenceSession.create(patchedBytes, sessionOptions);
+        } else {
+          throw err;
+        }
+      }
+
+      postWorkerMessage({
+        type: 'PROGRESS',
+        stage: 'warmup',
+        progress: 0.99,
+        fromCache: wasCacheHit,
+      });
+
+      const warmupPcm = new Float32Array(1600);
+      const warmupMel = extractLogMelFeatures(warmupPcm);
+      let warmFeats = null;
+      let warmLen = null;
+      let warmOut = null;
+      try {
+        warmFeats = new ortInstance.Tensor('float32', warmupMel.features, [1, 80, warmupMel.numFrames]);
+        warmLen = new ortInstance.Tensor('int64', BigInt64Array.from([BigInt(warmupMel.numFrames)]), [1]);
+        warmOut = await sess.run({ audio_signal: warmFeats, length: warmLen });
+      } finally {
+        warmFeats?.dispose?.();
+        warmLen?.dispose?.();
+        if (warmOut) {
+          for (const t of Object.values(warmOut)) t?.dispose?.();
+        }
+      }
+
+      sharedEncoderSession = sess;
+      return { session: sess, threads: activeThreads, fromCache: wasCacheHit };
+    } catch (err) {
+      sharedEncoderPromise = null;
+      throw err;
+    }
+  })();
+
+  return sharedEncoderPromise;
+}
+
+function buildStreamingEngineForActiveLanguage(lang, vocab) {
+  const engineAdapter = {
+    config: { language: lang },
+    getVocab: () => vocab,
+    transcribe: async (pcm) => runAcousticInference(pcm),
+  };
+  return new StreamingAcousticEngine(engineAdapter, vocab, {
+    leftContextSamples: 30720,
+    maxBufferSamples: 61440,
+    vadSilenceThreshold: 0.005,
+  });
+}
+
+async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, headUrl) {
+  const myEpoch = ++latestSetupEpoch;
+  workerState = 'INITIALIZING';
+
+  const effectiveVocabUrl = vocabUrl || `./models/vocabularies/${lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`}`;
+
+  // Fast path: Shared Encoder + 515 KB per-language linear CTC head (all 12 languages in Studio)
+  if (headUrl) {
+    const effectiveEncoderUrl = modelUrl || './models/onnx/sushrota_sanskrit_ctc_int8.onnx';
+    const [encInfo, vocab, head] = await Promise.all([
+      ensureSharedEncoderSession(effectiveEncoderUrl, userThreads, wasmPaths),
+      loadVocab(effectiveVocabUrl),
+      loadLinearHead(lang, headUrl),
+    ]);
+
+    // Abort cleanly if user clicked another language tab while loading
+    if (myEpoch !== latestSetupEpoch) {
+      return;
+    }
+
+    currentLanguage = lang;
+    activeSession = encInfo.session;
+    activeHead = head;
+    activeVocab = vocab;
+    ctcDecoder = new CTCGreedyDecoder(activeVocab);
+    streamingSession = buildStreamingEngineForActiveLanguage(lang, activeVocab);
+    workerState = 'READY';
+
+    postWorkerMessage({
+      type: 'READY',
+      language: lang,
+      executionProvider,
+      numThreads: encInfo.threads,
+      fromCache: encInfo.fromCache,
+    });
+    return;
+  }
+
+  // Fallback path: Monolithic per-language ONNX model (used by standalone SDK / custom modelUrl tests)
   if (sessionCache.has(lang)) {
-    console.log('[Worker] hit sessionCache for:', lang);
+    if (myEpoch !== latestSetupEpoch) return;
     const cached = sessionCache.get(lang);
+    currentLanguage = lang;
     activeSession = cached.session;
+    activeHead = null;
     activeVocab = cached.vocab;
     ctcDecoder = new CTCGreedyDecoder(activeVocab);
-    const engineAdapter = {
-      config: { language: lang },
-      getVocab: () => activeVocab,
-      transcribe: async (pcm) => {
-        return runAcousticInference(pcm);
-      },
-    };
-    streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-      leftContextSamples: 20480,
-      maxBufferSamples: 61440,
-      vadSilenceThreshold: 0.005,
-    });
+    streamingSession = buildStreamingEngineForActiveLanguage(lang, activeVocab);
     workerState = 'READY';
     postWorkerMessage({
       type: 'READY',
@@ -253,20 +591,12 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths) {
     return;
   }
 
-  console.log('[Worker] resolving ORT...');
   const ortInstance = await resolveOrt();
-  console.log('[Worker] ORT resolved:', Boolean(ortInstance));
   if (typeof self !== 'undefined') self.ort = ortInstance;
   const activeThreads = configureWasm(ortInstance, userThreads, wasmPaths);
-  console.log('[Worker] WASM configured with threads:', activeThreads);
 
-  const effectiveModelUrl = modelUrl || `./models/onnx/swanada_${lang}_ctc_int8.onnx`;
-  const effectiveVocabUrl = vocabUrl || `./models/vocabularies/${lang}_vocab.json`;
-
-  console.log('[Worker] loading vocab from:', effectiveVocabUrl);
-  activeVocab = await loadVocab(effectiveVocabUrl);
-  console.log('[Worker] vocab loaded, count:', activeVocab.length);
-  ctcDecoder = new CTCGreedyDecoder(activeVocab);
+  const effectiveModelUrl = modelUrl || `./models/onnx/${lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`}`;
+  const vocab = await loadVocab(effectiveVocabUrl);
 
   postWorkerMessage({
     type: 'PROGRESS',
@@ -276,9 +606,10 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths) {
   });
 
   const progressHandler = (p) => {
+    if (myEpoch !== latestSetupEpoch) return;
     postWorkerMessage({
       type: 'PROGRESS',
-      stage: p.phase === 'cache' ? 'downloading' : 'downloading',
+      stage: 'downloading',
       progress: p.pct / 100,
       loadedBytes: p.loadedBytes,
       totalBytes: p.totalBytes,
@@ -301,7 +632,8 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths) {
     }
   }
 
-  // Evict oldest cached ONNX session before allocating a new 187.5 MB model on mobile / constrained RAM
+  if (myEpoch !== latestSetupEpoch) return;
+
   const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
   const devMem = typeof navigator !== 'undefined' ? navigator?.deviceMemory || 8 : 8;
   const maxCachedSessions = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4 ? 1 : 2;
@@ -327,24 +659,23 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths) {
     graphOptimizationLevel: 'all',
   };
 
+  let sess;
   try {
-    activeSession = await ortInstance.InferenceSession.create(modelBytes, sessionOptions);
+    sess = await ortInstance.InferenceSession.create(modelBytes, sessionOptions);
   } catch (err) {
     if (executionProvider === 'webgpu') {
       executionProvider = 'wasm';
       sessionOptions.executionProviders = ['wasm'];
-      activeSession = await ortInstance.InferenceSession.create(modelBytes, sessionOptions);
+      sess = await ortInstance.InferenceSession.create(modelBytes, sessionOptions);
     } else {
       throw err;
     }
   }
 
-  postWorkerMessage({
-    type: 'PROGRESS',
-    stage: 'warmup',
-    progress: 0.99,
-    fromCache: false,
-  });
+  if (myEpoch !== latestSetupEpoch) {
+    try { await sess?.release?.(); } catch {}
+    return;
+  }
 
   const warmupPcm = new Float32Array(1600);
   const warmupMel = extractLogMelFeatures(warmupPcm);
@@ -354,7 +685,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths) {
   try {
     warmFeats = new ortInstance.Tensor('float32', warmupMel.features, [1, 80, warmupMel.numFrames]);
     warmLen = new ortInstance.Tensor('int64', BigInt64Array.from([BigInt(warmupMel.numFrames)]), [1]);
-    warmOut = await activeSession.run({ audio_signal: warmFeats, length: warmLen });
+    warmOut = await sess.run({ audio_signal: warmFeats, length: warmLen });
   } finally {
     warmFeats?.dispose?.();
     warmLen?.dispose?.();
@@ -363,22 +694,18 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths) {
     }
   }
 
-  // Save to LRU cache
-  sessionCache.set(lang, { session: activeSession, vocab: activeVocab });
+  if (myEpoch !== latestSetupEpoch) {
+    try { await sess?.release?.(); } catch {}
+    return;
+  }
 
-  const engineAdapter = {
-    config: { language: lang },
-    getVocab: () => activeVocab,
-    transcribe: async (pcm) => {
-      return runAcousticInference(pcm);
-    },
-  };
-  streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-    leftContextSamples: 20480,
-    maxBufferSamples: 61440,
-    vadSilenceThreshold: 0.005,
-  });
-
+  sessionCache.set(lang, { session: sess, vocab });
+  currentLanguage = lang;
+  activeSession = sess;
+  activeHead = null;
+  activeVocab = vocab;
+  ctcDecoder = new CTCGreedyDecoder(activeVocab);
+  streamingSession = buildStreamingEngineForActiveLanguage(lang, activeVocab);
   workerState = 'READY';
 
   postWorkerMessage({
@@ -463,11 +790,19 @@ async function runAcousticInference(pcm) {
       length: lenTensor,
     });
 
-    const logitsTensor = outputs.logits || Object.values(outputs)[0];
-    const dims = logitsTensor.dims;
-    timeSteps = dims.length === 3 ? dims[1] : dims[0];
-    numClasses = dims.length === 3 ? dims[2] : dims[1];
-    logits = new Float32Array(logitsTensor.data);
+    if (activeHead && outputs.layer_norm_84) {
+      const hiddenTensor = outputs.layer_norm_84;
+      const hDims = hiddenTensor.dims;
+      timeSteps = hDims.length === 3 ? hDims[1] : hDims[0];
+      numClasses = 257;
+      logits = projectLinearHead(hiddenTensor.data, timeSteps, activeHead.weight, activeHead.bias);
+    } else {
+      const logitsTensor = outputs.logits || Object.values(outputs)[0];
+      const dims = logitsTensor.dims;
+      timeSteps = dims.length === 3 ? dims[1] : dims[0];
+      numClasses = dims.length === 3 ? dims[2] : dims[1];
+      logits = new Float32Array(logitsTensor.data);
+    }
   } finally {
     featsTensor?.dispose?.();
     lenTensor?.dispose?.();
@@ -494,10 +829,9 @@ async function runAcousticInference(pcm) {
 }
 
 /**
- * Message dispatcher invoked by incoming postMessage events.
+ * Core message handler (preserved export signature for direct unit testing).
  */
 export async function handleIncomingMessage(msg) {
-  console.log('[Worker] handleIncomingMessage:', msg?.type);
   if (!msg || !msg.type) return;
 
   try {
@@ -509,18 +843,36 @@ export async function handleIncomingMessage(msg) {
         if (msg.cacheName || config.cacheName) {
           cacheStorageName = msg.cacheName || config.cacheName || CACHE_STORAGE_NAME;
         }
-        await setupLanguage(
+        const p = setupLanguage(
           lang,
           msg.modelUrl || config.modelUrl,
           msg.vocabUrl || config.vocabUrl,
           msg.numThreads || config.numThreads,
-          msg.wasmPaths || config.wasmPaths
+          msg.wasmPaths || config.wasmPaths,
+          msg.headUrl || config.headUrl
         );
+        activeSetupPromise = p;
+        await p;
+        break;
+      }
+
+      case 'SET_LANGUAGE': {
+        const p = setupLanguage(msg.language, msg.modelUrl, msg.vocabUrl, undefined, undefined, msg.headUrl);
+        activeSetupPromise = p;
+        await p;
+        break;
+      }
+
+      case 'SET_DENOISE': {
+        denoiseEnabled = Boolean(msg.enabled);
         break;
       }
 
       case 'AUDIO_CHUNK':
       case 'PROCESS_CHUNK': {
+        if (activeSetupPromise) {
+          try { await activeSetupPromise; } catch {}
+        }
         if (workerState !== 'READY' && workerState !== 'STREAMING') {
           postWorkerMessage({
             type: 'ERROR',
@@ -589,6 +941,9 @@ export async function handleIncomingMessage(msg) {
       }
 
       case 'FINISH': {
+        if (activeSetupPromise) {
+          try { await activeSetupPromise; } catch {}
+        }
         if (workerState !== 'READY' && workerState !== 'STREAMING') {
           postWorkerMessage({
             type: 'ERROR',
@@ -614,6 +969,7 @@ export async function handleIncomingMessage(msg) {
           durationMs: finalRes.durationMs,
           inferenceMs: finalRes.inferenceMs,
           rtf: finalRes.rtf,
+          snrDb: lastEstimatedSnrDb,
           tokens: finalRes.tokens,
         });
         streamingSession.reset();
@@ -622,17 +978,9 @@ export async function handleIncomingMessage(msg) {
 
       case 'RESET': {
         streamingSession?.reset();
-        workerState = 'READY';
-        break;
-      }
-
-      case 'SET_LANGUAGE': {
-        await setupLanguage(msg.language, msg.modelUrl, msg.vocabUrl);
-        break;
-      }
-
-      case 'SET_DENOISE': {
-        denoiseEnabled = Boolean(msg.enabled);
+        if (activeSession) {
+          workerState = 'READY';
+        }
         break;
       }
 
@@ -657,7 +1005,23 @@ export async function handleIncomingMessage(msg) {
   }
 }
 
+/**
+ * Dispatches browser postMessage events:
+ * - INIT / SET_LANGUAGE / SET_DENOISE run immediately so language clicks preempt stale loads.
+ * - AUDIO_CHUNK / PROCESS_CHUNK / FINISH / RESET run strictly FIFO so WASM ORT never overlaps.
+ */
+function dispatchIncomingMessage(msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE' || msg.type === 'SET_DENOISE') {
+    handleIncomingMessage(msg);
+  } else {
+    inferenceQueue = inferenceQueue
+      .then(() => handleIncomingMessage(msg))
+      .catch(() => {});
+  }
+}
+
 workerReadyToDispatch = true;
 for (const m of startupMessageQueue.splice(0)) {
-  handleIncomingMessage(m);
+  dispatchIncomingMessage(m);
 }

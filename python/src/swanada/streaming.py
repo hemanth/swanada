@@ -216,13 +216,14 @@ class SwanadaStream:
         self,
         engine: AcousticEngine,
         chunk_size_samples: int = 5120,     # 320 ms
-        left_context_samples: int = 20480,   # 1,280 ms
+        left_context_samples: int = 30720,   # 1,920 ms
         max_buffer_samples: int = 61440,     # 3,840 ms
         vad_silence_threshold: float = 0.005,
     ):
         self.engine = engine
         self.decoder = StreamingCTCDecoder(
             engine.vocab,
+            trail_tokens=5,
             require_stability_on_word_boundary=True,
         )
         self.chunk_size_samples = chunk_size_samples
@@ -234,7 +235,7 @@ class SwanadaStream:
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0
-        self.pause_threshold_samples = 8000  # 500 ms @ 16 kHz
+        self.pause_threshold_samples = 16000  # 1,000 ms @ 16 kHz (true turn boundary)
         self.base_committed_tokens: List[str] = []
         self.is_window_sliding = False
         self.is_finished = False
@@ -394,7 +395,7 @@ class SwanadaStream:
         if rms < self.vad_silence_threshold:
             self.consecutive_silent_samples += len(chunk_float)
             if self.consecutive_silent_samples >= self.pause_threshold_samples:
-                if len(self.audio_buffer) > 0:
+                if len(self.audio_buffer) >= 24000:
                     # Flush unconfirmed tokens on natural speech pause (turn completion)
                     if (
                         len(self.decoder.last_hyp_tokens) > len(self.decoder.committed_tokens)
@@ -430,7 +431,7 @@ class SwanadaStream:
             )
             global_tokens = self.decoder.committed_tokens[:best_offset] + res.tokens[best_raw_start:]
 
-        allow_commit = self.is_window_sliding or len(self.audio_buffer) >= 9600
+        allow_commit = self.is_window_sliding or len(self.audio_buffer) >= 16000
         st = self.decoder.update(global_tokens, False, duration_ms, inference_ms, allow_commit=allow_commit)
 
         for cb in self.listeners_partial:

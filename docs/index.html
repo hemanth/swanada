@@ -827,7 +827,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm } from './swanada.mjs?v=1.1.1';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm } from './swanada.mjs?v=1.2.0';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -1043,8 +1043,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         stopRecording();
         stopPresetPlayback();
 
-        if (!workerClient || activeLanguage !== lang) {
+        if (!workerClient || window.__swanadaLoadedLang !== lang) {
           await initEngine(lang);
+        } else if (activeInitPromise) {
+          await activeInitPromise;
         }
 
         resetTranscriptSurface(false);
@@ -1167,169 +1169,191 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       render();
     }
 
-    // Initialize Worker
+    // Initialize Worker (Shared 187 MB Conformer Encoder + 515 KB Per-Language CTC Heads)
+    let activeInitPromise = null;
+    let uiInitEpoch = 0;
+
     async function initEngine(lang = 'sa') {
-      try {
-        activeLanguage = lang;
-        activeLangCode.textContent = lang;
-        updatePresets(lang);
-        syncCopyButtons();
+      const myEpoch = ++uiInitEpoch;
+      activeLanguage = lang;
+      activeLangCode.textContent = lang;
+      updatePresets(lang);
+      syncCopyButtons();
 
-        loaderWrap.style.display = 'flex';
-        loaderMsg.textContent = `Loading acoustic model for [${lang}]...`;
-        progressBar.style.width = '12%';
-        loaderPct.textContent = '12%';
-
-        if (!workerClient) {
-          workerClient = new SwanadaWorkerClient({
-            workerUrl: './stt-worker.mjs?v=1.1.1',
-            wasmPaths: './ort/',
-          });
-          window.__swanadaWorkerClient = workerClient;
-
-          workerClient.on('progress', (p) => {
-            loaderWrap.style.display = 'flex';
-            const pct = Math.round((p.progress || 0) * 100);
-            progressBar.style.width = `${pct}%`;
-            loaderPct.textContent = `${pct}%`;
-            if (p.loadedBytes && p.totalBytes && p.totalBytes > 1048576) {
-              const mbDone = (p.loadedBytes / 1048576).toFixed(1);
-              const mbTotal = (p.totalBytes / 1048576).toFixed(1);
-              loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()} ${mbDone} / ${mbTotal} MB [${activeLanguage}]...`;
-            } else {
-              loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()}: Loading acoustic model [${activeLanguage}]...`;
-            }
-          });
-
-          workerClient.on('ready', (readyEvt) => {
-            window.__swanadaReady = true;
-            const langCode = (readyEvt && readyEvt.language) || activeLanguage;
-            window.__swanadaLoadedLang = langCode;
-            if (readyEvt && readyEvt.fromCache) {
-              window.__swanadaCacheHit = true;
-            }
-            if (readyEvt && readyEvt.numThreads) {
-              engineVal.textContent = `WASM ${readyEvt.numThreads}T`;
-            }
-            statusDot.className = 'status-dot ready';
-            statusText.textContent = `Swanada Engine Ready (${langCode.toUpperCase()})`;
-            progressBar.style.width = '100%';
-            loaderPct.textContent = '100%';
-            setTimeout(() => { loaderWrap.style.display = 'none'; }, 600);
-          });
-
-          workerClient.on('partial', (data) => {
-            placeholder.style.display = 'none';
-            const nextCommitted = data.committed || '';
-            const nextVolatile = data.volatile ? (nextCommitted ? ' ' + data.volatile : data.volatile) : '';
-            if (committedText.textContent !== nextCommitted) {
-              committedText.textContent = nextCommitted;
-            }
-            if (volatileText.textContent !== nextVolatile) {
-              volatileText.textContent = nextVolatile;
-            }
-            currentFullTranscript = (data.text || (nextCommitted + nextVolatile)).trim();
-            if (activeLanguage === 'sa' && currentFullTranscript) {
-              currentIastTranscript = data.iast || transliterateIast(currentFullTranscript);
-              iastBox.style.display = 'block';
-              if (iastBox.textContent !== currentIastTranscript) {
-                iastBox.textContent = currentIastTranscript;
-              }
-            } else {
-              currentIastTranscript = '';
-              iastBox.style.display = 'none';
-            }
-            syncCopyButtons();
-            if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
-            if (typeof data.snrDb === 'number' && data.snrDb > 0) snrBadge.textContent = `SNR ${Math.round(data.snrDb)}dB`;
-            if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
-            if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
-          });
-
-          workerClient.on('final', (data) => {
-            placeholder.style.display = 'none';
-            const finalText = (data.text || currentFullTranscript || '').trim();
-            if (committedText.textContent !== finalText) {
-              committedText.textContent = finalText;
-            }
-            if (volatileText.textContent !== '') {
-              volatileText.textContent = '';
-            }
-            currentFullTranscript = finalText;
-            if (activeLanguage === 'sa' && finalText) {
-              currentIastTranscript = data.iast || transliterateIast(finalText);
-              iastBox.style.display = 'block';
-              if (iastBox.textContent !== currentIastTranscript) {
-                iastBox.textContent = currentIastTranscript;
-              }
-            } else {
-              currentIastTranscript = '';
-              iastBox.style.display = 'none';
-            }
-            syncCopyButtons();
-            window.__swanadaLastResult = data;
-            window.__swanadaMetrics = {
-              rtf: data.rtf,
-              durationMs: data.durationMs,
-              latencyMs: data.inferenceMs,
-            };
-            if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
-            if (typeof data.snrDb === 'number' && data.snrDb > 0) snrBadge.textContent = `SNR ${Math.round(data.snrDb)}dB`;
-            if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
-            if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
-            liveBadge.textContent = 'Completed';
-
-            // Populate token ribbon
-            tokenRibbon.innerHTML = '';
-            if (data.tokens && Array.isArray(data.tokens)) {
-              data.tokens.forEach(tok => {
-                const p = document.createElement('span');
-                p.className = 'token-pill';
-                p.textContent = tok;
-                tokenRibbon.appendChild(p);
-              });
-            }
-          });
-        }
-
-        const modelFile = lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`;
-        const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
-        const modelUrl = isLocalDevHost()
-          ? `../models/onnx/${modelFile}`
-          : `${HF_MODEL_BASE}/${modelFile}`;
-        const vocabUrl = `./vocabularies/${vocabFile}`;
-
-        await workerClient.init({
-          language: lang,
-          modelUrl,
-          vocabUrl,
-        });
-
-        window.__swanadaLoadedLang = lang;
-        statusDot.className = 'status-dot ready';
-        statusText.textContent = `Swanada Engine Ready (${lang.toUpperCase()})`;
-        if (lang !== 'sa') {
-          currentIastTranscript = '';
-          iastBox.style.display = 'none';
-        }
-        syncCopyButtons();
-
-        // Check CacheStorage
-        if ('caches' in window) {
-          const cache = await caches.open('swanada-onnx-v1.0.0');
-          const keys = await cache.keys();
-          if (keys.length > 0) {
-            window.__swanadaModelCached = true;
-            cacheBadge.className = 'badge ok';
-            cacheBadge.textContent = '● OFFLINE READY';
-          }
-        }
-      } catch (err) {
-        console.warn('Worker initialization error:', err);
-        statusDot.className = 'status-dot';
-        statusText.textContent = 'Engine Offline / Load Fallback';
-        loaderWrap.style.display = 'none';
+      if (window.__swanadaLoadedLang !== lang) {
+        window.__swanadaReady = false;
       }
+
+      const runInit = async () => {
+        try {
+          loaderWrap.style.display = 'flex';
+          loaderMsg.textContent = `Loading acoustic model for [${lang}]...`;
+          progressBar.style.width = '12%';
+          loaderPct.textContent = '12%';
+
+          if (!workerClient) {
+            workerClient = new SwanadaWorkerClient({
+              workerUrl: './stt-worker.mjs?v=1.2.0',
+              wasmPaths: './ort/',
+            });
+            window.__swanadaWorkerClient = workerClient;
+
+            workerClient.on('progress', (p) => {
+              loaderWrap.style.display = 'flex';
+              const pct = Math.round((p.progress || 0) * 100);
+              progressBar.style.width = `${pct}%`;
+              loaderPct.textContent = `${pct}%`;
+              if (p.loadedBytes && p.totalBytes && p.totalBytes > 1048576) {
+                const mbDone = (p.loadedBytes / 1048576).toFixed(1);
+                const mbTotal = (p.totalBytes / 1048576).toFixed(1);
+                loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()} ${mbDone} / ${mbTotal} MB [${activeLanguage}]...`;
+              } else {
+                loaderMsg.textContent = `${(p.stage || 'downloading').toUpperCase()}: Loading acoustic model [${activeLanguage}]...`;
+              }
+            });
+
+            workerClient.on('ready', (readyEvt) => {
+              const langCode = (readyEvt && readyEvt.language) || activeLanguage;
+              if (langCode !== activeLanguage) return;
+              window.__swanadaReady = true;
+              window.__swanadaLoadedLang = langCode;
+              if (readyEvt && readyEvt.fromCache) {
+                window.__swanadaCacheHit = true;
+              }
+              if (readyEvt && readyEvt.numThreads) {
+                engineVal.textContent = `WASM ${readyEvt.numThreads}T`;
+              }
+              statusDot.className = 'status-dot ready';
+              statusText.textContent = `Swanada Engine Ready (${langCode.toUpperCase()})`;
+              progressBar.style.width = '100%';
+              loaderPct.textContent = '100%';
+              setTimeout(() => {
+                if (window.__swanadaReady) loaderWrap.style.display = 'none';
+              }, 280);
+            });
+
+            workerClient.on('partial', (data) => {
+              placeholder.style.display = 'none';
+              const nextCommitted = data.committed || '';
+              const nextVolatile = data.volatile ? (nextCommitted ? ' ' + data.volatile : data.volatile) : '';
+              if (committedText.textContent !== nextCommitted) {
+                committedText.textContent = nextCommitted;
+              }
+              if (volatileText.textContent !== nextVolatile) {
+                volatileText.textContent = nextVolatile;
+              }
+              currentFullTranscript = (data.text || (nextCommitted + nextVolatile)).trim();
+              if (activeLanguage === 'sa' && currentFullTranscript) {
+                currentIastTranscript = data.iast || transliterateIast(currentFullTranscript);
+                iastBox.style.display = 'block';
+                if (iastBox.textContent !== currentIastTranscript) {
+                  iastBox.textContent = currentIastTranscript;
+                }
+              } else {
+                currentIastTranscript = '';
+                iastBox.style.display = 'none';
+              }
+              syncCopyButtons();
+              if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
+              if (typeof data.snrDb === 'number' && data.snrDb > 0) snrBadge.textContent = `SNR ${Math.round(data.snrDb)}dB`;
+              if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
+              if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
+            });
+
+            workerClient.on('final', (data) => {
+              placeholder.style.display = 'none';
+              const finalText = (data.text || currentFullTranscript || '').trim();
+              if (committedText.textContent !== finalText) {
+                committedText.textContent = finalText;
+              }
+              if (volatileText.textContent !== '') {
+                volatileText.textContent = '';
+              }
+              currentFullTranscript = finalText;
+              if (activeLanguage === 'sa' && finalText) {
+                currentIastTranscript = data.iast || transliterateIast(finalText);
+                iastBox.style.display = 'block';
+                if (iastBox.textContent !== currentIastTranscript) {
+                  iastBox.textContent = currentIastTranscript;
+                }
+              } else {
+                currentIastTranscript = '';
+                iastBox.style.display = 'none';
+              }
+              syncCopyButtons();
+              window.__swanadaLastResult = data;
+              window.__swanadaMetrics = {
+                rtf: data.rtf,
+                durationMs: data.durationMs,
+                latencyMs: data.inferenceMs,
+              };
+              if (data.rtf) rtfVal.textContent = data.rtf.toFixed(2) + 'x';
+              if (typeof data.snrDb === 'number' && data.snrDb > 0) snrBadge.textContent = `SNR ${Math.round(data.snrDb)}dB`;
+              if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
+              if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
+              liveBadge.textContent = 'Completed';
+
+              // Populate token ribbon
+              tokenRibbon.innerHTML = '';
+              if (data.tokens && Array.isArray(data.tokens)) {
+                data.tokens.forEach(tok => {
+                  const p = document.createElement('span');
+                  p.className = 'token-pill';
+                  p.textContent = tok;
+                  tokenRibbon.appendChild(p);
+                });
+              }
+            });
+          }
+
+          // Shared 187 MB Conformer encoder + 515 KB per-language linear CTC head
+          const encoderUrl = isLocalDevHost()
+            ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx'
+            : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx`;
+          const headUrl = `./heads/${lang}.bin`;
+          const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
+          const vocabUrl = `./vocabularies/${vocabFile}`;
+
+          await workerClient.init({
+            language: lang,
+            modelUrl: encoderUrl,
+            headUrl,
+            vocabUrl,
+          });
+
+          if (myEpoch !== uiInitEpoch) return;
+
+          window.__swanadaReady = true;
+          window.__swanadaLoadedLang = lang;
+          statusDot.className = 'status-dot ready';
+          statusText.textContent = `Swanada Engine Ready (${lang.toUpperCase()})`;
+          if (lang !== 'sa') {
+            currentIastTranscript = '';
+            iastBox.style.display = 'none';
+          }
+          syncCopyButtons();
+
+          // Check CacheStorage
+          if ('caches' in window) {
+            const cache = await caches.open('swanada-onnx-v1.0.0');
+            const keys = await cache.keys();
+            if (keys.length > 0) {
+              window.__swanadaModelCached = true;
+              cacheBadge.className = 'badge ok';
+              cacheBadge.textContent = '● OFFLINE READY';
+            }
+          }
+        } catch (err) {
+          if (myEpoch !== uiInitEpoch) return;
+          console.warn('Worker initialization error:', err);
+          statusDot.className = 'status-dot';
+          statusText.textContent = 'Engine Offline / Load Fallback';
+          loaderWrap.style.display = 'none';
+        }
+      };
+
+      activeInitPromise = runInit();
+      return activeInitPromise;
     }
 
     // Direct buffer transcription hook for Playwright test harness
@@ -1354,8 +1378,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           throw new Error('Microphone capture requires HTTPS or localhost secure context.');
         }
 
-        if (!workerClient) {
+        if (!workerClient || window.__swanadaLoadedLang !== activeLanguage) {
           await initEngine(activeLanguage);
+        } else if (activeInitPromise) {
+          await activeInitPromise;
         } else {
           await workerClient.whenReady();
         }
@@ -1495,7 +1521,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       }
       liveBadge.textContent = 'Streaming...';
 
-      if (!workerClient) await initEngine(activeLanguage);
+      if (!workerClient || window.__swanadaLoadedLang !== activeLanguage) {
+        await initEngine(activeLanguage);
+      } else if (activeInitPromise) {
+        await activeInitPromise;
+      }
       workerClient.startStream();
 
       // Stream file chunk-by-chunk in real time
@@ -1583,6 +1613,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       btn.addEventListener('click', async () => {
         document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+        stopPresetPlayback();
+        stopRecording();
+        resetTranscriptSurface(true);
+        liveBadge.textContent = 'Idle';
         const lang = btn.dataset.lang;
         await initEngine(lang);
       });

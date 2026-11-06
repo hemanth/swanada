@@ -10,6 +10,7 @@ export interface SwanadaWorkerConfig {
   workerUrl?: string | URL;
   language?: SupportedLanguage;
   modelUrl?: string;
+  headUrl?: string;
   vocabUrl?: string;
   executionProvider?: ExecutionProvider;
   numThreads?: number;
@@ -60,6 +61,7 @@ export class SwanadaWorkerClient {
   private readyPromise: Promise<WorkerReadyEvent>;
   private readyResolve!: (value: WorkerReadyEvent) => void;
   private readyReject!: (reason?: any) => void;
+  private expectedLanguage: SupportedLanguage | null = null;
   private finalResolve: ((result: TranscriptionResult & { iast?: string }) => void) | null = null;
   private finalReject: ((reason?: any) => void) | null = null;
   private isTerminated = false;
@@ -106,6 +108,9 @@ export class SwanadaWorkerClient {
 
       switch (msg.type) {
         case 'READY': {
+          if (this.expectedLanguage && msg.language && msg.language !== this.expectedLanguage) {
+            break;
+          }
           const readyEvent: WorkerReadyEvent = {
             language: msg.language,
             executionProvider: msg.executionProvider,
@@ -192,9 +197,10 @@ export class SwanadaWorkerClient {
     if (typeof this.worker.addEventListener === 'function') {
       this.worker.addEventListener('message', onMessage);
       this.worker.addEventListener('error', onError);
+    } else {
+      this.worker.onmessage = onMessage;
+      this.worker.onerror = onError;
     }
-    this.worker.onmessage = onMessage;
-    this.worker.onerror = onError;
   }
 
   /**
@@ -202,14 +208,23 @@ export class SwanadaWorkerClient {
    */
   async init(config: SwanadaWorkerConfig): Promise<WorkerReadyEvent> {
     if (this.isTerminated) throw new Error('Cannot initialize terminated worker.');
+    const targetLang = (config.language || 'sa') as SupportedLanguage;
+    this.expectedLanguage = targetLang;
+    const prevResolve = this.readyResolve;
     this.readyPromise = new Promise<WorkerReadyEvent>((resolve, reject) => {
-      this.readyResolve = resolve;
+      this.readyResolve = (evt) => {
+        if (prevResolve && prevResolve !== resolve) {
+          try { prevResolve(evt); } catch {}
+        }
+        resolve(evt);
+      };
       this.readyReject = reject;
     });
     this.worker.postMessage({
       type: 'INIT',
-      language: config.language || 'sa',
+      language: targetLang,
       modelUrl: config.modelUrl,
+      headUrl: config.headUrl,
       vocabUrl: config.vocabUrl,
       executionProvider: config.executionProvider || 'wasm',
       numThreads: config.numThreads,
@@ -231,17 +246,24 @@ export class SwanadaWorkerClient {
    */
   async setLanguage(
     language: SupportedLanguage,
-    options: { modelUrl?: string; vocabUrl?: string } = {}
+    options: { modelUrl?: string; headUrl?: string; vocabUrl?: string } = {}
   ): Promise<WorkerReadyEvent> {
-    await this.whenReady();
+    this.expectedLanguage = language;
+    const prevResolve = this.readyResolve;
     this.readyPromise = new Promise<WorkerReadyEvent>((resolve, reject) => {
-      this.readyResolve = resolve;
+      this.readyResolve = (evt) => {
+        if (prevResolve && prevResolve !== resolve) {
+          try { prevResolve(evt); } catch {}
+        }
+        resolve(evt);
+      };
       this.readyReject = reject;
     });
     this.worker.postMessage({
       type: 'SET_LANGUAGE',
       language,
       modelUrl: options.modelUrl,
+      headUrl: options.headUrl,
       vocabUrl: options.vocabUrl,
     });
     return this.readyPromise;

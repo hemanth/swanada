@@ -26,7 +26,7 @@ export class StreamingAcousticEngine {
   private vadSilenceThreshold: number;
   private totalAudioSamples: number = 0;
   private consecutiveSilentSamples: number = 0;
-  private pauseThresholdSamples: number = 8000; // 500 ms @ 16 kHz
+  private pauseThresholdSamples: number = 16000; // 1,000 ms @ 16 kHz (true turn boundary, never mid-clause breath)
   private baseCommittedTokens: string[] = [];
   private isFinished: boolean = false;
   private isWindowSliding: boolean = false;
@@ -60,10 +60,11 @@ export class StreamingAcousticEngine {
   ) {
     this.engine = engine;
     this.decoder = new StreamingCTCDecoder(vocab, {
+      trailTokens: 5,
       requireStabilityOnWordBoundary: true,
     });
-    this.leftContextSamples = options?.leftContextSamples ?? 20480; // 1,280 ms
-    this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms
+    this.leftContextSamples = options?.leftContextSamples ?? 30720; // 1,920 ms overlap guarantees committed tail stays in window
+    this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms window cap
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
   }
 
@@ -100,7 +101,7 @@ export class StreamingAcousticEngine {
     if (rms < this.vadSilenceThreshold) {
       this.consecutiveSilentSamples += chunk.length;
       if (this.consecutiveSilentSamples >= this.pauseThresholdSamples) {
-        if (this.audioBuffer.length > 0) {
+        if (this.audioBuffer.length >= 24000) {
           // Flush unconfirmed tokens on natural speech pause (turn completion)
           const lastHyp = (this.decoder as any).lastHypTokens || [];
           const comm = this.decoder.getCommittedTokens();
@@ -182,9 +183,9 @@ export class StreamingAcousticEngine {
         globalTokens = [...committed.slice(0, bestOffset), ...res.tokens.slice(bestRawStart)];
       }
 
-      // Hold irreversible prefix commits during the first <600ms of an utterance segment
+      // Hold irreversible prefix commits during the first <1000ms of an utterance segment
       // while still emitting live volatile partial transcripts from 100ms onward.
-      const allowCommit = this.isWindowSliding || this.audioBuffer.length >= 9600;
+      const allowCommit = this.isWindowSliding || this.audioBuffer.length >= 16000;
 
       // Update streaming decoder with aligned global tokens
       const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);

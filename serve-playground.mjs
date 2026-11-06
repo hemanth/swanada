@@ -32,6 +32,7 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon',
   '.onnx': 'application/octet-stream',
+  '.bin': 'application/octet-stream',
   '.wasm': 'application/wasm',
   '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg',
