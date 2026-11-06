@@ -827,7 +827,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm } from './swanada.mjs?v=1.2.1';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.2.2';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -967,6 +967,32 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       return copied;
     }
 
+    async function decodeAudioBytesTo16kPcm(arrayBuf) {
+      try {
+        const parsed = parseWav(arrayBuf);
+        if (parsed && parsed.pcm && parsed.pcm.length > 0) {
+          return parsed.sampleRate === 16000
+            ? parsed.pcm
+            : resamplePcm(parsed.pcm, parsed.sampleRate, 16000);
+        }
+      } catch (_) {
+        // Non-WAV container (MP3/M4A/OGG/WebM): decode via OfflineAudioContext
+      }
+      const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      if (OfflineCtx) {
+        try {
+          const offlineCtx = new OfflineCtx(1, 16000, 16000);
+          const audioBuffer = await offlineCtx.decodeAudioData(arrayBuf.slice(0));
+          const ch = audioBuffer.getChannelData(0);
+          return audioBuffer.sampleRate === 16000 ? ch : resamplePcm(ch, audioBuffer.sampleRate, 16000);
+        } catch (_) {}
+      }
+      await ensureAudioContext();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
+      const ch = audioBuffer.getChannelData(0);
+      return audioBuffer.sampleRate === 16000 ? ch : resamplePcm(ch, audioBuffer.sampleRate, 16000);
+    }
+
     async function ensureAudioContext() {
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1060,20 +1086,8 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         if (!res.ok) throw new Error(`Could not load audio sample from ${sampleUrl}`);
         const arrayBuf = await res.arrayBuffer();
 
+        const pcm = await decodeAudioBytesTo16kPcm(arrayBuf);
         await ensureAudioContext();
-
-        let audioBuffer;
-        try {
-          audioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
-        } catch (_) {
-          const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 16000, 16000);
-          audioBuffer = await offlineCtx.decodeAudioData(arrayBuf.slice(0));
-        }
-
-        let pcm = audioBuffer.getChannelData(0);
-        if (audioBuffer.sampleRate !== 16000) {
-          pcm = resamplePcm(pcm, audioBuffer.sampleRate, 16000);
-        }
 
         // Play audio out loud through speakers via Web Audio API if context is active
         try {
@@ -1193,7 +1207,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.2.1',
+              workerUrl: './stt-worker.mjs?v=1.2.2',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -1500,19 +1514,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       loaderPct.textContent = '40%';
 
       const arrayBuf = await file.arrayBuffer();
-      await ensureAudioContext();
-      let audioBuffer;
-      try {
-        audioBuffer = await audioCtx.decodeAudioData(arrayBuf.slice(0));
-      } catch (_) {
-        const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 16000, 16000);
-        audioBuffer = await offlineCtx.decodeAudioData(arrayBuf.slice(0));
-      }
-
-      let pcm = audioBuffer.getChannelData(0);
-      if (audioBuffer.sampleRate !== 16000) {
-        pcm = resamplePcm(pcm, audioBuffer.sampleRate, 16000);
-      }
+      const pcm = await decodeAudioBytesTo16kPcm(arrayBuf);
 
       loaderWrap.style.display = 'none';
       resetTranscriptSurface(false);
