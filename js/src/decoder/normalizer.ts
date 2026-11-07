@@ -49,6 +49,30 @@ const RE_GU_FUTURE_SIBILANT = /ઈષ(?=[^\u0A80-\u0AFF]|$)/gu;
 const RE_OR_DETACHED_ANUSVARA = /\u0B02(\u0B19\u0B4D[\u0B15-\u0B18])/gu;
 const RE_OR_DATIVE_SUFFIX = /\u0B02\u0B15\u0B41(?=[^\u0B00-\u0B7F]|$)/gu;
 const RE_PA_MATRA_INDEP_VOWEL = /(?<!\u0A39)([\u0A3E-\u0A4A\u0A4C])(\u0A0F)(?=[\u0A15-\u0A39\u0A59-\u0A5E])/gu;
+const RE_VIRAMA_THEN_MATRA = new RegExp(`([${BRAHMIC_VIRAMA_CLASS}])([${BRAHMIC_PRIMARY_MATRA_CLASS}])`, 'gu');
+const RE_BN_DOUBLE_YAPHALA = /([\u0995-\u09B9])(?:\u09CD\u09AF){2,}/gu;
+const RE_BN_YAPHALA_DUP_YA = /([\u0995-\u09B9]\u09CD\u09AF)\u09AF(?=[^\u0980-\u09FF]|$)/gu;
+
+function splitViramaMatra(match: string, vCh: string, mCh: string): string {
+  const vCp = vCh.codePointAt(0) ?? 0;
+  const mCp = mCh.codePointAt(0) ?? 0;
+  const base = mCp & ~0x7f;
+  if ((vCp & ~0x7f) !== base) {
+    return match;
+  }
+  const off = mCp & 0x7f;
+  let indepCp: number;
+  if (off === 0x44) {
+    indepCp = base + 0x60;
+  } else if (off === 0x62) {
+    indepCp = base + 0x0c;
+  } else if (off === 0x63) {
+    indepCp = base + 0x61;
+  } else {
+    indepCp = mCp - 0x38;
+  }
+  return `${vCh} ${String.fromCodePoint(indepCp)}`;
+}
 
 const OPENING_PUNCT_SET = new Set([
   '-', '\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2212',
@@ -113,6 +137,13 @@ export function repairBrahmicOrthography(nfcText: string, lang?: string): string
 
   // 5. Gurmukhi independent vowel following dependent matra word boundary separation
   text = text.replace(RE_PA_MATRA_INDEP_VOWEL, '$1 $2');
+
+  // 6. External sandhi virama + dependent matra separation across all 9 Brahmic blocks
+  text = text.replace(RE_VIRAMA_THEN_MATRA, splitViramaMatra);
+
+  // 7. Bengali duplicate ya-phala collapse
+  text = text.replace(RE_BN_DOUBLE_YAPHALA, '$1\u09CD\u09AF');
+  text = text.replace(RE_BN_YAPHALA_DUP_YA, '$1');
 
   return text;
 }

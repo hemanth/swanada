@@ -509,7 +509,7 @@ class SwanadaStream:
             )
             global_tokens = self.decoder.committed_tokens[:best_offset] + res.tokens[best_raw_start:]
 
-        allow_commit = self.is_window_sliding or len(self.audio_buffer) >= 16000
+        allow_commit = self.is_window_sliding or len(self.audio_buffer) >= 28800
         st = self.decoder.update(global_tokens, False, duration_ms, inference_ms, allow_commit=allow_commit)
         self.last_transcript = st
 

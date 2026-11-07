@@ -1,10 +1,26 @@
 /**
- * Linear-time O(T * V) Greedy CTC Decoder.
+ * CTC Acoustic Decoders: Exact Marginal Prefix Beam Search,
+ * Trie-Guided English Lexical Beam Search, and Stateful Greedy Streaming.
  * Zero external dependencies. Browser & Node.js compatible.
  */
 
+import { getEnLexicon, isEnPrefix, isEnWord } from './en_lexicon.ts';
 import { normalizeIndicText } from './normalizer.ts';
 import type { NormalizeOptions } from './normalizer.ts';
+
+const NEG_INF = -1.0e30;
+
+const BRAHMIC_VIRAMAS = new Set<string>([
+  '\u094d', '\u09cd', '\u0a4d', '\u0acd', '\u0b4d', '\u0bcd', '\u0c4d', '\u0ccd', '\u0d4d',
+]);
+
+function endsWithBrahmicConsonant(tok: string): boolean {
+  if (!tok || tok.length === 0) return false;
+  const cp = tok.charCodeAt(tok.length - 1);
+  if (cp < 0x0900 || cp > 0x0d7f) return false;
+  const off = cp & 0x7f;
+  return (off >= 0x15 && off <= 0x39) || (off >= 0x58 && off <= 0x5f) || off === 0x79;
+}
 
 export interface CTCDecodeOptions extends NormalizeOptions {
   blankId?: number;            // Default: 0
@@ -18,14 +34,327 @@ export interface CTCDecodeResult {
   tokenIds: number[];
 }
 
+interface BeamState {
+  ids: number[];
+  pb: number;
+  pnb: number;
+  lmScore: number;
+  curWord: string;
+  inPrefix: boolean;
+}
+
 export function isSpecialToken(token: string): boolean {
   if (!token) return false;
   return (token.startsWith('<') && token.endsWith('>')) ||
          (token.startsWith('[') && token.endsWith(']'));
 }
 
+function logAddExp(a: number, b: number): number {
+  if (a <= NEG_INF * 0.5) return b;
+  if (b <= NEG_INF * 0.5) return a;
+  if (a > b) {
+    return a + Math.log1p(Math.exp(b - a));
+  }
+  return b + Math.log1p(Math.exp(a - b));
+}
+
+function isEnglishSentencePieceVocab(vocabList: string[]): boolean {
+  if (vocabList.length < 200) return false;
+  const end = Math.min(vocabList.length, 12);
+  for (let idx = 2; idx < end; idx++) {
+    const tok = vocabList[idx] || '';
+    for (let k = 0; k < tok.length; k++) {
+      const code = tok.charCodeAt(k);
+      if (code >= 97 && code <= 122) return true;
+    }
+  }
+  return false;
+}
+
+function stripTrailingApostrophes(word: string): string {
+  let end = word.length;
+  while (end > 0 && word.charCodeAt(end - 1) === 39) {
+    end--;
+  }
+  return end === word.length ? word : word.slice(0, end);
+}
+
+function extendEnLexicalState(
+  lmScore: number,
+  curWord: string,
+  inPrefix: boolean,
+  piece: string,
+  words: Set<string>,
+  prefixes: Set<string>
+): [number, string, boolean] {
+  let sc = lmScore;
+  let cw = curWord;
+  let ip = inPrefix;
+
+  for (let k = 0; k < piece.length; k++) {
+    const ch = piece[k];
+    const code = piece.charCodeAt(k);
+    const isLower = code >= 97 && code <= 122;
+    const isUpper = code >= 65 && code <= 90;
+    if (isLower || isUpper || code === 39) {
+      const lc = isUpper ? ch.toLowerCase() : ch;
+      if (cw.length === 0 && code === 39) {
+        continue;
+      }
+      const nextWord = cw + lc;
+      if (ip && !isEnPrefix(nextWord, prefixes, words)) {
+        ip = false;
+        sc -= 2.85;
+      }
+      cw = nextWord;
+    } else {
+      if (cw.length > 0) {
+        const clean = stripTrailingApostrophes(cw);
+        if (clean.length > 0) {
+          if (isEnWord(clean, words)) {
+            sc += clean.length >= 3 ? 2.55 : 0.85;
+          } else {
+            sc += ip ? -4.75 : -1.90;
+          }
+        }
+        cw = '';
+        ip = true;
+      }
+    }
+  }
+  return [sc, cw, ip];
+}
+
+function finalizeEnLexicalScore(
+  lmScore: number,
+  curWord: string,
+  inPrefix: boolean,
+  words: Set<string>
+): number {
+  if (curWord.length === 0) return lmScore;
+  const clean = stripTrailingApostrophes(curWord);
+  if (clean.length === 0) return lmScore;
+  if (isEnWord(clean, words)) {
+    return lmScore + (clean.length >= 3 ? 2.55 : 0.85);
+  }
+  if (inPrefix) return lmScore;
+  return lmScore - 1.90;
+}
+
+function beamDecodeCTC(
+  logits: Float32Array | number[],
+  timeSteps: number,
+  numClasses: number,
+  vocabList: string[],
+  skipSpecial: boolean,
+  options?: CTCDecodeOptions
+): CTCDecodeResult {
+  const isEn = isEnglishSentencePieceVocab(vocabList);
+  const beamWidth = isEn ? 14 : 6;
+  const topK = Math.min(numClasses - 1, isEn ? 10 : 5);
+
+  const lex = isEn ? getEnLexicon() : null;
+  const enWords = lex ? lex.words : new Set<string>();
+  const enPrefixes = lex ? lex.prefixes : new Set<string>();
+  const viramaIds = new Set<number>();
+  if (!isEn) {
+    for (let idx = 1; idx < vocabList.length; idx++) {
+      if (BRAHMIC_VIRAMAS.has(vocabList[idx])) {
+        viramaIds.add(idx);
+      }
+    }
+  }
+
+  const lpRow = new Float64Array(numClasses);
+  const topCols = new Int32Array(topK);
+  const topVals = new Float64Array(topK);
+
+  let beams = new Map<string, BeamState>();
+  beams.set('', {
+    ids: [],
+    pb: 0.0,
+    pnb: NEG_INF,
+    lmScore: 0.0,
+    curWord: '',
+    inPrefix: true,
+  });
+
+  for (let t = 0; t < timeSteps; t++) {
+    const offset = t * numClasses;
+    let rowMax = -Infinity;
+    for (let c = 0; c < numClasses; c++) {
+      const v = logits[offset + c];
+      if (v > rowMax) rowMax = v;
+    }
+    let sumExp = 0.0;
+    for (let c = 0; c < numClasses; c++) {
+      sumExp += Math.exp(logits[offset + c] - rowMax);
+    }
+    const logZ = rowMax + Math.log(sumExp);
+
+    const lpBlank = logits[offset] - logZ;
+    lpRow[0] = lpBlank;
+
+    let maxNonBlank = NEG_INF;
+    for (let k = 0; k < topK; k++) {
+      topVals[k] = NEG_INF;
+      topCols[k] = 1;
+    }
+
+    for (let c = 1; c < numClasses; c++) {
+      const lp = logits[offset + c] - logZ;
+      lpRow[c] = lp;
+      if (lp > maxNonBlank) maxNonBlank = lp;
+      if (lp > topVals[topK - 1]) {
+        let pos = topK - 1;
+        while (pos > 0 && lp > topVals[pos - 1]) {
+          topVals[pos] = topVals[pos - 1];
+          topCols[pos] = topCols[pos - 1];
+          pos--;
+        }
+        topVals[pos] = lp;
+        topCols[pos] = c;
+      }
+    }
+
+    // Fast-skip confident blank frames or flat uniform non-speech frames
+    if (lpBlank > -0.02 || maxNonBlank < -4.2) {
+      for (const state of beams.values()) {
+        state.pb = logAddExp(state.pb, state.pnb) + lpBlank;
+        state.pnb = NEG_INF;
+      }
+      continue;
+    }
+
+    const nextBeams = new Map<string, BeamState>();
+
+    for (const [key, state] of beams.entries()) {
+      const pb = state.pb;
+      const pnb = state.pnb;
+      const totalP = logAddExp(pb, pnb);
+
+      // 1. Blank transition stays on `key`
+      let nbCur = nextBeams.get(key);
+      const newPb = totalP + lpBlank;
+      if (nbCur === undefined) {
+        nbCur = {
+          ids: state.ids,
+          pb: newPb,
+          pnb: NEG_INF,
+          lmScore: state.lmScore,
+          curWord: state.curWord,
+          inPrefix: state.inPrefix,
+        };
+        nextBeams.set(key, nbCur);
+      } else {
+        nbCur.pb = logAddExp(nbCur.pb, newPb);
+      }
+
+      // 2. Repeat of last token without blank collapses into `key`
+      const lastTok = state.ids.length > 0 ? state.ids[state.ids.length - 1] : -1;
+      if (lastTok > 0 && pnb > NEG_INF * 0.5) {
+        nbCur.pnb = logAddExp(nbCur.pnb, pnb + lpRow[lastTok]);
+      }
+
+      // 3. Top-K non-blank token extensions
+      for (let k = 0; k < topK; k++) {
+        const c = topCols[k];
+        const lpC = topVals[k];
+        let extPnb: number;
+        if (c === lastTok) {
+          if (pb <= NEG_INF * 0.5) continue;
+          extPnb = pb + lpC;
+        } else {
+          extPnb = totalP + lpC;
+        }
+
+        const newKey = key.length === 0 ? String(c) : `${key},${c}`;
+        const nbExt = nextBeams.get(newKey);
+        if (nbExt !== undefined) {
+          nbExt.pnb = logAddExp(nbExt.pnb, extPnb);
+        } else {
+          let nLm = 0.0;
+          let nW = '';
+          let nIp = true;
+          if (isEn) {
+            let tokStr = c < vocabList.length ? vocabList[c] : '';
+            if (skipSpecial && isSpecialToken(tokStr)) {
+              tokStr = '';
+            }
+            [nLm, nW, nIp] = extendEnLexicalState(
+              state.lmScore,
+              state.curWord,
+              state.inPrefix,
+              tokStr,
+              enWords,
+              enPrefixes
+            );
+          } else {
+            const prevTok = lastTok > 0 && lastTok < vocabList.length ? vocabList[lastTok] : '';
+            const virBonus = viramaIds.has(c) && endsWithBrahmicConsonant(prevTok) ? 0.28 : 0.0;
+            nLm = state.lmScore + virBonus;
+          }
+          nextBeams.set(newKey, {
+            ids: [...state.ids, c],
+            pb: NEG_INF,
+            pnb: extPnb,
+            lmScore: nLm,
+            curWord: nW,
+            inPrefix: nIp,
+          });
+        }
+      }
+    }
+
+    if (nextBeams.size > beamWidth) {
+      const entries = Array.from(nextBeams.entries());
+      entries.sort((a, b) => {
+        const sa = logAddExp(a[1].pb, a[1].pnb) + a[1].lmScore;
+        const sb = logAddExp(b[1].pb, b[1].pnb) + b[1].lmScore;
+        return sb - sa;
+      });
+      beams = new Map<string, BeamState>();
+      for (let idx = 0; idx < beamWidth; idx++) {
+        beams.set(entries[idx][0], entries[idx][1]);
+      }
+    } else {
+      beams = nextBeams;
+    }
+  }
+
+  let bestIds: number[] = [];
+  let bestScore = NEG_INF;
+  for (const state of beams.values()) {
+    const acScore = logAddExp(state.pb, state.pnb);
+    const finalLm = isEn
+      ? finalizeEnLexicalScore(state.lmScore, state.curWord, state.inPrefix, enWords)
+      : state.lmScore;
+    const score = acScore + finalLm;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIds = state.ids;
+    }
+  }
+
+  const tokens: string[] = [];
+  for (let idx = 0; idx < bestIds.length; idx++) {
+    const tid = bestIds[idx];
+    const tok = tid < vocabList.length ? vocabList[tid] : undefined;
+    if (tok !== undefined) {
+      if (skipSpecial && isSpecialToken(tok)) {
+        continue;
+      }
+      tokens.push(tok);
+    }
+  }
+
+  const text = normalizeIndicText(tokens.join(''), options);
+  return { text, tokens, tokenIds: bestIds };
+}
+
 /**
- * Linear-time greedy CTC decoding over logits or log-probabilities.
+ * Decode CTC logits using exact marginal / lexical prefix beam search on full
+ * vocabularies and linear-time greedy decoding on compact/custom vocabularies.
  *
  * @param logits 1D Float32Array or number[] of shape [timeSteps * numClasses]
  * @param dims [timeSteps, numClasses] or [batch, timeSteps, numClasses]
@@ -41,13 +370,23 @@ export function decodeCTC(
   const timeSteps = dims.length === 3 ? dims[1] : (dims.length === 2 ? dims[0] : 0);
   const numClasses = dims.length === 3 ? dims[2] : (dims.length === 2 ? dims[1] : 0);
 
-  if (timeSteps === 0 || numClasses === 0) {
+  if (timeSteps === 0 || numClasses === 0 || logits.length < timeSteps * numClasses) {
     return { text: '', tokens: [], tokenIds: [] };
   }
 
   const blankId = options?.blankId ?? 0;
   const collapseRepeats = options?.collapseRepeats !== false;
   const skipSpecial = options?.skipSpecialTokens !== false;
+
+  if (
+    Array.isArray(vocab) &&
+    vocab.length >= 200 &&
+    blankId === 0 &&
+    collapseRepeats &&
+    numClasses === vocab.length
+  ) {
+    return beamDecodeCTC(logits, timeSteps, numClasses, vocab, skipSpecial, options);
+  }
 
   let lastTokenId = blankId;
   const tokenIds: number[] = [];
@@ -92,7 +431,7 @@ export function decodeCTC(
 }
 
 /**
- * Decode from pre-computed argmax token IDs.
+ * Decode from pre-computed argmax token sequences.
  */
 export function decodeCTCTokens(
   tokenIds: number[],

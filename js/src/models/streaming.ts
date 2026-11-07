@@ -183,9 +183,9 @@ export class StreamingAcousticEngine {
         globalTokens = [...committed.slice(0, bestOffset), ...res.tokens.slice(bestRawStart)];
       }
 
-      // Hold irreversible prefix commits during the first <1000ms of an utterance segment
+      // Hold irreversible prefix commits during the first <1800ms of an utterance segment
       // while still emitting live volatile partial transcripts from 100ms onward.
-      const allowCommit = this.isWindowSliding || this.audioBuffer.length >= 16000;
+      const allowCommit = this.isWindowSliding || this.audioBuffer.length >= 28800;
 
       // Update streaming decoder with aligned global tokens
       const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);

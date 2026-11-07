@@ -91,18 +91,10 @@ def compute_bootstrap_ci(data: list[float], n_bootstrap: int = 1000, seed: int =
 
 
 def ctc_greedy_decode(logits: np.ndarray, vocab: list[str]) -> str:
-    """Argmax greedy CTC decode with blank elimination and duplicate collapsing."""
-    # logits: [time, num_classes]
-    preds = np.argmax(logits, axis=-1)
-    tokens = []
-    prev = -1
-    for p in preds:
-        if p != prev:
-            if p != 0 and p < len(vocab):  # class 0 is <blank>
-                tokens.append(vocab[p])
-            prev = p
-    raw_text = "".join(tokens)
-    return normalize_indic_text(raw_text)
+    """Production CTC decode with marginal/lexical prefix beam search and Brahmic normalizer."""
+    from swanada.decoder import decode_ctc
+
+    return decode_ctc(logits, vocab=vocab).text
 
 
 def load_audio_pcm(wav_path: Path) -> np.ndarray:

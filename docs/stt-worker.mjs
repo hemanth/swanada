@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.3.0' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.4.0' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -292,10 +292,11 @@ async function loadVocab(vocabUrlOrPath) {
     try {
       const fs = await import('node:fs');
       const path = await import('node:path');
+      const cleanVocab = vocabUrlOrPath.split('?')[0];
       const candidates = [
-        vocabUrlOrPath,
-        path.resolve(process.cwd(), vocabUrlOrPath),
-        path.resolve(process.cwd(), '..', vocabUrlOrPath),
+        cleanVocab,
+        path.resolve(process.cwd(), cleanVocab),
+        path.resolve(process.cwd(), '..', cleanVocab),
       ];
       for (const cand of candidates) {
         if (fs.existsSync(cand)) {
@@ -451,7 +452,7 @@ async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
       } catch (err) {
         const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
         if (!isNodeEnv && !isOffline && !encoderUrl.startsWith('https://huggingface.co/')) {
-          const hfFallbackUrl = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx/sushrota_sanskrit_ctc_int8.onnx';
+          const hfFallbackUrl = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.4.0';
           rawBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
         } else {
           throw err;

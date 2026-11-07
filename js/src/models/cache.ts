@@ -158,10 +158,11 @@ export async function loadModelAsset(
     try {
       const fs = await import('node:fs');
       const path = await import('node:path');
+      const cleanLocal = urlOrPath.split('?')[0];
       const candidates = [
-        urlOrPath,
-        path.resolve(process.cwd(), urlOrPath),
-        path.resolve(process.cwd(), '..', urlOrPath),
+        cleanLocal,
+        path.resolve(process.cwd(), cleanLocal),
+        path.resolve(process.cwd(), '..', cleanLocal),
       ];
       for (const cand of candidates) {
         if (fs.existsSync(cand)) {

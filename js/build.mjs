@@ -49,7 +49,12 @@ const normalizerSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'n
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
 
+const enLexiconSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'en_lexicon.ts'), 'utf8'))
+  .replace(/import type .*?;/g, '')
+  .replace(/^export /gm, '');
+
 const ctcSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'ctc.ts'), 'utf8'))
+  .replace(/import .*? from '\.\/en_lexicon\.ts';/g, '')
   .replace(/import .*? from '\.\/normalizer\.ts';/g, '')
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
@@ -183,6 +188,7 @@ ${frontendSrc}
 ${denoiseSrc}
 ${captureSrc}
 ${normalizerSrc}
+${enLexiconSrc}
 ${ctcSrc}
 ${streamingDecoderSrc}
 ${cacheSrc}
@@ -230,6 +236,7 @@ ${frontendSrc}
 ${denoiseSrc}
 ${captureSrc}
 ${normalizerSrc}
+${enLexiconSrc}
 ${ctcSrc}
 ${streamingDecoderSrc}
 ${cacheSrc}

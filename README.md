@@ -71,35 +71,27 @@ cat stream.wav | swanada -l ta --stream
 - `-h, --help`: Show help and usage summary.
 - `-v, --version`: Show version (`swanada 1.0.0`).
 
-## Architecture & Pipeline
+## Benchmarks
 
-```
-[ Audio Input (Native 44.1/48 kHz Mic or 16 kHz PCM) ]
-               │
-               ▼
-   [ Multi-Stage ASR Background Noise Cancellation ]
-   (80 Hz Butterworth HPF -> 50/60 Hz Hum Notches ->
-    SNR-Adaptive Ephraim-Malah Spectral Wiener Filter)
-               │
-               ▼
-   [ Audio Frontend: 80-Channel Log-Mel Filterbank ]
-   (25ms Hann window, 10ms hop, per-feature CMVN)
-               │
-               ▼
-   [ Acoustic Encoder: Conformer Backbone ]
-   (17 layers, d_model=512, 8 heads, conv_kernel=31, 4x subsampling)
-               │
-               ▼
-   [ Multilingual Sliced CTC Acoustic Head ]
-   (257-token language-specific linear projection: 512 -> 257)
-               │
-               ▼
-   [ Stabilized Prefix-Locking CTC Decoder + Orthographic Normalizer ]
-   (Two-zone committed/volatile streaming + Brahmic matra repair + NFC)
-               │
-               ▼
-   [ Transcription: Copiable Native Script / Classical Sanskrit IAST ]
-```
+Evaluated across 480 held-out 16 kHz utterances (40 per language, `B = 1,000` bootstrap 95% CIs), 1,200 unseen `google/fleurs` + wild test clips, and 72 streaming sessions (100 ms chunks):
+
+| Language | Code | Held-Out CER (95% CI) | Held-Out WER | Unseen Fleurs CER |
+| :--- | :---: | :---: | :---: | :---: |
+| Classical Sanskrit | `sa` | `5.24% [3.47%, 7.28%]` | `27.77%` | `17.10%` |
+| Indian English | `en` | `5.70% [4.41%, 7.00%]` | `16.94%` | `15.61%` |
+| Hindi | `hi` | `3.44% [2.34%, 4.53%]` | `12.64%` | `5.52%` |
+| Kannada | `kn` | `6.03% [4.65%, 7.58%]` | `35.70%` | `5.11%` |
+| Marathi | `mr` | `7.31% [4.30%, 10.50%]` | `27.52%` | `7.37%` |
+| Bengali | `bn` | `7.76% [6.07%, 9.54%]` | `40.66%` | `5.71%` |
+| Tamil | `ta` | `8.01% [6.28%, 9.86%]` | `38.46%` | `10.88%` |
+| Telugu | `te` | `5.54% [4.01%, 7.16%]` | `30.62%` | `9.05%` |
+| Malayalam | `ml` | `7.78% [5.58%, 10.13%]` | `40.27%` | `6.42%` |
+| Gujarati | `gu` | `5.32% [3.42%, 7.73%]` | `23.17%` | `6.69%` |
+| Punjabi | `pa` | `7.71% [4.69%, 11.34%]` | `29.47%` | `9.59%` |
+| Odia | `or` | `8.94% [6.25%, 12.46%]` | `37.55%` | `8.95%` |
+| **Overall (12 Langs)** | — | **`6.57% [5.94%, 7.22%]`** | **`30.06%`** | **`9.00%`** |
+
+Shared 178 MB INT8 Conformer encoder + 515 KB per-language CTC projection heads run at `0.0325x` CPU RTF, `~8-11 ms` streaming chunk latency, and `0.00%` committed prefix churn.
 
 ## Live Playground
 

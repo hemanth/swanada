@@ -225,10 +225,11 @@ async function loadVocab(vocabUrlOrPath: string): Promise<string[]> {
     try {
       const fs = await import('node:fs');
       const path = await import('node:path');
+      const cleanVocab = vocabUrlOrPath.split('?')[0];
       const candidates = [
-        vocabUrlOrPath,
-        path.resolve(process.cwd(), vocabUrlOrPath),
-        path.resolve(process.cwd(), '..', vocabUrlOrPath),
+        cleanVocab,
+        path.resolve(process.cwd(), cleanVocab),
+        path.resolve(process.cwd(), '..', cleanVocab),
       ];
       for (const cand of candidates) {
         if (fs.existsSync(cand)) {

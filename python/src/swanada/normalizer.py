@@ -47,6 +47,30 @@ _RE_GU_FUTURE_SIBILANT = re.compile(r"ઈષ(?=[^\u0A80-\u0AFF]|$)")
 _RE_OR_DETACHED_ANUSVARA = re.compile(r"\u0B02(\u0B19\u0B4D[\u0B15-\u0B18])")
 _RE_OR_DATIVE_SUFFIX = re.compile(r"\u0B02\u0B15\u0B41(?=[^\u0B00-\u0B7F]|$)")
 _RE_PA_MATRA_INDEP_VOWEL = re.compile(r"(?<!\u0A39)([\u0A3E-\u0A4A\u0A4C])(\u0A0F)(?=[\u0A15-\u0A39\u0A59-\u0A5E])")
+_RE_VIRAMA_THEN_MATRA = re.compile(f"([{_BRAHMIC_VIRAMA_CLASS}])([{_BRAHMIC_PRIMARY_MATRA_CLASS}])")
+_RE_BN_DOUBLE_YAPHALA = re.compile(r"([\u0995-\u09B9])(?:\u09CD\u09AF){2,}")
+_RE_BN_YAPHALA_DUP_YA = re.compile(r"([\u0995-\u09B9]\u09CD\u09AF)\u09AF(?=[^\u0980-\u09FF]|$)")
+
+
+def _split_virama_matra(match: re.Match) -> str:
+    """Separates external sandhi halant + dependent matra into halant + space + independent vowel."""
+    v_ch = match.group(1)
+    m_ch = match.group(2)
+    v_cp = ord(v_ch)
+    m_cp = ord(m_ch)
+    base = m_cp & ~0x7F
+    if (v_cp & ~0x7F) != base:
+        return match.group(0)
+    off = m_cp & 0x7F
+    if off == 0x44:
+        indep_cp = base + 0x60
+    elif off == 0x62:
+        indep_cp = base + 0x0C
+    elif off == 0x63:
+        indep_cp = base + 0x61
+    else:
+        indep_cp = m_cp - 0x38
+    return f"{v_ch} {chr(indep_cp)}"
 
 _OPENING_PUNCT_CHARS = frozenset(
     "-–—'’‘`([{<\"“«/\\"
@@ -95,6 +119,13 @@ def repair_brahmic_orthography(nfc_text: str, lang: str = "") -> str:
 
     # 5. Gurmukhi independent vowel following dependent matra word boundary separation
     text = _RE_PA_MATRA_INDEP_VOWEL.sub(r"\1 \2", text)
+
+    # 6. External sandhi virama + dependent matra separation across all 9 Brahmic blocks
+    text = _RE_VIRAMA_THEN_MATRA.sub(_split_virama_matra, text)
+
+    # 7. Bengali duplicate ya-phala collapse
+    text = _RE_BN_DOUBLE_YAPHALA.sub("\\g<1>\u09CD\u09AF", text)
+    text = _RE_BN_YAPHALA_DUP_YA.sub(r"\1", text)
 
     return text
 
