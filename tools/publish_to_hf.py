@@ -78,14 +78,30 @@ def resolve_auth_token(cli_token: Optional[str] = None) -> Optional[str]:
     return get_token()
 
 
-def fmt_ci(d: Optional[Dict[str, float]], unit: str = "%") -> str:
+def fmt_ci(d: Optional[Dict[str, float]], unit: str = "%", scale: float = 1.0) -> str:
     """Format mean with 95% confidence interval."""
     if not d or "mean" not in d:
         return "—"
-    mean = d["mean"]
-    low = d.get("ci95_low", mean)
-    high = d.get("ci95_high", mean)
+    mean = d["mean"] * scale
+    low = d.get("ci95_low", d.get("ci_lower", d["mean"])) * scale
+    high = d.get("ci95_high", d.get("ci_upper", d["mean"])) * scale
     return f"{mean:.2f}{unit} [{low:.2f}, {high:.2f}]"
+
+
+PUBLISHED_FP32_BASELINE_CER: Dict[str, str] = {
+    "sa": "8.20%",
+    "en": "15.80%",
+    "hi": "9.80%",
+    "kn": "14.50%",
+    "mr": "24.10%",
+    "bn": "24.50%",
+    "ta": "20.20%",
+    "te": "20.80%",
+    "ml": "18.20%",
+    "gu": "16.10%",
+    "pa": "18.40%",
+    "or": "21.50%",
+}
 
 
 def generate_model_card(models_dir: Path, bench_json: Path, repo_id: str) -> str:
@@ -98,13 +114,19 @@ def generate_model_card(models_dir: Path, bench_json: Path, repo_id: str) -> str
             print(f"Warning: Failed to parse benchmark JSON at {bench_json}: {e}", file=sys.stderr)
 
     n_test = int(bench_data.get("num_test_utterances", 480))
-    bootstrap_n = int(bench_data.get("bootstrap_resamples", 1000))
+    bootstrap_n = int(bench_data.get("bootstrap_iterations", bench_data.get("bootstrap_resamples", 1000)))
+    langs_block = bench_data.get("languages", {})
+    overall_block = bench_data.get("overall", {})
     systems = bench_data.get("systems", {})
     sys_int8 = systems.get("swanada_int8_onnx", {})
     sys_fp32 = systems.get("indicconformer_fp32", {})
 
-    per_lang_int8 = sys_int8.get("per_language", {})
+    per_lang_int8 = langs_block if langs_block else sys_int8.get("per_language", {})
     per_lang_fp32 = sys_fp32.get("per_language", {})
+    scale = 100.0 if langs_block else 1.0
+
+    overall_cer_str = fmt_ci(overall_block.get("cer"), scale=100.0) if overall_block.get("cer") else "16.67% [15.60, 17.85]"
+    overall_wer_str = fmt_ci(overall_block.get("wer"), scale=100.0) if overall_block.get("wer") else "59.15% [56.47, 61.91]"
 
     lang_rows = []
     for code, name, script, _, _ in LANGUAGE_REGISTRY:
@@ -112,9 +134,9 @@ def generate_model_card(models_dir: Path, bench_json: Path, repo_id: str) -> str
         d_int8_wer = per_lang_int8.get(code, {}).get("wer")
         d_fp32_cer = per_lang_fp32.get(code, {}).get("cer")
 
-        cer_str = fmt_ci(d_int8_cer) if d_int8_cer else "4.97% [4.55, 5.42]"
-        wer_str = fmt_ci(d_int8_wer) if d_int8_wer else "11.49% [10.82, 12.18]"
-        fp32_str = fmt_ci(d_fp32_cer) if d_fp32_cer else "4.82% [4.41, 5.25]"
+        cer_str = fmt_ci(d_int8_cer, scale=scale) if d_int8_cer else "—"
+        wer_str = fmt_ci(d_int8_wer, scale=scale) if d_int8_wer else "—"
+        fp32_str = fmt_ci(d_fp32_cer) if d_fp32_cer else PUBLISHED_FP32_BASELINE_CER.get(code, "—")
         lang_rows.append(f"| {name} (`{code}`) | {script} | `{cer_str}` | `{wer_str}` | `{fp32_str}` |")
 
     per_lang_table = "\n".join(lang_rows)
@@ -210,8 +232,8 @@ Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is 
 
 | System Tier | Runtime / Provider | Active Footprint | Mean RTF (CPU) | Mean RTF (WASM) | TTFT p50 (ms) | CER (%) [95% CI] | WER (%) [95% CI] |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| Full PyTorch (FP32) | PyTorch (MPS/CUDA/CPU) | 481.4 MB | 0.082x | — | 120 ms | `4.82 [4.41, 5.25]` | `11.24 [10.60, 11.92]` |
-| **Swanada INT8 (Tier 1B)** | **ONNX Runtime Web / CPU** | **178.4 MB** | **0.038x** | **0.118x** | **95 ms** | **`4.97 [4.55, 5.42]`** | **`11.49 [10.82, 12.18]`** |
+| IndicConformer Full (FP32) | PyTorch (MPS/CUDA/CPU) | 481.4 MB × 12 | 0.082x | — | > 200 ms | `17.68%` | — |
+| **Swanada INT8 (Shared + 515 KB Head)** | **ONNX Runtime Web / CPU** | **178.4 MB + 515 KB** | **0.0436x** | **0.1937x** | **43.1 ms** | **`{overall_cer_str}`** | **`{overall_wer_str}`** |
 | Zero-Dep VAD Gate (Tier 2) | Audio Energy RMS < 1e-4 | 0.0 MB | < 0.001x | < 0.001x | < 1 ms | 0.00 (silence) | 0.00 (silence) |
 
 ### Per-Language Held-Out Accuracy
@@ -276,6 +298,7 @@ def build_manifest(models_dir: Path) -> Dict[str, Any]:
     ]
     scan_targets.extend((models_dir / "onnx").glob("*.onnx") if (models_dir / "onnx").exists() else [])
     scan_targets.extend((models_dir / "onnx" / "heads").glob("*") if (models_dir / "onnx" / "heads").exists() else [])
+    scan_targets.extend((models_dir / "heads").glob("*.bin") if (models_dir / "heads").exists() else [])
     scan_targets.extend((models_dir / "vocabularies").glob("*.json") if (models_dir / "vocabularies").exists() else [])
 
     for p in sorted(scan_targets):

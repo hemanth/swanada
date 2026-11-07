@@ -1,192 +1,196 @@
 """Tier 4: Real-World Application Scenarios End-to-End Tests for Swanada.
 
-Covers authentic discourse workloads across all 12 target languages:
-- Scenario 1: Classical Sanskrit literature recitations (Bhagavad Gita, Upanishads, Vedic chants).
-- Scenario 2: Conversational Indic discourse across Northern & Eastern languages (hi, bn, mr, gu, pa, or).
-- Scenario 3: Dravidian literary, educational, and technical discourse (kn, ta, te, ml).
-- Scenario 4: Indian English technical dictation, alphanumeric codes, and numbers.
-- Scenario 5: Held-out real speech audio evaluation from the 480-clip test speech suite.
-- Scenario 6: Real-time microphone streaming simulation under simulated network and audio thread jitter.
+Covers authentic discourse workloads and real-world acoustic scenarios:
+1. Authentic Conversational Speech (all 12 languages on golden clips with CER bounds)
+2. Technical Terminology & Loanwords (administrative, digital, and technical vocabulary)
+3. Multilingual Code-Mixing (multi-language sequential audio streams and script stability)
+4. Background Noise & Low SNR Environments (additive Gaussian noise at 20 dB and 15 dB SNR)
+5. Held-Out Speech Corpus Validation (evaluation against studio clips from bench/test_speech_suite.jsonl)
 """
 from __future__ import annotations
 
 import json
 import math
+import unicodedata
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
+import numpy as np
 import pytest
 
-from tests.e2e.conftest import HELD_OUT_AUDIO_DIR, NINADA_DIR
 from tests.e2e.helpers import (
-    AudioWorkletSimulator,
+    ALL_12_LANGUAGES,
+    CANONICAL_PRESETS,
     compute_cer,
     compute_wer,
-    create_noise_pcm,
-    create_sine_pcm,
-    encode_wav_bytes,
-    verify_pcm_samples,
+    get_sample_wav_path,
+    load_sample_pcm,
     verify_transcription_result,
-    verify_wav_header,
 )
 
+try:
+    from swanada import REGISTRY, Swanada
+except ImportError:
+    Swanada = None  # type: ignore[assignment]
+    REGISTRY = None  # type: ignore[assignment]
+
 
 # ==============================================================================
-# Scenario 1: Classical Sanskrit Literature Verses
+# 1. Authentic Conversational Speech (All 12 Languages)
 # ==============================================================================
+
+@pytest.mark.tier4
+@pytest.mark.parametrize("lang", ALL_12_LANGUAGES)
+def test_tier4_conversational_speech_all_12_languages(lang: str, engine_factory: Callable[[str], Any]) -> None:
+    """Tier 4.1: Authentic conversational speech clips transcribe with valid CER bounds across all 12 languages."""
+    engine = engine_factory(lang)
+    wav_path = get_sample_wav_path(lang)
+    result = engine.transcribe(str(wav_path))
+
+    verify_transcription_result(result, expected_lang=lang)
+    reference = CANONICAL_PRESETS[lang]
+    hypothesis = result.text.strip()
+
+    assert len(hypothesis) > 0, f"Empty hypothesis for {lang}"
+    cer = compute_cer(reference, hypothesis)
+
+    # CER upper threshold: all models must achieve < 0.65 CER on single golden samples
+    # Top languages (sa, hi, en, kn) typically achieve < 0.35 CER
+    assert cer < 0.65, (
+        f"CER exceeded threshold for {lang}: measured {cer * 100:.2f}% "
+        f"(ref='{reference}', hyp='{hypothesis}')"
+    )
+
+    # Invariant: output is valid Unicode in canonical NFC composition
+    assert unicodedata.is_normalized("NFC", hypothesis)
+
+
+# ==============================================================================
+# 2. Technical Terminology & Loanwords
+# ==============================================================================
+
 @pytest.mark.tier4
 @pytest.mark.parametrize(
-    "title,verse_text,min_words",
+    "lang,expected_substring",
+    [
+        ("hi", "हेडमास्टर"),   # Headmaster loanword
+        ("kn", "ಬ್ಯಾಂಕ್"),     # Bank loanword
+        ("pa", "ਐਕਸਪ੍ਰੈਸ"),   # Express loanword
+        ("en", "king"),       # English core word
+    ],
+)
+def test_tier4_technical_and_loan_vocabulary(lang: str, expected_substring: str, engine_factory: Callable[[str], Any]) -> None:
+    """Tier 4.2: Technical loanwords and administrative titles transcribe with script and subword integrity."""
+    engine = engine_factory(lang)
+    wav_path = get_sample_wav_path(lang)
+    result = engine.transcribe(str(wav_path))
+
+    text = result.text
+    words = text.split()
+    min_word_cer = min(compute_cer(expected_substring, w) for w in words) if words else 1.0
+    contains_sub = expected_substring in text or min_word_cer < 0.40
+    assert contains_sub, (
+        f"Loanword '{expected_substring}' missing or severely corrupted in {lang}: '{text}' (min_cer={min_word_cer:.2f})"
+    )
+
+
+
+# ==============================================================================
+# 3. Multilingual Code-Mixing / Language Transition
+# ==============================================================================
+
+@pytest.mark.tier4
+def test_tier4_multilingual_code_mixing_stream(engine_factory: Callable[[str], Any]) -> None:
+    """Tier 4.3: Sequential bilingual speech stream maintains script stability and streaming continuity."""
+    # Compose bilingual stream: Sanskrit speech + 500ms pause + Hindi speech
+    engine = engine_factory("sa")
+    stream = engine.stream(chunk_size_samples=1600)
+
+    pcm_sa, _ = load_sample_pcm("sa")
+    pcm_hi, _ = load_sample_pcm("hi")
+    pause = np.zeros(8000, dtype=np.float32)
+
+    composed_bilingual = np.concatenate([pcm_sa, pause, pcm_hi])
+    chunk_size = 1600
+
+    for i in range(0, len(composed_bilingual), chunk_size):
+        chunk = composed_bilingual[i : i + chunk_size]
+        stream.push(chunk)
+
+    final_result = stream.finish()
+    assert len(final_result.text.strip()) > 0
+    # Both Sanskrit and Hindi utilize Devanagari script; verify NFC composition
+    assert unicodedata.is_normalized("NFC", final_result.text)
+
+
+# ==============================================================================
+# 4. Background Noise & Low SNR Environments
+# ==============================================================================
+
+@pytest.mark.tier4
+@pytest.mark.parametrize("snr_db", [20.0, 15.0])
+def test_tier4_background_noise_snr_degradation(snr_db: float, engine_factory: Callable[[str], Any]) -> None:
+    """Tier 4.4: Speech corrupted by additive white noise (20 dB and 15 dB SNR) maintains transcription output."""
+    engine = engine_factory("sa")
+    pcm, sr = load_sample_pcm("sa")
+
+    # Calculate speech signal power
+    speech_power = float(np.mean(pcm ** 2))
+    assert speech_power > 0.0
+
+    # Calculate required noise power for target SNR (SNR = 10 * log10(P_speech / P_noise))
+    noise_power = speech_power / (10.0 ** (snr_db / 10.0))
+    noise_sigma = math.sqrt(noise_power)
+
+    # Synthesize Gaussian noise and add to speech
+    noise = np.random.normal(0.0, noise_sigma, size=len(pcm)).astype(np.float32)
+    noisy_speech = np.clip(pcm + noise, -1.0, 1.0).astype(np.float32)
+
+    result = engine.transcribe(noisy_speech)
+    assert len(result.text.strip()) > 0, f"Denoising frontend failed at SNR {snr_db} dB"
+    assert result.rtf < 1.0
+
+
+# ==============================================================================
+# 5. Held-Out Speech Corpus Validation
+# ==============================================================================
+
+@pytest.mark.tier4
+@pytest.mark.parametrize(
+    "utt_id,lang,ground_truth,rel_wav",
     [
         (
-            "Bhagavad_Gita_1_1",
-            "धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः । मामकाः पाण्डवाश्चैव किमकुर्वत सञ्जय ॥",
-            8,
+            "sa_5b38db8fe54d",
+            "sa",
+            "तावता श्रीपतिशास्त्रिणा अवगतम् ' अयं न सज्जनः ।",
+            "bench/test_gt_wavs_16k/sa_5b38db8fe54d.wav",
         ),
         (
-            "Isha_Upanishad_1",
-            "ईशा वास्यमिदं सर्वं यत्किञ्च जगत्यां जगत् । तेन त्यक्तेन भुञ्जीथा मा गृधः कस्यस्विद्धनम् ॥",
-            10,
-        ),
-        (
-            "Rigvedic_Gayatri",
-            "तत्सवितुर्वरेण्यं भर्गो देवस्य धीमहि । धियो यो नः प्रचोदयात् ॥",
-            8,
-        ),
-        (
-            "Mandukya_Peace_Chant",
-            "ॐ भद्रं कर्णेभिः शृणुयाम देवाः । भद्रं पश्येमाक्षभिर्यजत्राः ॥",
-            6,
-        ),
-        (
-            "Subhashita_Truth_Dharma",
-            "सत्यं ब्रूयात् प्रियं ब्रूयात् न ब्रूयात् सत्यमप्रियम् । प्रियं च नानृतं ब्रूयात् एष धर्मः सनातनः ॥",
-            12,
+            "sa_4ffe4900cea3",
+            "sa",
+            "अपि चार्लॉट् इत्येषः प्रतिक्रियाम् अददात्?",
+            "bench/test_gt_wavs_16k/sa_4ffe4900cea3.wav",
         ),
     ],
 )
-def test_scenario1_classical_sanskrit_verses(title: str, verse_text: str, min_words: int) -> None:
-    """Scenario 1: Classical Sanskrit shlokas and mantras satisfy word count and Unicode contracts."""
-    words = verse_text.split()
-    assert len(words) >= min_words
-    # Verify Sanskrit punctuation marks danda (।) and double danda (॥)
-    assert "।" in verse_text
-    # CER of self-comparison is strictly 0.0
-    cer = compute_cer(verse_text, verse_text)
-    assert cer == 0.0
+def test_tier4_held_out_speech_suite_clips(
+    utt_id: str,
+    lang: str,
+    ground_truth: str,
+    rel_wav: str,
+    engine_factory: Callable[[str], Any],
+) -> None:
+    """Tier 4.5: Held-out speech suite clips from test_speech_suite.jsonl transcribe with high accuracy."""
+    repo_root = Path(__file__).resolve().parents[2]
+    wav_path = repo_root / rel_wav
+    if not wav_path.exists():
+        pytest.skip(f"Held-out clip not found on disk: {wav_path}")
 
+    engine = engine_factory(lang)
+    result = engine.transcribe(str(wav_path))
 
-# ==============================================================================
-# Scenario 2: Conversational Indic Discourse (hi, bn, mr, gu, pa, or)
-# ==============================================================================
-@pytest.mark.tier4
-@pytest.mark.parametrize(
-    "lang,sentence",
-    [
-        ("hi", "नमस्ते, क्या आप मुझे बता सकते हैं कि निकटतम रेलवे स्टेशन कहाँ है?"),
-        ("hi", "आज का मौसम बहुत अच्छा है और हल्की बारिश हो रही है।"),
-        ("bn", "আমাদের দেশে অনেক সুন্দর নদী এবং পাহাড় আছে।"),
-        ("mr", "सर्वांना नमस्कार, आज आपण एका महत्त्वाच्या विषयावर चर्चा करणार आहोत."),
-        ("gu", "ગુજરાત એક સમૃદ્ધ અને સુંદર પ્રદેશ છે."),
-        ("pa", "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ ਜੀ, ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ।"),
-        ("or", "ଓଡ଼ିଶାର ସଂସ୍କୃତି ଓ ଐତିହ୍ୟ ଅତ୍ୟନ୍ତ ଗୌରବମୟ।"),
-    ],
-)
-def test_scenario2_conversational_indic_sentences(lang: str, sentence: str) -> None:
-    """Scenario 2: Northern and Eastern Indic sentences validate phonetic and word boundary structure."""
-    words = sentence.split()
-    assert len(words) >= 5
-    wer = compute_wer(sentence, sentence)
-    assert wer == 0.0
-
-
-# ==============================================================================
-# Scenario 3: Dravidian Literary and Technical Discourse (kn, ta, te, ml)
-# ==============================================================================
-@pytest.mark.tier4
-@pytest.mark.parametrize(
-    "lang,passage",
-    [
-        ("kn", "ಕನ್ನಡ ನಾಡು ನುಡಿ ಸಂಸ್ಕೃತಿ ಅತ್ಯಂತ ಪ್ರಾಚೀನ ಹಾಗೂ ಶ್ರೀಮಂತವಾದದ್ದು."),
-        ("ta", "யாதும் ஊரே யாவரும் கேளிர் தீதும் நன்றும் பிறர்தர வாரா."),
-        ("te", "తెలుగు భాష ప్రాచీనమైనది మరియు ఎంతో మాధుర్యమైనది."),
-        ("ml", "കേരളം പ്രകൃതിഭംഗി നിറഞ്ഞ മനോഹരമായ ഒരു നാടാണ്."),
-    ],
-)
-def test_scenario3_dravidian_discourse(lang: str, passage: str) -> None:
-    """Scenario 3: Dravidian language sentences retain unique Dravidian retroflex and chillu characters."""
-    assert len(passage) > 20
-    wer = compute_wer(passage, passage)
-    assert wer == 0.0
-
-
-# ==============================================================================
-# Scenario 4: Indian English Technical & Alphanumeric Dictation
-# ==============================================================================
-@pytest.mark.tier4
-@pytest.mark.parametrize(
-    "dictation,expected_word_count",
-    [
-        ("The speech to text engine runs locally with zero external network requests.", 12),
-        ("Audio worklet processes one hundred twenty eight sample frames at sixteen kilohertz.", 12),
-        ("Transaction ID TXN-94825 confirmed on November fourth twenty twenty six.", 10),
-        ("Please verify the model weights in the docs directory.", 9),
-    ],
-)
-def test_scenario4_indian_english_technical_dictation(dictation: str, expected_word_count: int) -> None:
-    """Scenario 4: Indian English technical sentences and alphanumeric strings parse cleanly."""
-    words = dictation.split()
-    assert len(words) == expected_word_count
-    assert compute_wer(dictation, dictation) == 0.0
-
-
-# ==============================================================================
-# Scenario 5: Real Speech Audio Evaluation from Held-Out Test Set
-# ==============================================================================
-@pytest.mark.tier4
-def test_scenario5_held_out_audio_suite_evaluation() -> None:
-    """Scenario 5: Inspects and validates real speech audio clips from held-out dataset if present."""
-    if not HELD_OUT_AUDIO_DIR.exists():
-        pytest.skip("Held-out test audio directory not found in environment")
-
-    wav_files = sorted(HELD_OUT_AUDIO_DIR.glob("*.wav"))
-    if not wav_files:
-        pytest.skip("No WAV files found in held-out test directory")
-
-    # Sample test first 10 audio files across languages from ninada 24k studio reference
-    inspected = 0
-    for wav_p in wav_files[:10]:
-        data = wav_p.read_bytes()
-        hdr = verify_wav_header(data, expected_sr=24000)
-        assert hdr["channels"] == 1
-        assert hdr["duration_sec"] > 0.2
-        inspected += 1
-    assert inspected > 0
-
-
-# ==============================================================================
-# Scenario 6: Real-Time Microphone Streaming Simulation with Jitter
-# ==============================================================================
-@pytest.mark.tier4
-def test_scenario6_streaming_microphone_jitter_simulation() -> None:
-    """Scenario 6: Simulates 3 seconds of live microphone audio arriving with thread jitter."""
-    sim = AudioWorkletSimulator(quantum_size=128, chunk_samples=1600)
-    total_audio_sec = 3.0
-    total_samples = int(total_audio_sec * 16000)  # 48,000 samples
-    num_quanta = total_samples // 128  # 375 quanta
-
-    # Simulate jittered arrival: groups of 1 to 5 quanta
-    import random
-    random.seed(42)
-    pushed = 0
-    while pushed < num_quanta:
-        batch = min(random.randint(1, 5), num_quanta - pushed)
-        for _ in range(batch):
-            sim.push_quantum([0.02 * math.sin(pushed)] * 128)
-            pushed += 1
-
-    tail = sim.finish()
-    assert sim.is_finished
-    # Total samples: 48,000 / 1600 = exactly 30 chunks
-    assert len(sim.emitted_chunks) == 30
-    assert len(tail) == 0
+    assert len(result.text.strip()) > 0
+    cer = compute_cer(ground_truth, result.text)
+    # Sanskrit held-out clips achieve low CER (< 0.20)
+    assert cer < 0.20, f"Held-out CER too high for {utt_id}: {cer * 100:.2f}% (hyp='{result.text}')"
+    assert result.rtf < 1.0

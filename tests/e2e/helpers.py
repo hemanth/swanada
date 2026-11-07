@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import struct
 import unicodedata
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 
@@ -268,3 +269,91 @@ class MockWebWorker:
     def terminate(self) -> None:
         """Terminate the worker."""
         self.is_terminated = True
+
+
+ALL_12_LANGUAGES: tuple[str, ...] = (
+    "sa", "en", "hi", "kn", "mr", "bn", "ta", "te", "ml", "gu", "pa", "or"
+)
+
+CANONICAL_PRESETS: dict[str, str] = {
+    "sa": "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति",
+    "en": "The king was troubled with jealousy.",
+    "hi": "अपने हेडमास्टर साहब ही को देखो",
+    "kn": "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ",
+    "mr": "हो. आणखीही काही आहे.",
+    "bn": "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে।",
+    "ta": "அதோ கலங்கரை விளக்கமும் தெரிகிறது",
+    "te": "నాకు కూడా ప్రయాణం చేయటం, చదవటం ఇష్టం",
+    "ml": "ഉമ്മായ്ക്കതിൽ പരിപൂർണവിശ്വാസമുണ്ട്",
+    "gu": "જો એવું હોય તો હું બસથી જઈશ.",
+    "pa": "ਉਦਯੋਗਨਗਰੀ ਐਕਸਪ੍ਰੈਸ",
+    "or": "ସନ୍ଧ୍ୟାଙ୍କୁ ଇମେଲ କରି ଏହା ଲେଖ",
+}
+
+SAMPLE_DIR: Path = Path(__file__).resolve().parents[2] / "docs" / "samples"
+
+
+def get_sample_wav_path(lang: str) -> Path:
+    """Return path to canonical golden sample WAV file for the specified language."""
+    wav_path = SAMPLE_DIR / f"{lang}.wav"
+    assert wav_path.exists(), f"Golden sample WAV not found: {wav_path}"
+    return wav_path
+
+
+def load_sample_pcm(lang: str) -> tuple[Any, int]:
+    """Load canonical golden sample audio as normalized float PCM samples and sample rate."""
+    import wave
+    import numpy as np
+
+    wav_path = get_sample_wav_path(lang)
+    with wave.open(str(wav_path), "rb") as wf:
+        sample_rate = wf.getframerate()
+        num_frames = wf.getnframes()
+        raw_frames = wf.readframes(num_frames)
+        pcm_int16 = np.frombuffer(raw_frames, dtype=np.int16)
+        pcm_float = pcm_int16.astype(np.float32) / 32768.0
+    return pcm_float, sample_rate
+
+
+
+def compute_character_churn(committed_history: Sequence[str]) -> float:
+    """Calculate character churn percentage across sequential committed emissions.
+
+    Churn occurs if a previously committed string is deleted or overwritten in a subsequent step.
+    Zero churn means current_committed.startswith(previous_committed) holds for all steps.
+    """
+    total_deletions = 0
+    total_characters = 0
+
+    for i in range(1, len(committed_history)):
+        prev = committed_history[i - 1]
+        curr = committed_history[i]
+        total_characters += len(curr)
+
+        # Check common prefix length
+        common_len = 0
+        for c1, c2 in zip(prev, curr):
+            if c1 == c2:
+                common_len += 1
+            else:
+                break
+
+        # Any characters in prev after common_len were deleted/retracted
+        deletions = len(prev) - common_len
+        total_deletions += deletions
+
+    if total_characters == 0:
+        return 0.0
+    return float(total_deletions) / float(total_characters)
+
+
+def verify_prefix_stability(committed_history: Sequence[str]) -> None:
+    """Verify that committed text grows monotonically without character retraction."""
+    for i in range(1, len(committed_history)):
+        prev = committed_history[i - 1]
+        curr = committed_history[i]
+        assert curr.startswith(prev), (
+            f"Prefix churn violation at step {i}: "
+            f"previous='{prev}' does not prefix current='{curr}'"
+        )
+

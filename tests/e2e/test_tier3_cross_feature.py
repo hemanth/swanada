@@ -1,168 +1,204 @@
 """Tier 3: Cross-Feature Interactions End-to-End Tests for Swanada.
 
-Covers pairwise and higher-order combinatorial interactions:
-- Language (12 languages) x Script x Audio Chunk Sizing (50ms, 100ms, 250ms, 500ms)
-- Multi-Language Sequential Streaming Chaining (sa -> hi -> kn -> ta, en -> mr -> bn -> te, gu -> pa -> or -> ml)
-- Multi-Rate Resampling (8k, 16k, 24k, 44.1k, 48k) x Channel Layouts (mono, stereo)
-- Streaming Cadence Variations (steady real-time, rapid bursts, network packet jitter)
-- Cross-Runtime Interface Contracts (Python API, Node.js CLI, Browser Web Worker)
+Covers cross-feature combinatorial interactions:
+1. Rapid Language Switching (sequential multi-language batch and streaming sessions)
+2. Chunk Size Variations (steady 50ms, 100ms, 200ms, 320ms, and dynamic fluctuating schedules)
+3. Interspeech Pause Insertion (1.0s silence injected within speech; 0.00% churn verification)
+4. Long Continuous Audio (30-second sustained streaming, buffer cap invariant, flat latency)
 """
 from __future__ import annotations
 
 import math
-from typing import Any
+import time
+from pathlib import Path
+from typing import Any, Callable
 
+import numpy as np
 import pytest
 
 from tests.e2e.helpers import (
-    FRAME_HOP_SAMPLES,
-    FRAME_WINDOW_SAMPLES,
-    SAMPLE_RATE,
-    AudioWorkletSimulator,
-    MockWebWorker,
-    create_noise_pcm,
-    create_silence_pcm,
-    create_sine_pcm,
-    encode_wav_bytes,
-    verify_pcm_samples,
+    ALL_12_LANGUAGES,
+    compute_character_churn,
+    get_sample_wav_path,
+    load_sample_pcm,
+    verify_prefix_stability,
     verify_transcription_result,
-    verify_wav_header,
 )
 
-
-ALL_12_LANGUAGES = [
-    "sa", "en", "hi", "kn", "mr", "bn", "ta", "te", "ml", "gu", "pa", "or"
-]
-
-LANGUAGE_SCRIPT_MAP = {
-    "sa": "Devanagari",
-    "en": "Latin",
-    "hi": "Devanagari",
-    "kn": "Kannada",
-    "mr": "Devanagari",
-    "bn": "Bengali",
-    "ta": "Tamil",
-    "te": "Telugu",
-    "ml": "Malayalam",
-    "gu": "Gujarati",
-    "pa": "Gurmukhi",
-    "or": "Odia",
-}
+try:
+    from swanada import REGISTRY, Swanada
+except ImportError:
+    Swanada = None  # type: ignore[assignment]
+    REGISTRY = None  # type: ignore[assignment]
 
 
 # ==============================================================================
-# 1. Pairwise Language x Script x Audio Chunk Sizing
+# 1. Rapid Language Switching
 # ==============================================================================
+
 @pytest.mark.tier3
-@pytest.mark.parametrize("lang", ALL_12_LANGUAGES)
-@pytest.mark.parametrize("chunk_ms", [50, 100, 250])
-def test_cross_language_and_chunk_size(lang: str, chunk_ms: int) -> None:
-    """Tier 3.1: Pairwise validation of 12 languages across chunk durations (50ms, 100ms, 250ms)."""
-    script = LANGUAGE_SCRIPT_MAP[lang]
-    assert len(script) > 0
-    chunk_samples = int((chunk_ms / 1000.0) * 16000)
-    sim = AudioWorkletSimulator(quantum_size=128, chunk_samples=chunk_samples)
-    expected_chunks = 2
-    samples_needed = expected_chunks * chunk_samples
-    quanta_needed = (samples_needed + 127) // 128
-    for _ in range(quanta_needed):
-        sim.push_quantum([0.05] * 128)
-    assert len(sim.emitted_chunks) == expected_chunks
+def test_tier3_rapid_language_switching_sequential_batch(engine_factory: Callable[[str], Any]) -> None:
+    """Tier 3.1: Sequential transcription across 6 distinct languages without memory leak or state leakage."""
+    sequence = ["sa", "hi", "kn", "en", "ta", "ml"]
+    results = {}
+
+    for lang in sequence:
+        engine = engine_factory(lang)
+        wav_path = get_sample_wav_path(lang)
+        result = engine.transcribe(str(wav_path))
+
+        verify_transcription_result(result, expected_lang=lang)
+        assert len(result.text.strip()) > 0, f"Empty text during rapid switching on {lang}"
+        results[lang] = result.text
+
+    assert len(results) == len(sequence)
 
 
-# ==============================================================================
-# 2. Sequential Multi-Language Streaming Chaining
-# ==============================================================================
 @pytest.mark.tier3
-@pytest.mark.parametrize(
-    "lang_chain",
-    [
-        ["sa", "hi", "kn", "ta"],
-        ["en", "mr", "bn", "te"],
-        ["gu", "pa", "or", "ml"],
-    ],
-)
-def test_cross_multilanguage_sequential_streaming_chain(lang_chain: list[str]) -> None:
-    """Tier 3.2: Chaining 4 consecutive languages through an active pipeline without memory leaks."""
-    events = []
-    worker = MockWebWorker(lambda m: events.append(m))
-    for lang in lang_chain:
-        worker.post_message({"type": "INIT", "config": {"language": lang}})
-        # Push 2 chunks per language
-        worker.post_message({"type": "PROCESS_CHUNK", "chunk": [0.02] * 1600})
-        worker.post_message({"type": "PROCESS_CHUNK", "chunk": [0.02] * 1600})
-        worker.post_message({"type": "FINISH"})
+def test_tier3_rapid_language_switching_consecutive_streaming(engine_factory: Callable[[str], Any]) -> None:
+    """Tier 3.2: Consecutive streaming pipelines across different language families operate independently."""
+    test_chain = [("sa", 1600), ("hi", 1600), ("en", 1600), ("kn", 1600)]
 
-    # 4 languages * 4 message events = 16 messages
-    assert len(events) == len(lang_chain) * 4
-    init_langs = [e["config"]["language"] for e in events if e["type"] == "INIT"]
-    assert init_langs == lang_chain
+    for lang, chunk_size in test_chain:
+        engine = engine_factory(lang)
+        stream = engine.stream(chunk_size_samples=chunk_size)
+        pcm, sr = load_sample_pcm(lang)
+
+        for i in range(0, len(pcm), chunk_size):
+            stream.push(pcm[i : i + chunk_size])
+
+        final_result = stream.finish()
+        verify_transcription_result(final_result, expected_lang=lang)
+        assert len(final_result.text.strip()) > 0
 
 
 # ==============================================================================
-# 3. Multi-Rate Resampling x Channel Layouts
+# 2. Chunk Size Variations & Dynamic Cadence
 # ==============================================================================
+
 @pytest.mark.tier3
-@pytest.mark.parametrize("rate", [8000, 16000, 24000, 44100, 48000])
-@pytest.mark.parametrize("channels", [1, 2])
-def test_cross_multirate_and_channel_layouts(rate: int, channels: int) -> None:
-    """Tier 3.3: Pairwise validation of audio ingestion rates (8k-48k) across mono and stereo channels."""
-    dur = 0.15
-    samples = create_sine_pcm(duration_sec=dur, freq=440.0, sample_rate=rate)
-    if channels == 2:
-        interleaved = []
-        for s in samples:
-            interleaved.extend([s, s * 0.8])
-        wav_bytes = encode_wav_bytes(interleaved, sample_rate=rate, channels=2)
-    else:
-        wav_bytes = encode_wav_bytes(samples, sample_rate=rate, channels=1)
+@pytest.mark.parametrize("chunk_size", [800, 1600, 3200, 5120])
+def test_tier3_chunk_size_variations(chunk_size: int, engine_factory: Callable[[str], Any]) -> None:
+    """Tier 3.3: Streaming same audio with different chunk durations (50ms, 100ms, 200ms, 320ms) produces valid output."""
+    engine = engine_factory("sa")
+    stream = engine.stream(chunk_size_samples=chunk_size)
+    pcm, sr = load_sample_pcm("sa")
 
-    info = verify_wav_header(wav_bytes, expected_sr=rate, expected_channels=channels)
-    assert info["sample_rate"] == rate
-    assert info["channels"] == channels
+    for i in range(0, len(pcm), chunk_size):
+        stream.push(pcm[i : i + chunk_size])
+
+    result = stream.finish()
+    assert len(result.text.strip()) > 0
+    assert result.rtf < 1.0
 
 
-# ==============================================================================
-# 4. Streaming Arrival Cadences (Steady vs Burst vs Jitter)
-# ==============================================================================
 @pytest.mark.tier3
-def test_cross_streaming_burst_followed_by_jitter() -> None:
-    """Tier 3.4: Worklet arrival pattern switching dynamically between steady, burst, and jitter."""
-    sim = AudioWorkletSimulator(quantum_size=128, chunk_samples=1600)
-    # Phase 1: Steady (10 quanta)
-    for _ in range(10):
-        sim.push_quantum([0.05] * 128)
-    steady_emitted = len(sim.emitted_chunks)
+def test_tier3_dynamic_fluctuating_chunk_cadence(engine_factory: Callable[[str], Any]) -> None:
+    """Tier 3.4: Dynamic fluctuating chunk schedule (500 to 3200 samples) maintains streaming stability."""
+    engine = engine_factory("kn")
+    stream = engine.stream(chunk_size_samples=1600)
+    pcm, sr = load_sample_pcm("kn")
 
-    # Phase 2: Burst (25 quanta in single loop iteration)
-    for _ in range(25):
-        sim.push_quantum([0.05] * 128)
-    burst_emitted = len(sim.emitted_chunks)
-    assert burst_emitted > steady_emitted
+    chunk_schedule = [500, 2000, 800, 3200, 1600, 2400]
+    cursor = 0
+    schedule_idx = 0
 
-    # Phase 3: Jitter with silence gaps (5 quanta, flush, 5 quanta)
-    sim.finish()
-    assert sim.is_finished
-    sim_resumed = AudioWorkletSimulator(quantum_size=128, chunk_samples=1600)
-    for _ in range(15):
-        sim_resumed.push_quantum([0.01] * 128)
-    assert len(sim_resumed.emitted_chunks) == 1
+    while cursor < len(pcm):
+        current_chunk_size = chunk_schedule[schedule_idx % len(chunk_schedule)]
+        schedule_idx += 1
+        chunk = pcm[cursor : cursor + current_chunk_size]
+        cursor += current_chunk_size
+        stream.push(chunk)
+
+    final_result = stream.finish()
+    assert len(final_result.text.strip()) > 0
+    assert final_result.language == "kn"
 
 
 # ==============================================================================
-# 5. Cross-Runtime Output Result Field Parity
+# 3. Interspeech Pause Insertion
 # ==============================================================================
+
 @pytest.mark.tier3
-@pytest.mark.parametrize("runtime", ["python", "node", "browser"])
-def test_cross_runtime_transcription_result_contract(runtime: str) -> None:
-    """Tier 3.5: Verifies TranscriptionResult schema contract compatibility across all 3 runtimes."""
-    mock_result = {
-        "text": "सत्यमेव जयते",
-        "language": "sa",
-        "durationMs": 1200,
-        "inferenceMs": 420,
-        "rtf": 0.35,
-        "tokens": ["सत्यम्", "एव", "जयते"],
-    }
-    verify_transcription_result(mock_result, expected_lang="sa")
-    assert mock_result["rtf"] < 1.0
+def test_tier3_interspeech_pause_insertion_zero_churn(engine_factory: Callable[[str], Any]) -> None:
+    """Tier 3.5: Interspeech pause (1.0 second silence) injected into speech stream yields strictly 0.00% churn."""
+    engine = engine_factory("sa")
+    stream = engine.stream(chunk_size_samples=1600)
+    pcm, sr = load_sample_pcm("sa")
+
+    # Split audio into two halves and inject 16000 samples (1.0s) of silence
+    midpoint = len(pcm) // 2
+    part1 = pcm[:midpoint]
+    pause = np.zeros(16000, dtype=np.float32)
+    part2 = pcm[midpoint:]
+
+    composed_pcm = np.concatenate([part1, pause, part2])
+    committed_history: list[str] = []
+
+    chunk_size = 1600
+    for i in range(0, len(composed_pcm), chunk_size):
+        step = stream.push(composed_pcm[i : i + chunk_size])
+        if step is not None:
+            committed_history.append(step.committed)
+
+    final_result = stream.finish()
+    assert len(final_result.text.strip()) > 0
+
+    # Prefix stability invariant must hold strictly
+    verify_prefix_stability(committed_history)
+    churn = compute_character_churn(committed_history)
+    assert churn == 0.0, f"Churn occurred during interspeech pause: {churn * 100:.2f}%"
+
+
+@pytest.mark.tier3
+def test_tier3_pause_at_utterance_boundaries(engine_factory: Callable[[str], Any]) -> None:
+    """Tier 3.6: Prepending and appending 1.0s silence to utterance preserves valid transcription."""
+    engine = engine_factory("hi")
+    pcm, sr = load_sample_pcm("hi")
+    silence_1s = np.zeros(16000, dtype=np.float32)
+
+    padded_audio = np.concatenate([silence_1s, pcm, silence_1s])
+    result = engine.transcribe(padded_audio)
+
+    assert len(result.text.strip()) > 0
+    assert result.language == "hi"
+
+
+# ==============================================================================
+# 4. Long Continuous Audio Streaming
+# ==============================================================================
+
+@pytest.mark.tier3
+def test_tier3_long_continuous_audio_buffer_and_latency(engine_factory: Callable[[str], Any]) -> None:
+    """Tier 3.7: 30-second continuous streaming maintains bounded buffer (<=61440) and flat latency slope."""
+    engine = engine_factory("sa")
+    stream = engine.stream(chunk_size_samples=1600, max_buffer_samples=61440)
+    pcm, sr = load_sample_pcm("sa")
+    silence_500ms = np.zeros(8000, dtype=np.float32)
+
+    # Repeat utterance + pause 8 times to form ~33s of continuous audio
+    segment = np.concatenate([pcm, silence_500ms])
+    long_stream_pcm = np.tile(segment, 8)
+    audio_duration_sec = len(long_stream_pcm) / float(sr)
+    assert audio_duration_sec >= 30.0
+
+    chunk_size = 1600
+    chunk_latencies: list[float] = []
+
+    for i in range(0, len(long_stream_pcm), chunk_size):
+        chunk = long_stream_pcm[i : i + chunk_size]
+        t0 = time.perf_counter()
+        stream.push(chunk)
+        chunk_latencies.append(time.perf_counter() - t0)
+
+        # Buffer ceiling constraint
+        assert len(stream.audio_buffer) <= 61440, (
+            f"Buffer overflow during continuous stream: {len(stream.audio_buffer)} > 61440"
+        )
+
+    final_result = stream.finish()
+    assert len(final_result.text.strip()) > 0
+
+    # Verify average chunk latency is well below real-time quantum (100ms)
+    avg_latency = float(np.mean(chunk_latencies))
+    assert avg_latency < 0.050, f"Average chunk latency too high: {avg_latency * 1000:.2f} ms"

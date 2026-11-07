@@ -48,8 +48,10 @@ class AcousticEngine:
 
         # Configure session options
         self.sess_opts = ort.SessionOptions()
-        self.sess_opts.intra_op_num_threads = num_threads
+        self.sess_opts.intra_op_num_threads = max(1, num_threads)
         self.sess_opts.inter_op_num_threads = 1
+        self.sess_opts.enable_cpu_mem_arena = True
+        self.sess_opts.enable_mem_pattern = True
         self.sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
         # Load vocabulary
@@ -77,6 +79,13 @@ class AcousticEngine:
             self.acoustic_session = ort.InferenceSession(
                 str(model_path), sess_options=self.sess_opts, providers=["CPUExecutionProvider"]
             )
+            # Warm up session graph kernels and pattern memory allocations
+            try:
+                dummy_feats = np.zeros((1, 80, 16), dtype=np.float32)
+                dummy_lens = np.array([16], dtype=np.int64)
+                self.acoustic_session.run(None, {"audio_signal": dummy_feats, "length": dummy_lens})
+            except Exception:
+                pass
 
         # Load preprocessor if ONNX mode requested
         if preprocessor_mode == "onnx":

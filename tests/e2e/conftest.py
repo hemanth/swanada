@@ -64,14 +64,28 @@ def is_swanada_available() -> bool:
     return Swanada is not None
 
 
+_ENGINE_CACHE: dict[str, Any] = {}
+
+
 def get_engine_or_skip(lang: str) -> Any:
-    """Instantiate a Swanada engine for the given language or skip if not yet implemented."""
+    """Instantiate or retrieve a cached Swanada engine for the given language."""
     if Swanada is None:
         pytest.skip(f"swanada Python package not yet implemented (milestone pending for lang: {lang})")
+    if lang in _ENGINE_CACHE:
+        return _ENGINE_CACHE[lang]
     try:
-        return Swanada(language=lang)
+        engine = Swanada(language=lang)
+        _ENGINE_CACHE[lang] = engine
+        return engine
     except Exception as e:
         pytest.skip(f"Swanada engine for '{lang}' not yet ready: {e}")
+
+
+@pytest.fixture(scope="session")
+def engine_factory() -> Callable[[str], Any]:
+    """Factory fixture returning cached Swanada engines across all 12 languages."""
+    return get_engine_or_skip
+
 
 
 @pytest.fixture(scope="session")

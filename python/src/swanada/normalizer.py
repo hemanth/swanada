@@ -2,7 +2,7 @@
 
 import re
 import unicodedata
-from typing import List
+from typing import List, Optional, Union
 
 _BRAHMIC_PRIMARY_MATRA_CLASS = (
     "\u093E-\u094C\u094E-\u094F\u0962-\u0963"
@@ -30,11 +30,35 @@ _BRAHMIC_INDEP_VOWEL_CLASS = (
     "\u0D05-\u0D14\u0D60-\u0D61"
 )
 
+_BRAHMIC_LATERAL_CONSONANTS = "\u0CB3\u0B33\u0C33"
+
 _RE_COLLIDING_MATRAS = re.compile(f"([{_BRAHMIC_PRIMARY_MATRA_CLASS}])[{_BRAHMIC_PRIMARY_MATRA_CLASS}]+")
 _RE_MATRA_THEN_VIRAMA = re.compile(f"([{_BRAHMIC_PRIMARY_MATRA_CLASS}])[{_BRAHMIC_VIRAMA_CLASS}]+")
 _RE_INDEP_VOWEL_ILLEGAL_MARK = re.compile(
-    f"([{_BRAHMIC_INDEP_VOWEL_CLASS}])[{_BRAHMIC_PRIMARY_MATRA_CLASS}{_BRAHMIC_VIRAMA_CLASS}]+"
+    f"([{_BRAHMIC_INDEP_VOWEL_CLASS}])([{_BRAHMIC_PRIMARY_MATRA_CLASS}{_BRAHMIC_VIRAMA_CLASS}]+)"
 )
+
+_RE_DUPLICATE_LATERAL_LIGATURE = re.compile(
+    f"([{_BRAHMIC_LATERAL_CONSONANTS}])\\1+([{_BRAHMIC_VIRAMA_CLASS}])"
+)
+
+_RE_ML_SPLIT_NASAL_GEMINATE = re.compile(r"\u0D02([\u0D19\u0D1E\u0D23\u0D28\u0D2E])")
+_RE_GU_FUTURE_SIBILANT = re.compile(r"ઈષ(?=[^\u0A80-\u0AFF]|$)")
+_RE_OR_DETACHED_ANUSVARA = re.compile(r"\u0B02(\u0B19\u0B4D[\u0B15-\u0B18])")
+_RE_OR_DATIVE_SUFFIX = re.compile(r"\u0B02\u0B15\u0B41(?=[^\u0B00-\u0B7F]|$)")
+_RE_PA_MATRA_INDEP_VOWEL = re.compile(r"(?<!\u0A39)([\u0A3E-\u0A4A\u0A4C])(\u0A0F)(?=[\u0A15-\u0A39\u0A59-\u0A5E])")
+
+_OPENING_PUNCT_CHARS = frozenset(
+    "-–—'’‘`([{<\"“«/\\"
+    "\u2010\u2011\u2012\u2013\u2014\u2212"
+)
+
+_CLOSING_PUNCT_CHARS = frozenset(
+    ",.?!:;)[]}>”»%'’–—।॥"
+    "\u2010\u2011\u2012\u2013\u2014\u2212"
+)
+
+_WORD_BOUNDARY_MARKERS = ("\u2581", "▁", "\u2582", "\u2583", " ", "\t")
 
 
 def dedup_marks(text: str) -> str:
@@ -47,11 +71,31 @@ def dedup_marks(text: str) -> str:
     return "".join(out)
 
 
-def repair_brahmic_orthography(nfc_text: str) -> str:
-    """Repair colliding dependent vowel signs and illegal virama placements on NFC text."""
+def repair_brahmic_orthography(nfc_text: str, lang: str = "") -> str:
+    """Repair colliding dependent vowel signs, duplicate ligatures, and orthographic defects."""
     text = _RE_COLLIDING_MATRAS.sub(r"\1", nfc_text)
     text = _RE_MATRA_THEN_VIRAMA.sub(r"\1", text)
-    text = _RE_INDEP_VOWEL_ILLEGAL_MARK.sub(r"\1", text)
+    text = _RE_INDEP_VOWEL_ILLEGAL_MARK.sub(
+        lambda m: m.group(0) if m.group(1) == "\u0985" and m.group(2).startswith("\u09CD") else m.group(1),
+        text,
+    )
+
+    # 1. Kannada / Telugu / Odia duplicate retroflex lateral ligature (ೊಳಳ್ -> ೊಳ್)
+    text = _RE_DUPLICATE_LATERAL_LIGATURE.sub(r"\1\2", text)
+
+    # 2. Malayalam nasal geminate reunification (ഉംമാ -> ഉമ്മാ)
+    text = _RE_ML_SPLIT_NASAL_GEMINATE.sub(lambda m: f"{m.group(1)}\u0D4D{m.group(1)}", text)
+
+    # 3. Gujarati palatal sibilant restoration (જઈષ -> જઈશ)
+    text = _RE_GU_FUTURE_SIBILANT.sub("ઈશ", text)
+
+    # 4. Odia detached anusvara (ଂଙ୍କ -> ଙ୍କ) and dative normalization (ଂକୁ -> ଙ୍କୁ)
+    text = _RE_OR_DETACHED_ANUSVARA.sub(r"\1", text)
+    text = _RE_OR_DATIVE_SUFFIX.sub("\u0B19\u0B4D\u0B15\u0B41", text)
+
+    # 5. Gurmukhi independent vowel following dependent matra word boundary separation
+    text = _RE_PA_MATRA_INDEP_VOWEL.sub(r"\1 \2", text)
+
     return text
 
 
@@ -60,6 +104,7 @@ def normalize_indic_text(
     dedup: bool = True,
     normalize_nfc: bool = True,
     space_marker: str = "\u2581",
+    lang: str = "",
 ) -> str:
     """Normalizes ASR output text across all 12 Indic languages and Latin/IAST."""
     text = raw_text
@@ -73,7 +118,7 @@ def normalize_indic_text(
     if dedup:
         text = unicodedata.normalize("NFC", text)
         text = dedup_marks(text)
-        text = repair_brahmic_orthography(text)
+        text = repair_brahmic_orthography(text, lang=lang)
         text = unicodedata.normalize("NFD", text)
         text = dedup_marks(text)
 
@@ -81,7 +126,7 @@ def normalize_indic_text(
     if normalize_nfc:
         text = unicodedata.normalize("NFC", text)
         if dedup:
-            text = repair_brahmic_orthography(text)
+            text = repair_brahmic_orthography(text, lang=lang)
 
     # 4. Collapse multiple whitespace and trim
     return re.sub(r"\s+", " ", text).strip()
@@ -92,6 +137,7 @@ def assemble_text(
     dedup: bool = True,
     normalize_nfc: bool = True,
     space_marker: str = "\u2581",
+    lang: str = "",
 ) -> str:
     """Stitch list of token strings into normalized text."""
     return normalize_indic_text(
@@ -99,4 +145,81 @@ def assemble_text(
         dedup=dedup,
         normalize_nfc=normalize_nfc,
         space_marker=space_marker,
+        lang=lang,
     )
+
+
+def join_subwords(
+    committed: Union[str, List[str]],
+    volatile: Union[str, List[str]],
+    volatile_tokens: Optional[List[str]] = None,
+    dedup: bool = True,
+    normalize_nfc: bool = True,
+    space_marker: str = "\u2581",
+    lang: str = "",
+) -> str:
+    """Conditionally concatenates committed and volatile text without illegitimate whitespace.
+
+    Preserves 0.00% churn contract by attaching continuation morphemes, Brahmic matras,
+    viramas, conjuncts, and attached punctuation directly to the committed prefix.
+    """
+    if isinstance(committed, list):
+        committed_str = normalize_indic_text(
+            "".join(committed),
+            dedup=dedup,
+            normalize_nfc=normalize_nfc,
+            space_marker=space_marker,
+            lang=lang,
+        )
+    else:
+        committed_str = committed or ""
+
+    if isinstance(volatile, list):
+        v_toks = volatile
+        volatile_str = normalize_indic_text(
+            "".join(v_toks),
+            dedup=dedup,
+            normalize_nfc=normalize_nfc,
+            space_marker=space_marker,
+            lang=lang,
+        )
+    else:
+        volatile_str = volatile or ""
+        v_toks = volatile_tokens
+
+    if not committed_str:
+        return volatile_str.strip() if volatile_str else ""
+    if not volatile_str:
+        return committed_str
+
+    last_c = committed_str[-1]
+    first_v = volatile_str[0]
+
+    # Combining mark (matra, virama, accent) at start of volatile text: attach directly to base
+    if unicodedata.category(first_v) in ("Mn", "Mc", "Me"):
+        return repair_brahmic_orthography(f"{committed_str.rstrip()}{volatile_str}", lang=lang)
+
+    # Open punctuation / hyphen / apostrophe at end of committed text
+    if last_c in _OPENING_PUNCT_CHARS:
+        return repair_brahmic_orthography(f"{committed_str}{volatile_str}", lang=lang)
+
+    # Closing punctuation at start of volatile text
+    if first_v in _CLOSING_PUNCT_CHARS:
+        return repair_brahmic_orthography(f"{committed_str}{volatile_str}", lang=lang)
+
+    # Existing whitespace handling
+    if last_c.isspace() or first_v.isspace():
+        merged = f"{committed_str}{volatile_str}"
+        return re.sub(r"\s+", " ", merged).strip()
+
+    # Token-level word boundary inspection
+    if v_toks:
+        first_tok = next((t for t in v_toks if t), "")
+        if first_tok:
+            has_boundary = any(first_tok.startswith(m) for m in _WORD_BOUNDARY_MARKERS)
+            if not has_boundary:
+                # Continuation subword: attach directly without space
+                return repair_brahmic_orthography(f"{committed_str.rstrip()}{volatile_str}", lang=lang)
+
+    # True word boundary confirmed: insert single space
+    return f"{committed_str} {volatile_str}"

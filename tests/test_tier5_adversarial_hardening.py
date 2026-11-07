@@ -1,6 +1,6 @@
 """Phase 2 Tier 5 Adversarial Stress & Hardening Test Suite for Swanada.
 
-24 targeted white-box adversarial tests across 6 failure categories:
+41 targeted white-box adversarial tests across 6 failure categories:
 - Category A: Audio Ingestion & Resampling Boundaries
 - Category B: Acoustic Spectrogram Stability
 - Category C: Conformer Acoustic Model & CTC Decoder Invariants
@@ -10,11 +10,16 @@
 """
 
 import math
+import struct
 import numpy as np
 import pytest
 import unicodedata
 from swanada import Swanada
 from swanada.audio import load_audio, resample_audio, parse_wav
+from swanada.decoder import decode_ctc_tokens
+from swanada.denoise import enhance_speech_with_telemetry, _design_notch_biquad, _apply_biquad
+from swanada.normalizer import repair_brahmic_orthography, normalize_indic_text, join_subwords
+from swanada.streaming import StreamingCTCDecoder
 from swanada.vocab import Vocabulary, devanagari_to_iast, detect_script, REGISTRY
 
 
@@ -75,6 +80,87 @@ def test_cat_a06_multi_rate_resampling_sweep():
         assert len(resampled) == 16000
 
 
+def test_cat_a07_corrupt_wav_truncated_headers():
+    """Truncated WAV byte headers (< 44 bytes) must raise an exception cleanly."""
+    truncated_payloads = [
+        b"",
+        b"RIFF",
+        b"RIFF\x24\x00\x00\x00WAVEfmt ",
+        b"RIFF" + b"\x00" * 30,
+        b"RIFF" + b"\x00" * 39,
+    ]
+    for payload in truncated_payloads:
+        with pytest.raises(Exception):
+            parse_wav(payload)
+
+
+def test_cat_a08_corrupt_wav_invalid_magic_bytes():
+    """Invalid magic bytes in header (non-RIFF / non-WAVE) must raise an exception."""
+    bad_riff = b"NOPE" + b"\x00" * 40
+    with pytest.raises(Exception):
+        parse_wav(bad_riff)
+
+    hdr_bad_wave = bytearray(44)
+    hdr_bad_wave[0:4] = b"RIFF"
+    struct.pack_into("<L", hdr_bad_wave, 4, 36)
+    hdr_bad_wave[8:12] = b"TEST"
+    with pytest.raises(Exception):
+        parse_wav(bytes(hdr_bad_wave))
+
+
+def test_cat_a09_corrupt_wav_zero_sample_rate():
+    """WAV header with zero sample rate must raise an exception."""
+    hdr = bytearray(44)
+    hdr[0:4] = b"RIFF"
+    struct.pack_into("<L", hdr, 4, 36)
+    hdr[8:12] = b"WAVE"
+    hdr[12:16] = b"fmt "
+    struct.pack_into("<L", hdr, 16, 16)
+    struct.pack_into("<H", hdr, 20, 1)
+    struct.pack_into("<H", hdr, 22, 1)
+    struct.pack_into("<L", hdr, 24, 0)
+    struct.pack_into("<L", hdr, 28, 0)
+    struct.pack_into("<H", hdr, 32, 2)
+    struct.pack_into("<H", hdr, 34, 16)
+    hdr[36:40] = b"data"
+    struct.pack_into("<L", hdr, 40, 0)
+    with pytest.raises(Exception):
+        parse_wav(bytes(hdr))
+
+
+def test_cat_a10_corrupt_wav_zero_channels():
+    """WAV header with zero channels must raise an exception."""
+    hdr = bytearray(44)
+    hdr[0:4] = b"RIFF"
+    struct.pack_into("<L", hdr, 4, 36)
+    hdr[8:12] = b"WAVE"
+    hdr[12:16] = b"fmt "
+    struct.pack_into("<L", hdr, 16, 16)
+    struct.pack_into("<H", hdr, 20, 1)
+    struct.pack_into("<H", hdr, 22, 0)
+    struct.pack_into("<L", hdr, 24, 16000)
+    struct.pack_into("<L", hdr, 28, 32000)
+    struct.pack_into("<H", hdr, 32, 2)
+    struct.pack_into("<H", hdr, 34, 16)
+    hdr[36:40] = b"data"
+    struct.pack_into("<L", hdr, 40, 0)
+    with pytest.raises(Exception):
+        parse_wav(bytes(hdr))
+
+
+def test_cat_a11_non_finite_pcm_sanitization_in_transcribe():
+    """Direct ingestion of non-finite PCM values into transcribe executes stably."""
+    bad_pcm = np.zeros(16000, dtype=np.float32)
+    bad_pcm[100:200] = np.nan
+    bad_pcm[300:400] = np.inf
+    bad_pcm[500:600] = -np.inf
+    stt = Swanada(language="sa")
+    res = stt.transcribe(bad_pcm)
+    assert isinstance(res.text, str)
+    assert res.duration_ms > 0
+
+
+
 # --- Category B: Acoustic Spectrogram Stability ---
 
 def test_cat_b01_pure_digital_silence():
@@ -110,6 +196,52 @@ def test_cat_b04_impulse_dirac_spike():
     stt = Swanada(language="sa")
     res = stt.transcribe(impulse)
     assert isinstance(res.text, str)
+
+
+def test_cat_b05_extreme_negative_snr_noise():
+    """Audio with severe negative SNR (-15 dB) is suppressed stably without crash."""
+    t = np.linspace(0, 1.0, 16000, dtype=np.float32)
+    signal = 0.05 * np.sin(2 * np.pi * 440 * t)
+    rng = np.random.RandomState(42)
+    noise = rng.normal(0, 0.28, 16000).astype(np.float32)
+    noisy_audio = signal + noise
+    telemetry = enhance_speech_with_telemetry(noisy_audio, sr=16000)
+    assert np.isfinite(telemetry.pcm).all()
+    assert telemetry.suppression_db > 10.0
+
+
+def test_cat_b06_dirac_impulse_train():
+    """Train of alternating full-scale Dirac delta spikes handles smoothly."""
+    impulse_train = np.zeros(16000, dtype=np.float32)
+    spike_indices = [2000, 4000, 6000, 8000, 10000, 12000]
+    for idx, sample_idx in enumerate(spike_indices):
+        impulse_train[sample_idx] = 1.0 if idx % 2 == 0 else -1.0
+    stt = Swanada(language="sa")
+    res = stt.transcribe(impulse_train)
+    assert isinstance(res.text, str)
+
+
+def test_cat_b07_mains_hum_notch_attenuation_50hz_60hz():
+    """Power-line mains hum at 50 Hz and 60 Hz is attenuated by notch filters."""
+    sr = 16000
+    t = np.arange(sr, dtype=np.float32) / sr
+    hum50 = 0.5 * np.sin(2 * np.pi * 50 * t).astype(np.float32)
+    hum60 = 0.5 * np.sin(2 * np.pi * 60 * t).astype(np.float32)
+
+    coeffs50 = _design_notch_biquad(50.0, sr, 22.0)
+    filtered50 = _apply_biquad(hum50, coeffs50)
+    rms_before50 = float(np.sqrt(np.mean(hum50**2)))
+    rms_after50 = float(np.sqrt(np.mean(filtered50[500:]**2)))
+    atten_db50 = 20.0 * math.log10(rms_before50 / rms_after50)
+    assert atten_db50 > 10.0
+
+    coeffs60 = _design_notch_biquad(60.0, sr, 22.0)
+    filtered60 = _apply_biquad(hum60, coeffs60)
+    rms_before60 = float(np.sqrt(np.mean(hum60**2)))
+    rms_after60 = float(np.sqrt(np.mean(filtered60[500:]**2)))
+    atten_db60 = 20.0 * math.log10(rms_before60 / rms_after60)
+    assert atten_db60 > 10.0
+
 
 
 # --- Category C: Conformer Acoustic Model & CTC Decoder Invariants ---
@@ -165,6 +297,35 @@ def test_cat_c04_long_sequence_stress():
     assert len(collapsed) > 0
 
 
+def test_cat_c05_out_of_bounds_token_ids():
+    """Out-of-bounds token IDs are safely skipped without IndexError."""
+    vocab = ["<blank>", "<unk>", "a", "b"]
+    bad_token_ids = [9999, 100000, 424242]
+    res = decode_ctc_tokens(bad_token_ids, vocab=vocab)
+    assert res.text == ""
+    assert res.tokens == []
+
+
+def test_cat_c06_all_blank_long_stream():
+    """All-blank sequence of 500 frames produces empty transcription."""
+    vocab = ["<blank>", "<unk>", "ka", "kha"]
+    blank_ids = [0] * 500
+    res = decode_ctc_tokens(blank_ids, vocab=vocab)
+    assert res.text == ""
+    assert res.tokens == []
+
+
+def test_cat_c07_repeated_tokens_with_without_blanks():
+    """Identical non-blank tokens collapse without blanks, preserve when blank-separated."""
+    vocab = ["<blank>", "<unk>", "ka", "kha"]
+    collapsed_run = decode_ctc_tokens([2, 2, 2, 2, 2], vocab=vocab)
+    assert collapsed_run.tokens == ["ka"]
+
+    preserved_run = decode_ctc_tokens([2, 0, 2, 0, 2], vocab=vocab)
+    assert preserved_run.tokens == ["ka", "ka", "ka"]
+
+
+
 # --- Category D: Streaming Real-Time Invariants ---
 
 def test_cat_d01_rapid_micro_chunks():
@@ -204,6 +365,62 @@ def test_cat_d04_zero_audio_finish():
     res = stream.finish()
     assert res.text == ""
     assert res.duration_ms == 0.0
+
+
+def test_cat_d05_rapid_fluctuating_cadence_shifts():
+    """Irregular chunk schedules do not exceed buffer ceiling or destabilize stream."""
+    stt = Swanada(language="sa")
+    stream = stt.stream()
+    schedule = [1, 16000, 10, 500, 32000, 0, 160]
+    for length in schedule:
+        if length > 0:
+            chunk = np.zeros(length, dtype=np.float32)
+            stream.push(chunk)
+            assert len(stream.audio_buffer) <= 61440
+    res = stream.finish()
+    assert isinstance(res.text, str)
+
+
+def test_cat_d06_continuous_compound_words_zero_spaces():
+    """Continuous compound words with zero spaces commit stably via high stability threshold."""
+    vocab = ["<blank>", "<unk>", "क", "ख", "ग", "घ", "ङ", " "]
+    dec = StreamingCTCDecoder(
+        vocab=vocab,
+        stability_threshold=2,
+        trail_tokens=2,
+        suffix_window_tokens=5,
+        high_stability_threshold=3,
+    )
+    tokens = ["क", "ख", "ग", "घ", "ङ"] * 10
+    for step in range(10):
+        current = tokens[:(step + 1) * 5]
+        dec.update(current, is_stream_end=False)
+    final_res = dec.update(tokens, is_stream_end=True)
+    assert len(final_res.text) > 0
+    assert final_res.is_final is True
+
+
+def test_cat_d07_suffix_window_freezing_invariance():
+    """Sustained streaming freezes older tokens and guarantees strict prefix monotonicity."""
+    vocab = ["<blank>", "<unk>", "क", "ख", "ग", " ", "a", "b"]
+    dec = StreamingCTCDecoder(
+        vocab=vocab,
+        stability_threshold=2,
+        trail_tokens=2,
+        suffix_window_tokens=5,
+        high_stability_threshold=3,
+    )
+    tokens = [" ", "क", "ख", " ", "ग", " "] * 20
+    committed_history = []
+    for step in range(1, 21):
+        current = tokens[:step * 6]
+        res = dec.update(current, is_stream_end=False)
+        comm = res.committed
+        if committed_history:
+            assert comm.startswith(committed_history[-1])
+        committed_history.append(comm)
+    assert dec._frozen_token_count > 0
+
 
 
 # --- Category E: Multilingual Script & Out-of-Vocabulary Invariants ---
@@ -246,6 +463,46 @@ def test_cat_e04_unmapped_utf8_graphemes():
     text_with_emoji = "नमस्ते 🚀🌍 नमस्कार"
     normalized = unicodedata.normalize("NFC", text_with_emoji)
     assert "🚀" in normalized
+
+
+def test_cat_e05_unicode_matra_position_zero():
+    """Combining matra at index 0 without preceding base consonant normalizes safely."""
+    isolated_matra = "\u093E"
+    normalized = normalize_indic_text(isolated_matra)
+    assert isinstance(normalized, str)
+    repaired = repair_brahmic_orthography(isolated_matra)
+    assert isinstance(repaired, str)
+
+    joined = join_subwords("धर्म", "\u093E")
+    assert joined == "धर्मा"
+
+
+def test_cat_e06_multi_script_combining_mark_collisions():
+    """Multi-script combining mark collisions are repaired without corruption."""
+    collision = "क\u0CC6\u09CD"
+    repaired = repair_brahmic_orthography(collision)
+    assert repaired == "क\u0CC6"
+
+
+def test_cat_e07_virama_sequences_and_idempotency():
+    """Consecutive viramas, matra-virama sequences, and normalizer idempotency."""
+    consecutive_viramas = "क्\u094D\u094D"
+    normalized = normalize_indic_text(consecutive_viramas)
+    assert normalized == "क्"
+
+    matra_virama = "की\u094D"
+    repaired_mv = repair_brahmic_orthography(matra_virama)
+    assert repaired_mv == "की"
+
+    indep_virama = "ई\u094D"
+    repaired_iv = repair_brahmic_orthography(indep_virama)
+    assert repaired_iv == "ई"
+
+    text = "धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः"
+    pass1 = repair_brahmic_orthography(text)
+    pass2 = repair_brahmic_orthography(pass1)
+    assert pass1 == pass2
+
 
 
 # --- Category F: Memory Leak & Concurrency Stress ---

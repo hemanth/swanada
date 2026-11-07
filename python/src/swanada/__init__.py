@@ -21,6 +21,7 @@ from .normalizer import (
     repair_brahmic_orthography,
     normalize_indic_text,
     assemble_text,
+    join_subwords,
 )
 from .denoise import (
     DenoiseTelemetry,
@@ -89,6 +90,7 @@ __all__ = [
     "repair_brahmic_orthography",
     "normalize_indic_text",
     "assemble_text",
+    "join_subwords",
     "DenoiseTelemetry",
     "enhance_speech_with_telemetry",
     "denoise_pcm_16k",

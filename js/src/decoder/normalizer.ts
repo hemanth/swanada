@@ -30,12 +30,41 @@ const BRAHMIC_INDEP_VOWEL_CLASS =
   '\\u0C85-\\u0C94\\u0CE0-\\u0CE1' +
   '\\u0D05-\\u0D14\\u0D60-\\u0D61';
 
+const BRAHMIC_LATERAL_CONSONANTS = '\\u0CB3\\u0B33\\u0C33';
+
 const RE_COLLIDING_MATRAS = new RegExp(`([${BRAHMIC_PRIMARY_MATRA_CLASS}])[${BRAHMIC_PRIMARY_MATRA_CLASS}]+`, 'gu');
 const RE_MATRA_THEN_VIRAMA = new RegExp(`([${BRAHMIC_PRIMARY_MATRA_CLASS}])[${BRAHMIC_VIRAMA_CLASS}]+`, 'gu');
 const RE_INDEP_VOWEL_ILLEGAL_MARK = new RegExp(
-  `([${BRAHMIC_INDEP_VOWEL_CLASS}])[${BRAHMIC_PRIMARY_MATRA_CLASS}${BRAHMIC_VIRAMA_CLASS}]+`,
+  `([${BRAHMIC_INDEP_VOWEL_CLASS}])([${BRAHMIC_PRIMARY_MATRA_CLASS}${BRAHMIC_VIRAMA_CLASS}]+)`,
   'gu'
 );
+
+const RE_DUPLICATE_LATERAL_LIGATURE = new RegExp(
+  `([${BRAHMIC_LATERAL_CONSONANTS}])\\1+([${BRAHMIC_VIRAMA_CLASS}])`,
+  'gu'
+);
+
+const RE_ML_SPLIT_NASAL_GEMINATE = /\u0D02([\u0D19\u0D1E\u0D23\u0D28\u0D2E])/gu;
+const RE_GU_FUTURE_SIBILANT = /ઈષ(?=[^\u0A80-\u0AFF]|$)/gu;
+const RE_OR_DETACHED_ANUSVARA = /\u0B02(\u0B19\u0B4D[\u0B15-\u0B18])/gu;
+const RE_OR_DATIVE_SUFFIX = /\u0B02\u0B15\u0B41(?=[^\u0B00-\u0B7F]|$)/gu;
+const RE_PA_MATRA_INDEP_VOWEL = /(?<!\u0A39)([\u0A3E-\u0A4A\u0A4C])(\u0A0F)(?=[\u0A15-\u0A39\u0A59-\u0A5E])/gu;
+
+const OPENING_PUNCT_SET = new Set([
+  '-', '\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2212',
+  "'", '’', '‘', '`',
+  '(', '[', '{', '<', '"', '“', '«', '/', '\\',
+]);
+
+const CLOSING_PUNCT_SET = new Set([
+  ',', '.', '?', '!', ':', ';',
+  ')', ']', '}', '>', '"', '”', '»', '%',
+  "'", '’', '-', '\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2212',
+  '।', '॥',
+]);
+
+const WORD_BOUNDARY_REGEX = /^[\u2581\u2582\u2583▁\s]/;
+const COMBINING_MARK_REGEX = /^\p{M}/u;
 
 /**
  * Deduplicate consecutive identical combining marks (Unicode category M: Mn, Mc, Me).
@@ -52,19 +81,47 @@ export function dedupMarks(text: string): string {
  * 1. Collapses colliding primary dependent vowel signs on a single consonant (e.g. 'हीि' -> 'ही').
  * 2. Strips illegal virama/halant immediately following a dependent vowel sign.
  * 3. Strips illegal dependent vowel sign or virama immediately following an independent vowel (e.g. 'ಇ್' -> 'ಇ').
- * Preserves all valid conjuncts (C + virama + C), geminates, and vowel + anusvara/visarga/chandrabindu sequences.
+ * 4. Deduplicates retroflex lateral ligatures (e.g. 'ೊಳಳ್' -> 'ೊಳ್').
+ * 5. Re-unifies Malayalam split nasal geminates.
+ * 6. Normalizes Gujarati 1st-person future sibilants.
+ * 7. Normalizes Odia detached anusvara and dative suffixes.
  */
-export function repairBrahmicOrthography(nfcText: string): string {
-  return nfcText
+export function repairBrahmicOrthography(nfcText: string, lang?: string): string {
+  let text = nfcText
     .replace(RE_COLLIDING_MATRAS, '$1')
     .replace(RE_MATRA_THEN_VIRAMA, '$1')
-    .replace(RE_INDEP_VOWEL_ILLEGAL_MARK, '$1');
+    .replace(RE_INDEP_VOWEL_ILLEGAL_MARK, (match, v, m) => {
+      // Preserve Bengali /æ/ diphthong (অ + virama + য)
+      if (v === '\u0985' && m && m.startsWith('\u09CD')) {
+        return match;
+      }
+      return v;
+    });
+
+  // 1. Kannada / Telugu / Odia duplicate retroflex lateral ligature (ೊಳಳ್ -> ೊಳ್)
+  text = text.replace(RE_DUPLICATE_LATERAL_LIGATURE, '$1$2');
+
+  // 2. Malayalam nasal geminate reunification (ഉംമാ -> ഉമ്മാ)
+  text = text.replace(RE_ML_SPLIT_NASAL_GEMINATE, '$1\u0D4D$1');
+
+  // 3. Gujarati palatal sibilant restoration (જઈષ -> જઈશ)
+  text = text.replace(RE_GU_FUTURE_SIBILANT, 'ઈશ');
+
+  // 4. Odia detached anusvara (ଂଙ୍କ -> ଙ୍କ) and dative normalization (ଂକୁ -> ଙ୍କୁ)
+  text = text.replace(RE_OR_DETACHED_ANUSVARA, '$1');
+  text = text.replace(RE_OR_DATIVE_SUFFIX, '\u0B19\u0B4D\u0B15\u0B41');
+
+  // 5. Gurmukhi independent vowel following dependent matra word boundary separation
+  text = text.replace(RE_PA_MATRA_INDEP_VOWEL, '$1 $2');
+
+  return text;
 }
 
 export interface NormalizeOptions {
   dedupMarks?: boolean;
   normalizeNFC?: boolean;
   spaceMarker?: string;
+  lang?: string;
 }
 
 /**
@@ -77,6 +134,7 @@ export function normalizeIndicText(
   const shouldDedup = options?.dedupMarks !== false;
   const shouldNFC = options?.normalizeNFC !== false;
   const spaceMarker = options?.spaceMarker ?? '\u2581';
+  const lang = options?.lang;
 
   let text = rawText;
 
@@ -90,7 +148,7 @@ export function normalizeIndicText(
   if (shouldDedup) {
     text = text.normalize('NFC');
     text = dedupMarks(text);
-    text = repairBrahmicOrthography(text);
+    text = repairBrahmicOrthography(text, lang);
     text = text.normalize('NFD');
     text = dedupMarks(text);
   }
@@ -99,7 +157,7 @@ export function normalizeIndicText(
   if (shouldNFC) {
     text = text.normalize('NFC');
     if (shouldDedup) {
-      text = repairBrahmicOrthography(text);
+      text = repairBrahmicOrthography(text, lang);
     }
   }
 
@@ -115,4 +173,75 @@ export function assembleText(
   options?: NormalizeOptions
 ): string {
   return normalizeIndicText(tokens.join(''), options);
+}
+
+/**
+ * Conditionally joins committed and volatile text without injecting illegitimate spaces
+ * before continuation morphemes, Brahmic matras, viramas, or attached punctuation.
+ */
+export function joinSubwords(
+  committed: string | string[],
+  volatile: string | string[],
+  volatileTokens?: string[],
+  options?: NormalizeOptions
+): string {
+  const committedStr = Array.isArray(committed)
+    ? normalizeIndicText(committed.join(''), options)
+    : (committed || '');
+
+  let volatileStr: string;
+  let vToks: string[] | undefined;
+
+  if (Array.isArray(volatile)) {
+    vToks = volatile;
+    volatileStr = normalizeIndicText(vToks.join(''), options);
+  } else {
+    volatileStr = volatile || '';
+    vToks = volatileTokens;
+  }
+
+  const lang = options?.lang;
+
+  if (!committedStr) {
+    return volatileStr ? volatileStr.trim() : '';
+  }
+  if (!volatileStr) {
+    return committedStr;
+  }
+
+  const lastC = committedStr[committedStr.length - 1];
+  const firstV = volatileStr[0];
+
+  // Combining mark (matra, virama) at start of volatile text: attach directly to base
+  if (COMBINING_MARK_REGEX.test(firstV)) {
+    return repairBrahmicOrthography(`${committedStr.trimEnd()}${volatileStr}`, lang);
+  }
+
+  // Open punctuation / hyphen / apostrophe at end of committed text
+  if (OPENING_PUNCT_SET.has(lastC)) {
+    return repairBrahmicOrthography(`${committedStr}${volatileStr}`, lang);
+  }
+
+  // Closing punctuation at start of volatile text
+  if (CLOSING_PUNCT_SET.has(firstV)) {
+    return repairBrahmicOrthography(`${committedStr}${volatileStr}`, lang);
+  }
+
+  // Existing whitespace handling
+  if (/\s/.test(lastC) || /\s/.test(firstV)) {
+    return `${committedStr}${volatileStr}`.replace(/\s+/g, ' ').trim();
+  }
+
+  // Token-level word boundary inspection
+  if (vToks && vToks.length > 0) {
+    const firstTok = vToks.find((t) => t && t.length > 0) || '';
+    if (firstTok) {
+      const hasBoundary = WORD_BOUNDARY_REGEX.test(firstTok);
+      if (!hasBoundary) {
+        return repairBrahmicOrthography(`${committedStr.trimEnd()}${volatileStr}`, lang);
+      }
+    }
+  }
+
+  return `${committedStr} ${volatileStr}`;
 }

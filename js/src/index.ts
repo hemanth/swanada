@@ -12,7 +12,7 @@ import type { StreamSessionOptions } from './models/streaming.ts';
 import { decodeCTC, CTCGreedyDecoder } from './decoder/ctc.ts';
 import { StreamingCTCDecoder } from './decoder/streaming.ts';
 import type { StreamingTranscript } from './decoder/streaming.ts';
-import { normalizeIndicText, dedupMarks, assembleText } from './decoder/normalizer.ts';
+import { normalizeIndicText, dedupMarks, assembleText, repairBrahmicOrthography, joinSubwords } from './decoder/normalizer.ts';
 import { transliterateIast } from './tokenizers/iast.ts';
 import { SwanadaAudioCapture } from './audio/audio-capture.ts';
 import { SwanadaWorkerClient } from './worker/client.ts';

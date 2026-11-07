@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.2.2' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.3.0' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -354,11 +354,12 @@ async function loadLinearHead(lang, headUrlOrPath) {
     try {
       const fs = await import('node:fs');
       const path = await import('node:path');
+      const cleanPath = headUrlOrPath.split('?')[0];
       const candidates = [
-        headUrlOrPath,
-        path.resolve(process.cwd(), headUrlOrPath),
-        path.resolve(process.cwd(), 'docs', headUrlOrPath.replace(/^\.\//, '')),
-        path.resolve(process.cwd(), '..', 'docs', headUrlOrPath.replace(/^\.\//, '')),
+        cleanPath,
+        path.resolve(process.cwd(), cleanPath),
+        path.resolve(process.cwd(), 'docs', cleanPath.replace(/^\.\//, '')),
+        path.resolve(process.cwd(), '..', 'docs', cleanPath.replace(/^\.\//, '')),
       ];
       for (const cand of candidates) {
         if (fs.existsSync(cand)) {

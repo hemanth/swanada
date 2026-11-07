@@ -827,7 +827,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.2.2';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.3.0';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -1282,7 +1282,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.2.6',
+              workerUrl: './stt-worker.mjs?v=1.3.0',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -1399,7 +1399,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           const encoderUrl = isLocalDevHost()
             ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx'
             : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx`;
-          const headUrl = `./heads/${lang}.bin`;
+          const headUrl = `./heads/${lang}.bin?v=1.3.0`;
           const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
           const vocabUrl = `./vocabularies/${vocabFile}`;
 

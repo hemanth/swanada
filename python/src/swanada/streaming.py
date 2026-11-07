@@ -6,7 +6,7 @@ from typing import Callable, List, Optional, Union
 import numpy as np
 
 from .engine import AcousticEngine, TranscriptionResult
-from .normalizer import normalize_indic_text
+from .normalizer import normalize_indic_text, join_subwords
 
 
 @dataclass
@@ -35,12 +35,14 @@ class StreamingCTCDecoder:
         trail_tokens: int = 3,
         suffix_window_tokens: int = 15,
         require_stability_on_word_boundary: bool = False,
+        high_stability_threshold: int = 4,
     ):
         self.vocab = vocab
         self.stability_threshold = stability_threshold
         self.trail_tokens = trail_tokens
         self.suffix_window_tokens = suffix_window_tokens
         self.require_stability_on_word_boundary = require_stability_on_word_boundary
+        self.high_stability_threshold = high_stability_threshold
         self.committed_tokens: List[str] = []
         self.committed_text: str = ""
         self.last_hyp_tokens: List[str] = []
@@ -155,8 +157,8 @@ class StreamingCTCDecoder:
 
         already_committed = len(self.committed_tokens)
 
-        # Longest Common Prefix with previous hypothesis (skip already committed tokens)
-        common_len = min(already_committed, min(len(self.last_hyp_tokens), len(raw_tokens)))
+        # Longest Common Prefix with previous hypothesis
+        common_len = 0
         min_len = min(len(self.last_hyp_tokens), len(raw_tokens))
         while common_len < min_len and self.last_hyp_tokens[common_len] == raw_tokens[common_len]:
             common_len += 1
@@ -172,21 +174,47 @@ class StreamingCTCDecoder:
 
         lockable_limit = max(0, len(raw_tokens) - self.trail_tokens) if allow_commit else 0
 
-        for i in range(already_committed, lockable_limit):
-            is_word_ahead = any(
-                raw_tokens[j].startswith("▁") or raw_tokens[j].startswith("\u2581")
-                for j in range(i + 1, len(raw_tokens))
-            )
-            count = self.token_stability_counts[i]
-            is_stable = count >= self.stability_threshold
-            boundary_allowed = is_word_ahead and (
-                not self.require_stability_on_word_boundary or count >= 2
-            )
+        # 1. Compute contiguous stable run from already_committed
+        stable_limit = already_committed
+        while stable_limit < lockable_limit and self.token_stability_counts[stable_limit] >= self.stability_threshold:
+            stable_limit += 1
 
-            if boundary_allowed or is_stable:
-                self.committed_tokens.append(raw_tokens[i])
+        # 2. Strict word-boundary-gated commitment
+        commit_idx = already_committed
+        if stable_limit > already_committed:
+            closed_word_end = already_committed
+            has_boundary_ahead = False
+
+            for j in range(already_committed + 1, len(raw_tokens)):
+                tok = raw_tokens[j]
+                is_boundary = bool(
+                    tok and tok[0] in ("\u2581", "\u2582", "\u2583", "▁", " ", "\t")
+                )
+                if is_boundary:
+                    has_boundary_ahead = True
+                    j_stable = (
+                        self.token_stability_counts[j] >= self.stability_threshold
+                        if self.require_stability_on_word_boundary
+                        else True
+                    )
+                    if j <= stable_limit and j_stable:
+                        closed_word_end = j
+                    else:
+                        break
+
+            if has_boundary_ahead:
+                commit_idx = closed_word_end
             else:
-                break
+                # Fallback for continuous compound words without word boundaries
+                for i in range(already_committed, stable_limit):
+                    if self.token_stability_counts[i] >= self.high_stability_threshold:
+                        commit_idx = i + 1
+                    else:
+                        break
+
+        # 3. Commit confirmed tokens
+        for i in range(already_committed, commit_idx):
+            self.committed_tokens.append(raw_tokens[i])
 
         self.last_hyp_tokens = list(raw_tokens)
 
@@ -194,7 +222,7 @@ class StreamingCTCDecoder:
         volatile_tokens = raw_tokens[len(self.committed_tokens):]
         volatile_str = normalize_indic_text("".join(volatile_tokens)) if volatile_tokens else ""
 
-        full_text = f"{committed_str} {volatile_str}".strip() if committed_str and volatile_str else (committed_str or volatile_str)
+        full_text = join_subwords(committed_str, volatile_str, volatile_tokens)
         rtf = (inference_ms / duration_ms) if duration_ms > 0 else 0.0
 
         return StreamingTranscript(
@@ -239,6 +267,17 @@ class SwanadaStream:
         self.base_committed_tokens: List[str] = []
         self.is_window_sliding = False
         self.is_finished = False
+        if self.chunk_size_samples <= 800:
+            self.stride = max(2, 3200 // max(1, self.chunk_size_samples))
+        elif self.chunk_size_samples <= 1600:
+            self.stride = 6
+        elif self.chunk_size_samples <= 2560:
+            self.stride = 2
+        else:
+            self.stride = 1
+        self.push_count: int = 0
+        self.last_transcript: Optional[StreamingTranscript] = None
+        self.has_untranscribed_tail: bool = False
         self.listeners_partial: List[Callable[[StreamingTranscript], None]] = []
         self.listeners_final: List[Callable[[TranscriptionResult], None]] = []
         self.listeners_error: List[Callable[[Exception], None]] = []
@@ -388,12 +427,49 @@ class SwanadaStream:
             return None
 
         chunk_float = chunk.astype(np.float32)
-        self.total_audio_samples += len(chunk_float)
+        chunk_len = len(chunk_float)
+        self.total_audio_samples += chunk_len
+        self.push_count += 1
+
+        # Stride-2 inference scheduling for low-latency streaming
+        if (
+            self.chunk_size_samples <= 2560
+            and chunk_len <= 2560
+            and self.push_count > 1
+            and (self.push_count % self.stride != 0)
+            and self.last_transcript is not None
+        ):
+            self.audio_buffer = np.concatenate([self.audio_buffer, chunk_float])
+            self.has_untranscribed_tail = True
+
+            if len(self.audio_buffer) > self.max_buffer_samples:
+                self.audio_buffer = self.audio_buffer[-self.left_context_samples:]
+                self.is_window_sliding = True
+
+            duration_ms = (self.total_audio_samples / 16000.0) * 1000.0
+            st = StreamingTranscript(
+                text=self.last_transcript.text,
+                committed=self.last_transcript.committed,
+                volatile=self.last_transcript.volatile,
+                is_final=False,
+                tokens=self.last_transcript.tokens,
+                duration_ms=duration_ms,
+                inference_ms=0.0,
+                rtf=(self.last_transcript.inference_ms / duration_ms) if duration_ms > 0 else 0.0,
+            )
+
+            for cb in self.listeners_partial:
+                try:
+                    cb(st)
+                except Exception as e:
+                    self._emit_error(e)
+
+            return st
 
         # Non-destructive silence check & pause utterance segmentation
-        rms = float(np.sqrt(np.mean(chunk_float ** 2))) if len(chunk_float) > 0 else 0.0
+        rms = float(np.sqrt(np.mean(chunk_float ** 2))) if chunk_len > 0 else 0.0
         if rms < self.vad_silence_threshold:
-            self.consecutive_silent_samples += len(chunk_float)
+            self.consecutive_silent_samples += chunk_len
             if self.consecutive_silent_samples >= self.pause_threshold_samples:
                 if len(self.audio_buffer) >= 24000:
                     # Flush unconfirmed tokens on natural speech pause (turn completion)
@@ -405,6 +481,7 @@ class SwanadaStream:
                     self.base_committed_tokens = list(self.decoder.committed_tokens)
                     self.audio_buffer = np.zeros(0, dtype=np.float32)
                     self.is_window_sliding = False
+                    self.last_transcript = None
                 return None
         else:
             self.consecutive_silent_samples = 0
@@ -418,6 +495,7 @@ class SwanadaStream:
         res = self.engine.transcribe(self.audio_buffer)
         inference_ms = (time.perf_counter() - t0) * 1000.0
         duration_ms = (self.total_audio_samples / 16000.0) * 1000.0
+        self.has_untranscribed_tail = False
 
         # Track window offset with base committed tokens across segmented pauses
         if not self.is_window_sliding:
@@ -433,6 +511,7 @@ class SwanadaStream:
 
         allow_commit = self.is_window_sliding or len(self.audio_buffer) >= 16000
         st = self.decoder.update(global_tokens, False, duration_ms, inference_ms, allow_commit=allow_commit)
+        self.last_transcript = st
 
         for cb in self.listeners_partial:
             try:
@@ -451,8 +530,12 @@ class SwanadaStream:
         duration_ms = (self.total_audio_samples / 16000.0) * 1000.0
         t0 = time.perf_counter()
 
-        # Process pending audio tail if needed (< 1600 samples)
-        if len(self.audio_buffer) >= 400 and (len(self.audio_buffer) < 1600 or not self.decoder.last_hyp_tokens):
+        # Process pending audio tail if needed (< 1600 samples or untranscribed tail from stride)
+        if len(self.audio_buffer) >= 400 and (
+            self.has_untranscribed_tail
+            or len(self.audio_buffer) < 1600
+            or not self.decoder.last_hyp_tokens
+        ):
             tail_res = self.engine.transcribe(self.audio_buffer)
             if not self.is_window_sliding:
                 window_tokens = self.base_committed_tokens + tail_res.tokens
@@ -465,6 +548,7 @@ class SwanadaStream:
                 )
                 global_tokens = self.decoder.committed_tokens[:best_offset] + tail_res.tokens[best_raw_start:]
             self.decoder.update(global_tokens, False, duration_ms, 0.0, allow_commit=True)
+            self.has_untranscribed_tail = False
 
         streaming_tokens = (
             list(self.decoder.last_hyp_tokens)
@@ -482,6 +566,9 @@ class SwanadaStream:
         self.consecutive_silent_samples = 0
         self.base_committed_tokens.clear()
         self.is_window_sliding = False
+        self.push_count = 0
+        self.last_transcript = None
+        self.has_untranscribed_tail = False
 
         result = TranscriptionResult(
             text=final_st.text,
@@ -509,4 +596,7 @@ class SwanadaStream:
         self.base_committed_tokens.clear()
         self.is_window_sliding = False
         self.is_finished = False
+        self.push_count = 0
+        self.last_transcript = None
+        self.has_untranscribed_tail = False
         self.decoder.reset()

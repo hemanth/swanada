@@ -108,7 +108,7 @@ const indexSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'index.ts'), 'utf8
   .replace(/import .*? from '\.\/models\/streaming\.ts';/g, '')
   .replace(/import .*? from '\.\/decoder\/ctc\.ts';/g, '')
   .replace(/import .*? from '\.\/decoder\/streaming\.ts';/g, '')
-  .replace(/import .*? from '\.\/decoder\/normalizer\.ts';/g, '')
+  .replace(/import .*? from '\.\/decoder\/normalizer\.ts';/gs, '')
   .replace(/import .*? from '\.\/tokenizers\/iast\.ts';/g, '')
   .replace(/import .*? from '\.\/tokenizers\/registry\.ts';/g, '')
   .replace(/import .*? from '\.\/tokenizers\/index\.ts';/g, '')
@@ -146,6 +146,7 @@ export {
   repairBrahmicOrthography,
   normalizeIndicText,
   assembleText,
+  joinSubwords,
   isSpecialToken,
   decodeCTC,
   decodeCTCTokens,
@@ -269,6 +270,7 @@ module.exports = {
   repairBrahmicOrthography,
   normalizeIndicText,
   assembleText,
+  joinSubwords,
   isSpecialToken,
   decodeCTC,
   decodeCTCTokens,

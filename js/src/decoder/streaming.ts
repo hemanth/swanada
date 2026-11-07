@@ -4,7 +4,7 @@
  * on confirmed text and prevent boundary token flicker in real-time UI display.
  */
 
-import { normalizeIndicText } from './normalizer.ts';
+import { normalizeIndicText, joinSubwords } from './normalizer.ts';
 import type { NormalizeOptions } from './normalizer.ts';
 
 export interface StreamingTranscript {
@@ -23,7 +23,8 @@ export interface StreamingDecoderOptions extends NormalizeOptions {
   stabilityThreshold?: number;  // Consecutive chunk matches to lock (Default: 2)
   trailTokens?: number;         // Minimum uncommitted trailing tokens (Default: 3)
   spaceMarker?: string;         // Default: '\u2581'
-  requireStabilityOnWordBoundary?: boolean; // Require >=2 matches even when space ahead
+  requireStabilityOnWordBoundary?: boolean; // Default: false
+  highStabilityThreshold?: number; // Consecutive chunk matches to lock without boundary (Default: 4)
 }
 
 export class StreamingCTCDecoder {
@@ -33,6 +34,7 @@ export class StreamingCTCDecoder {
   private stabilityThreshold: number;
   private trailTokens: number;
   private requireStabilityOnWordBoundary: boolean;
+  private highStabilityThreshold: number;
 
   private committedTokens: string[] = [];
   private committedText: string = '';
@@ -49,6 +51,7 @@ export class StreamingCTCDecoder {
     this.stabilityThreshold = this.options.stabilityThreshold ?? 2;
     this.trailTokens = this.options.trailTokens ?? 3;
     this.requireStabilityOnWordBoundary = this.options.requireStabilityOnWordBoundary ?? false;
+    this.highStabilityThreshold = this.options.highStabilityThreshold ?? 4;
   }
 
   reset(): void {
@@ -128,20 +131,62 @@ export class StreamingCTCDecoder {
     const lockableLimit = allowCommit ? Math.max(0, rawTokens.length - this.trailTokens) : 0;
     const alreadyCommitted = this.committedTokens.length;
 
-    for (let i = alreadyCommitted; i < lockableLimit; i++) {
-      // Check if a space / word boundary appears ahead in the rawTokens
-      const isWordBoundaryAhead = rawTokens.slice(i + 1).some(
-        (tok) => tok.startsWith('\u2581') || tok.startsWith('▁')
-      );
-      const count = this.tokenStabilityCounts[i] || 0;
-      const isStable = count >= this.stabilityThreshold;
-      const boundaryAllowed = isWordBoundaryAhead && (!this.requireStabilityOnWordBoundary || count >= 2);
+    // 1. Compute contiguous stable run from alreadyCommitted
+    let stableLimit = alreadyCommitted;
+    while (
+      stableLimit < lockableLimit &&
+      (this.tokenStabilityCounts[stableLimit] || 0) >= this.stabilityThreshold
+    ) {
+      stableLimit++;
+    }
 
-      if (boundaryAllowed || isStable) {
-        this.committedTokens.push(rawTokens[i]);
-      } else {
-        break;
+    // 2. Strict word-boundary-gated commitment
+    let commitIdx = alreadyCommitted;
+    if (stableLimit > alreadyCommitted) {
+      let closedWordEnd = alreadyCommitted;
+      let hasBoundaryAhead = false;
+
+      for (let j = alreadyCommitted + 1; j < rawTokens.length; j++) {
+        const tok = rawTokens[j];
+        const isBoundary =
+          tok &&
+          (tok.startsWith('\u2581') ||
+            tok.startsWith('\u2582') ||
+            tok.startsWith('\u2583') ||
+            tok.startsWith('▁') ||
+            tok.startsWith(' ') ||
+            tok.startsWith('\t'));
+
+        if (isBoundary) {
+          hasBoundaryAhead = true;
+          const jStable = this.requireStabilityOnWordBoundary
+            ? (this.tokenStabilityCounts[j] || 0) >= this.stabilityThreshold
+            : true;
+          if (j <= stableLimit && jStable) {
+            closedWordEnd = j;
+          } else {
+            break;
+          }
+        }
       }
+
+      if (hasBoundaryAhead) {
+        commitIdx = closedWordEnd;
+      } else {
+        // Fallback for continuous compound words without word boundaries
+        for (let i = alreadyCommitted; i < stableLimit; i++) {
+          if ((this.tokenStabilityCounts[i] || 0) >= this.highStabilityThreshold) {
+            commitIdx = i + 1;
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
+    // 3. Commit confirmed tokens
+    for (let i = alreadyCommitted; i < commitIdx; i++) {
+      this.committedTokens.push(rawTokens[i]);
     }
 
     this.lastHypTokens = [...rawTokens];
@@ -152,9 +197,7 @@ export class StreamingCTCDecoder {
     const volatileTokens = rawTokens.slice(this.committedTokens.length);
     const volatileStr = normalizeIndicText(volatileTokens.join(''), this.options);
 
-    const fullText = committedStr && volatileStr
-      ? `${committedStr} ${volatileStr}`.trim()
-      : (committedStr || volatileStr);
+    const fullText = joinSubwords(committedStr, volatileStr, volatileTokens, this.options);
 
     const rtf = durationMs > 0 ? inferenceMs / durationMs : 0;
 

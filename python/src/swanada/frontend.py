@@ -119,10 +119,8 @@ def extract_log_mel_features(
     x_padded = np.pad(x, (N_FFT // 2, N_FFT // 2), mode="constant")
 
     # 3. Framing & Windowing
-    frames = np.empty((num_frames, N_FFT), dtype=np.float32)
-    for t in range(num_frames):
-        start = t * HOP_LENGTH
-        frames[t] = x_padded[start : start + N_FFT] * STATIC_WINDOW
+    windows = np.lib.stride_tricks.sliding_window_view(x_padded, N_FFT)[::HOP_LENGTH][:num_frames]
+    frames = (windows * STATIC_WINDOW).astype(np.float32)
 
     # STFT & Power spectrum
     fft_spec = np.fft.rfft(frames, n=N_FFT, axis=-1)
