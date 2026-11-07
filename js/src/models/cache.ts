@@ -9,6 +9,23 @@ export const CACHE_STORAGE_NAME = 'swanada-onnx-v1.0.0';
 export const IDB_DATABASE_NAME = 'swanada-onnx-idb-v1';
 export const IDB_STORE_NAME = 'models';
 
+const MOBILE_LARGE_MODEL_BYTES = 40 * 1024 * 1024;
+
+function getRuntimeMobility(): { isIOS: boolean; isMobile: boolean } {
+  if (typeof navigator === 'undefined') {
+    return { isIOS: false, isMobile: false };
+  }
+  const ua = navigator.userAgent || '';
+  const platform = (navigator as any).platform || '';
+  const maxTouch = navigator.maxTouchPoints || 0;
+  const devMem = (navigator as any).deviceMemory || 8;
+  const isIOS =
+    /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1);
+  const isMobile = isIOS || /Android|Mobile/i.test(ua) || devMem <= 4;
+  return { isIOS, isMobile };
+}
+
 /**
  * Validates that binary buffer is a valid serialized ONNX ModelProto.
  * Field 1 of ONNX ModelProto is ir_version (varint tag 0x08).
@@ -27,7 +44,7 @@ async function getFromCacheStorage(cacheName: string, url: string): Promise<Uint
   if (typeof caches === 'undefined') return null;
   try {
     const cache = await caches.open(cacheName);
-    const response = await cache.match(url);
+    const response = (await cache.match(url)) || (await cache.match(url, { ignoreSearch: true }));
     if (response && response.ok) {
       const buffer = await response.arrayBuffer();
       const bytes = new Uint8Array(buffer);
@@ -243,10 +260,13 @@ export async function loadModelAsset(
 
     buffer = new Uint8Array(loadedBytes);
     let offset = 0;
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
       buffer.set(chunk, offset);
       offset += chunk.byteLength;
+      chunks[i] = null as any; // Free chunk backing store immediately to prevent 2x RAM spike on mobile
     }
+    chunks.length = 0;
   } else {
     const arrayBuffer = await response.arrayBuffer();
     buffer = new Uint8Array(arrayBuffer);
@@ -263,9 +283,17 @@ export async function loadModelAsset(
     throw new Error(`Corrupted model file received from ${urlOrPath}: protobuf 0x08 header verification failed`);
   }
 
-  // Save to persistent caches asynchronously
-  putToCacheStorage(cacheName, urlOrPath, buffer).catch(() => {});
-  putToIndexedDB(urlOrPath, buffer).catch(() => {});
+  // Mobile quota & Jetsam memory protection:
+  // - iOS WebKit enforces ~50 MB origin quota and cloning a 178 MB buffer into Response/IDB triggers Jetsam kills.
+  // - Android skips duplicate 178 MB IndexedDB structured-clone while keeping CacheStorage.
+  const { isIOS, isMobile } = getRuntimeMobility();
+  const isLargeModel = buffer.byteLength > MOBILE_LARGE_MODEL_BYTES;
+  if (!(isIOS && isLargeModel)) {
+    putToCacheStorage(cacheName, urlOrPath, buffer).catch(() => {});
+  }
+  if (!(isMobile && isLargeModel)) {
+    putToIndexedDB(urlOrPath, buffer).catch(() => {});
+  }
 
   return buffer;
 }

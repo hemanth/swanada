@@ -26,15 +26,15 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23121210'/%3E%3Cpath d='M7 16h3l2.5-7 4 14 3.5-10 2.5 3H25' fill='none' stroke='%23fbfaf7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="apple-touch-icon" href="https://hemanth.github.io/swanada/icon-512.png" />
 
-  <!-- Cross-Origin Isolation Service Worker Bootstrapper -->
+  <!-- Cross-Origin Isolation Service Worker Bootstrapper (Desktop Only; Mobile uses lean 1T WASM SIMD) -->
   <script>
     (function () {
       try {
         var ua = navigator.userAgent || '';
-        var isIOS =
-          /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
+        var isMobileOrIOS =
+          /Android|iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|Mobile/i.test(ua) ||
           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        if (isIOS) {
+        if (isMobileOrIOS) {
           if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistrations) {
             navigator.serviceWorker.getRegistrations().then(function (regs) {
               for (var i = 0; i < regs.length; i++) {
@@ -223,8 +223,46 @@
       gap: 24px;
     }
     @media (max-width: 900px) {
+      .container {
+        padding: 14px 12px 32px;
+      }
+      header {
+        padding-bottom: 12px;
+        margin-bottom: 14px;
+      }
+      .brand h1 {
+        font-size: 30px;
+      }
+      .brand h1 span {
+        font-size: 22px;
+      }
       .studio-grid {
         grid-template-columns: 1fr;
+        gap: 14px;
+      }
+      .panel {
+        padding: 14px;
+      }
+      .output-panel {
+        display: flex;
+        flex-direction: column;
+      }
+      .out-transcript-group {
+        order: -1;
+      }
+      .drop-zone {
+        padding: 14px 12px;
+      }
+      .lang-tabs {
+        margin-bottom: 12px;
+      }
+      .input-section {
+        margin-bottom: 8px;
+      }
+      .transcription-wrap {
+        min-height: 112px;
+        padding: 14px;
+        font-size: 18px;
       }
     }
 
@@ -641,7 +679,7 @@
         </div>
         <div class="badges">
           <span class="badge">16 kHz CONFORMER-CTC INT8</span>
-          <span class="badge">WASM SIMD 4 THREADS</span>
+          <span class="badge" id="wasmHeaderBadge">WASM SIMD 4 THREADS</span>
           <span class="badge" id="cacheBadge">CACHE PENDING</span>
           <a href="https://github.com/hemanth/swanada" target="_blank" rel="noopener noreferrer" class="badge">GITHUB</a>
           <a href="https://huggingface.co/gnumanth/swanada" target="_blank" rel="noopener noreferrer" class="badge">HUGGING FACE</a>
@@ -747,54 +785,60 @@
       </div>
 
       <!-- Column 2: Visualizer & Live Output -->
-      <div class="panel">
-        <div class="panel-title">
-          <span>Oscilloscope &amp; Waveform Trace</span>
-          <span class="transcript-actions" style="font-size: 11px; color: var(--ink-muted);">
-            <span id="snrBadge">SNR --</span>
-            <span>·</span>
-            <span id="sampleRateLabel">16 kHz Mono</span>
-          </span>
-        </div>
-        <div class="screen-panel">
-          <canvas id="waveCanvas"></canvas>
-        </div>
-
-        <div class="panel-title">
-          <span>Live Transcription Display</span>
-          <span class="transcript-actions">
-            <span id="liveBadge" style="font-size: 11px; color: var(--ink-muted);">Idle</span>
-            <button type="button" class="copy-btn" id="copyIastBtn" title="Copy Roman IAST transliteration" aria-label="Copy Roman IAST transliteration" style="display: none;" disabled>Copy IAST</button>
-            <button type="button" class="copy-btn" id="copyTranscriptBtn" title="Copy streamed transcript" aria-label="Copy streamed transcript" disabled>Copy</button>
-          </span>
-        </div>
-        <div class="transcription-wrap" id="transcriptionWrap">
-          <div id="transcriptionBox">
-            <span class="placeholder-text" id="placeholder">Click "Record Mic", drop an audio clip, or select a preset utterance to begin transcription.</span>
-            <span class="committed-text" id="committedText"></span>
-            <span class="volatile-text" id="volatileText"></span>
+      <div class="panel output-panel">
+        <div class="out-wave-group">
+          <div class="panel-title">
+            <span>Oscilloscope &amp; Waveform Trace</span>
+            <span class="transcript-actions" style="font-size: 11px; color: var(--ink-muted);">
+              <span id="snrBadge">SNR --</span>
+              <span>·</span>
+              <span id="sampleRateLabel">16 kHz Mono</span>
+            </span>
           </div>
-          <div class="iast-box" id="iastBox" style="display: none;"></div>
-          <div class="token-ribbon" id="tokenRibbon"></div>
+          <div class="screen-panel">
+            <canvas id="waveCanvas"></canvas>
+          </div>
         </div>
 
-        <div class="panel-title">Real-Time Telemetry</div>
-        <div class="telemetry-grid">
-          <div class="telem-card">
-            <div class="telem-label">RTF</div>
-            <div class="telem-val" id="rtfVal">0.00x</div>
+        <div class="out-transcript-group" id="transcriptSection">
+          <div class="panel-title">
+            <span>Live Transcription Display</span>
+            <span class="transcript-actions">
+              <span id="liveBadge" style="font-size: 11px; color: var(--ink-muted);">Idle</span>
+              <button type="button" class="copy-btn" id="copyIastBtn" title="Copy Roman IAST transliteration" aria-label="Copy Roman IAST transliteration" style="display: none;" disabled>Copy IAST</button>
+              <button type="button" class="copy-btn" id="copyTranscriptBtn" title="Copy streamed transcript" aria-label="Copy streamed transcript" disabled>Copy</button>
+            </span>
           </div>
-          <div class="telem-card">
-            <div class="telem-label">Audio Dur</div>
-            <div class="telem-val" id="durationVal">0.00s</div>
+          <div class="transcription-wrap" id="transcriptionWrap" aria-live="polite">
+            <div id="transcriptionBox">
+              <span class="placeholder-text" id="placeholder">Click "Record Mic", drop an audio clip, or select a preset utterance to begin transcription.</span>
+              <span class="committed-text" id="committedText"></span>
+              <span class="volatile-text" id="volatileText"></span>
+            </div>
+            <div class="iast-box" id="iastBox" style="display: none;"></div>
+            <div class="token-ribbon" id="tokenRibbon"></div>
           </div>
-          <div class="telem-card">
-            <div class="telem-label">Latency</div>
-            <div class="telem-val" id="latencyVal">0ms</div>
-          </div>
-          <div class="telem-card">
-            <div class="telem-label">Engine</div>
-            <div class="telem-val" id="engineVal">WASM 4T</div>
+        </div>
+
+        <div class="out-telemetry-group">
+          <div class="panel-title">Real-Time Telemetry</div>
+          <div class="telemetry-grid">
+            <div class="telem-card">
+              <div class="telem-label">RTF</div>
+              <div class="telem-val" id="rtfVal">0.00x</div>
+            </div>
+            <div class="telem-card">
+              <div class="telem-label">Audio Dur</div>
+              <div class="telem-val" id="durationVal">0.00s</div>
+            </div>
+            <div class="telem-card">
+              <div class="telem-label">Latency</div>
+              <div class="telem-val" id="latencyVal">0ms</div>
+            </div>
+            <div class="telem-card">
+              <div class="telem-label">Engine</div>
+              <div class="telem-val" id="engineVal">WASM 4T</div>
+            </div>
           </div>
         </div>
 
@@ -861,16 +905,25 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.4.0';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.5.0';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
-    window.__swanadaLoadedLang = 'sa';
+    window.__swanadaLoadedLang = null;
     window.__swanadaModelCached = false;
     window.__swanadaCacheHit = false;
     window.__swanadaLastResult = null;
     window.__swanadaMetrics = { rtf: 0, durationMs: 0, latencyMs: 0 };
     window.__swanadaWorkerClient = null;
+
+    const uaString = navigator.userAgent || '';
+    const isIOSDevice =
+      /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(uaString) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isMobileDevice =
+      isIOSDevice ||
+      /Android|Mobile/i.test(uaString) ||
+      (typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 4);
 
     let workerClient = null;
     let audioCtx = null;
@@ -878,7 +931,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     let micStream = null;
     let micSourceNode = null;
     let workletNode = null;
+    let scriptProcessorNode = null;
+    let workletWatchdogTimer = null;
     let silentSinkNode = null;
+    let activeWakeLock = null;
     let isRecording = false;
     let denoiseEnabled = true;
     let activeLanguage = 'sa';
@@ -918,6 +974,43 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     const clearBtn = document.getElementById('clearBtn');
     const presetChips = document.getElementById('presetChips');
     const activeLangCode = document.getElementById('activeLangCode');
+    const transcriptionWrap = document.getElementById('transcriptionWrap');
+    const transcriptSection = document.getElementById('transcriptSection');
+    const wasmHeaderBadge = document.getElementById('wasmHeaderBadge');
+
+    if (isMobileDevice) {
+      if (wasmHeaderBadge) wasmHeaderBadge.textContent = 'WASM SIMD 1T MOBILE';
+      if (engineVal) engineVal.textContent = 'WASM 1T';
+    }
+
+    async function acquireWakeLock() {
+      if (!navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') return;
+      try {
+        if (!activeWakeLock) {
+          activeWakeLock = await navigator.wakeLock.request('screen');
+          activeWakeLock.addEventListener('release', () => { activeWakeLock = null; });
+        }
+      } catch (_) {}
+    }
+
+    function releaseWakeLock() {
+      if (activeWakeLock) {
+        try { activeWakeLock.release(); } catch (_) {}
+        activeWakeLock = null;
+      }
+    }
+
+    function revealTranscriptOnMobile() {
+      try {
+        if (window.innerWidth > 900) return;
+        const target = transcriptSection || transcriptionWrap;
+        if (!target) return;
+        const rect = target.getBoundingClientRect();
+        if (rect.top > window.innerHeight * 0.7 || rect.bottom < 60) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      } catch (_) {}
+    }
 
     window.__swanadaLastCopiedText = '';
     window.__swanadaGetStreamedText = () => currentFullTranscript;
@@ -1027,11 +1120,28 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       return audioBuffer.sampleRate === 16000 ? ch : resamplePcm(ch, audioBuffer.sampleRate, 16000);
     }
 
+    function unlockAudioContextSync() {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        if (!audioCtx || audioCtx.state === 'closed') {
+          audioCtx = new Ctx();
+        }
+        if (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted') {
+          audioCtx.resume().catch(() => {});
+        }
+        return audioCtx;
+      } catch (_) {
+        return null;
+      }
+    }
+
     async function ensureAudioContext() {
+      unlockAudioContextSync();
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
-      if (audioCtx.state === 'suspended') {
+      if (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted') {
         try {
           await Promise.race([
             audioCtx.resume(),
@@ -1080,21 +1190,60 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     }
 
     function streamPcmToWorker(pcm, rateMultiplier = 1) {
-      const chunkSize = 1600;
+      const minChunkSize = isMobileDevice ? 2400 : 1600; // 150ms mobile / 100ms desktop
+      const maxSliceSamples = isMobileDevice ? 5600 : 16000; // Cap per-step jump so mobile renders smooth progressive partials
       let offset = 0;
       const total = pcm.length;
       const streamStartMs = performance.now();
       let cancelled = false;
       let finished = false;
+      let inFlightChunks = 0;
+      let lastPushAtMs = 0;
+      let drainFinishScheduled = false;
 
       return new Promise((resolve, reject) => {
+        let offPartial = null;
+        let offError = null;
+
         const cleanup = () => {
           if (presetIntervalId) {
             clearInterval(presetIntervalId);
             presetIntervalId = null;
           }
+          if (offPartial) { offPartial(); offPartial = null; }
+          if (offError) { offError(); offError = null; }
           document.removeEventListener('visibilitychange', onVisChange);
         };
+
+        const finalizeStream = () => {
+          if (cancelled || finished) return;
+          finished = true;
+          cleanup();
+          const runFinish = () => {
+            if (cancelled) return;
+            workerClient.finishStream().then(resolve).catch(reject);
+          };
+          if (typeof requestAnimationFrame === 'function' && !document.hidden) {
+            requestAnimationFrame(() => runFinish());
+          } else {
+            runFinish();
+          }
+        };
+
+        if (workerClient && typeof workerClient.on === 'function') {
+          offPartial = workerClient.on('partial', () => {
+            inFlightChunks = Math.max(0, inFlightChunks - 1);
+            if (drainFinishScheduled && inFlightChunks === 0) {
+              finalizeStream();
+            }
+          });
+          offError = workerClient.on('error', () => {
+            inFlightChunks = 0;
+            if (drainFinishScheduled) {
+              finalizeStream();
+            }
+          });
+        }
 
         activeStreamCancel = () => {
           cancelled = true;
@@ -1102,14 +1251,17 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         };
 
         const flushViaMessageChannel = () => {
-          cleanup();
+          if (presetIntervalId) {
+            clearInterval(presetIntervalId);
+            presetIntervalId = null;
+          }
+          document.removeEventListener('visibilitychange', onVisChange);
           const ch = new MessageChannel();
-          const bgChunk = 8000; // 500ms slices keep partials flowing even when screen is locked
+          const bgChunk = 6400; // 400ms slices keep partials flowing even when screen is locked
           ch.port1.onmessage = () => {
             if (cancelled || finished) return;
             if (offset >= total) {
-              finished = true;
-              workerClient.finishStream().then(resolve).catch(reject);
+              finalizeStream();
               return;
             }
             const end = Math.min(total, offset + bgChunk);
@@ -1118,8 +1270,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             oscilloscopeData.set(slice.subarray(0, Math.min(slice.length, oscilloscopeData.length)));
             workerClient.pushAudio(slice, false);
             if (offset >= total) {
-              finished = true;
-              workerClient.finishStream().then(resolve).catch(reject);
+              finalizeStream();
             } else {
               ch.port2.postMessage(0);
             }
@@ -1139,6 +1290,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         }
 
         document.addEventListener('visibilitychange', onVisChange);
+        const tickMs = isMobileDevice ? 110 : (rateMultiplier > 1 ? 65 : 100);
         presetIntervalId = setInterval(() => {
           if (cancelled || finished) {
             cleanup();
@@ -1148,24 +1300,36 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             flushViaMessageChannel();
             return;
           }
+          const now = performance.now();
           if (offset >= total) {
-            finished = true;
-            cleanup();
-            workerClient.finishStream().then(resolve).catch(reject);
+            drainFinishScheduled = true;
+            if (inFlightChunks === 0 || (now - lastPushAtMs) > 1200) {
+              finalizeStream();
+            }
             return;
           }
-          const elapsedSamples = Math.floor(((performance.now() - streamStartMs) / 1000) * 16000 * rateMultiplier);
-          const end = Math.min(total, Math.max(offset + chunkSize, elapsedSamples));
+          // Backpressure guard: wait for active mobile WASM partial to complete so pendingWorkQueue
+          // never coalesces the entire utterance into a single end-of-clip batch dump.
+          if (inFlightChunks > 0 && (now - lastPushAtMs) < 1200) {
+            return;
+          }
+          const effectiveRate = isMobileDevice ? Math.min(rateMultiplier, 1.25) : rateMultiplier;
+          const elapsedSamples = Math.floor(((now - streamStartMs) / 1000) * 16000 * effectiveRate);
+          const targetAdvance = Math.min(maxSliceSamples, Math.max(minChunkSize, elapsedSamples - offset));
+          const end = Math.min(total, offset + targetAdvance);
           const chunk = pcm.subarray(offset, end);
           offset = end;
           oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
+          inFlightChunks++;
+          lastPushAtMs = now;
           workerClient.pushAudio(chunk, false);
           if (offset >= total) {
-            finished = true;
-            cleanup();
-            workerClient.finishStream().then(resolve).catch(reject);
+            drainFinishScheduled = true;
+            if (inFlightChunks === 0) {
+              finalizeStream();
+            }
           }
-        }, rateMultiplier > 1 ? 50 : 100);
+        }, tickMs);
       });
     }
 
@@ -1195,13 +1359,25 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     async function playAndStreamPreset(lang) {
       try {
+        // Unlock Web Audio synchronously inside user tap gesture (required on iOS Safari/WebKit)
+        unlockAudioContextSync();
         stopRecording();
         stopPresetPlayback();
+        revealTranscriptOnMobile();
 
-        if (!workerClient || window.__swanadaLoadedLang !== lang) {
-          await initEngine(lang);
+        if (!workerClient || !window.__swanadaReady || window.__swanadaLoadedLang !== lang) {
+          if (activeInitPromise && window.__swanadaLoadedLang === null && activeLanguage === lang && workerClient) {
+            await activeInitPromise;
+          }
+          if (!workerClient || !window.__swanadaReady || window.__swanadaLoadedLang !== lang) {
+            await initEngine(lang);
+          }
         } else if (activeInitPromise) {
           await activeInitPromise;
+        }
+
+        if (!workerClient || !window.__swanadaReady) {
+          throw new Error('Speech engine is still loading or unavailable. Tap again once ready.');
         }
 
         resetTranscriptSurface(false);
@@ -1239,6 +1415,8 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       } catch (err) {
         console.error('Preset streaming error:', err);
         liveBadge.textContent = 'Error';
+        placeholder.style.display = 'block';
+        placeholder.textContent = err?.message || 'Unable to stream preset clip.';
       }
     }
 
@@ -1309,6 +1487,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
       const runInit = async () => {
         try {
+          if (isMobileDevice) acquireWakeLock();
           loaderWrap.style.display = 'flex';
           loaderMsg.textContent = `Loading acoustic model for [${lang}]...`;
           progressBar.style.width = '12%';
@@ -1316,7 +1495,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.4.0',
+              workerUrl: './stt-worker.mjs?v=1.5.0',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -1345,14 +1524,33 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
               }
               if (readyEvt && readyEvt.numThreads) {
                 engineVal.textContent = `WASM ${readyEvt.numThreads}T`;
+                if (wasmHeaderBadge) {
+                  wasmHeaderBadge.textContent =
+                    readyEvt.numThreads === 1 ? 'WASM SIMD 1T' : `WASM SIMD ${readyEvt.numThreads} THREADS`;
+                }
               }
               statusDot.className = 'status-dot ready';
               statusText.textContent = `Swanada Engine Ready (${langCode.toUpperCase()})`;
               progressBar.style.width = '100%';
               loaderPct.textContent = '100%';
+              if (!isRecording) releaseWakeLock();
               setTimeout(() => {
                 if (window.__swanadaReady) loaderWrap.style.display = 'none';
               }, 280);
+            });
+
+            workerClient.on('error', (errEvt) => {
+              console.warn('Swanada worker event error:', errEvt);
+              if (errEvt && errEvt.fatal) {
+                window.__swanadaReady = false;
+                window.__swanadaLoadedLang = null;
+                try { workerClient?.terminate(); } catch (_) {}
+                workerClient = null;
+                window.__swanadaWorkerClient = null;
+                statusDot.className = 'status-dot';
+                statusText.textContent = 'Engine Reload Required (Tap to Retry)';
+                loaderWrap.style.display = 'none';
+              }
             });
 
             workerClient.on('partial', (data) => {
@@ -1431,11 +1629,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           // Shared 178 MB Conformer encoder + 515 KB per-language linear CTC head
           const encoderUrl = isLocalDevHost()
-            ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.4.0'
-            : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx?v=1.4.0`;
-          const headUrl = `./heads/${lang}.bin?v=1.4.0`;
+            ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0'
+            : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0`;
+          const headUrl = `./heads/${lang}.bin?v=1.5.0`;
           const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
-          const vocabUrl = `./vocabularies/${vocabFile}?v=1.4.0`;
+          const vocabUrl = `./vocabularies/${vocabFile}?v=1.5.0`;
 
           await workerClient.init({
             language: lang,
@@ -1469,9 +1667,16 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         } catch (err) {
           if (myEpoch !== uiInitEpoch) return;
           console.warn('Worker initialization error:', err);
+          window.__swanadaReady = false;
+          window.__swanadaLoadedLang = null;
           statusDot.className = 'status-dot';
-          statusText.textContent = 'Engine Offline / Load Fallback';
+          statusText.textContent = 'Engine Offline / Tap to Retry';
           loaderWrap.style.display = 'none';
+          if (!isRecording) releaseWakeLock();
+        } finally {
+          if (myEpoch === uiInitEpoch) {
+            activeInitPromise = null;
+          }
         }
       };
 
@@ -1481,9 +1686,38 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     // Direct buffer transcription hook for Playwright test harness
     window.__swanadaTranscribeBuffer = async function (pcm) {
-      if (!workerClient) await initEngine(activeLanguage);
+      if (!workerClient || !window.__swanadaReady) await initEngine(activeLanguage);
       return workerClient.transcribe(pcm);
     };
+
+    function attachScriptProcessorFallback(sourceNode, sinkNode) {
+      if (!audioCtx || !sourceNode || !sinkNode || scriptProcessorNode) return;
+      const createProc = audioCtx.createScriptProcessor || audioCtx.createJavaScriptNode;
+      if (typeof createProc !== 'function') return;
+      const proc = createProc.call(audioCtx, 4096, 1, 1);
+      const srcRate = audioCtx.sampleRate || 48000;
+      let accum = new Float32Array(0);
+      proc.onaudioprocess = (ev) => {
+        if (!isRecording || !workerClient) return;
+        const input = ev.inputBuffer.getChannelData(0);
+        if (!input || input.length === 0) return;
+        const pcm16k = srcRate === 16000 ? new Float32Array(input) : resamplePcm(input, srcRate, 16000);
+        const merged = new Float32Array(accum.length + pcm16k.length);
+        merged.set(accum, 0);
+        merged.set(pcm16k, accum.length);
+        let pos = 0;
+        while (pos + 1600 <= merged.length) {
+          const slice = merged.slice(pos, pos + 1600);
+          pos += 1600;
+          oscilloscopeData.set(slice.subarray(0, Math.min(slice.length, oscilloscopeData.length)));
+          workerClient.pushAudio(slice, false);
+        }
+        accum = merged.slice(pos);
+      };
+      sourceNode.connect(proc);
+      proc.connect(sinkNode);
+      scriptProcessorNode = proc;
+    }
 
     // Live Microphone Capture (Desktop & Mobile Hardware Sample-Rate Safe)
     async function toggleMicrophone() {
@@ -1495,26 +1729,17 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     }
 
     async function startRecording() {
+      let pendingStream = null;
       try {
+        // 1. Unlock AudioContext AND request getUserMedia SYNCHRONOUSLY inside user tap gesture
+        //    so iOS Safari / WebKit never drops transient user activation across async awaits!
+        unlockAudioContextSync();
         stopPresetPlayback();
         if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
           throw new Error('Microphone capture requires HTTPS or localhost secure context.');
         }
 
-        if (!workerClient || window.__swanadaLoadedLang !== activeLanguage) {
-          await initEngine(activeLanguage);
-        } else if (activeInitPromise) {
-          await activeInitPromise;
-        } else {
-          await workerClient.whenReady();
-        }
-
-        await ensureAudioContext();
-        if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
-        }
-
-        micStream = await navigator.mediaDevices.getUserMedia({
+        const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: { ideal: 1 },
             echoCancellation: true,
@@ -1523,23 +1748,40 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           }
         });
 
-        if (!workletModuleLoaded) {
-          await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js');
-          workletModuleLoaded = true;
+        revealTranscriptOnMobile();
+        acquireWakeLock();
+
+        if (!workerClient || !window.__swanadaReady || window.__swanadaLoadedLang !== activeLanguage) {
+          if (activeInitPromise && workerClient && activeLanguage === activeLangCode.textContent) {
+            await activeInitPromise;
+          }
+          if (!workerClient || !window.__swanadaReady || window.__swanadaLoadedLang !== activeLanguage) {
+            await initEngine(activeLanguage);
+          }
+        } else if (activeInitPromise) {
+          await activeInitPromise;
+        } else {
+          await workerClient.whenReady();
+        }
+
+        pendingStream = await getUserMediaPromise;
+        if (!workerClient || !window.__swanadaReady) {
+          pendingStream.getTracks().forEach(t => t.stop());
+          throw new Error('Speech engine is still loading. Please wait until Ready and tap Record Mic again.');
+        }
+        micStream = pendingStream;
+        pendingStream = null;
+
+        await ensureAudioContext();
+        if (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted') {
+          await audioCtx.resume().catch(() => {});
         }
 
         micSourceNode = audioCtx.createMediaStreamSource(micStream);
-        workletNode = new AudioWorkletNode(audioCtx, 'swanada-audio-capture-processor', {
-          processorOptions: {
-            chunkSamples: 1600,
-            sampleRate: audioCtx.sampleRate,
-            noiseSuppressionEnabled: denoiseEnabled,
-          }
-        });
-
-        // Connect through a zero-gain sink so iOS Safari and Android Chrome pump AudioWorklet frames continuously
+        // Connect through a zero-gain sink so iOS Safari and Android Chrome pump frames continuously
         silentSinkNode = audioCtx.createGain();
         silentSinkNode.gain.value = 0;
+        silentSinkNode.connect(audioCtx.destination);
 
         resetTranscriptSurface(false);
         if (activeLanguage === 'sa') {
@@ -1547,27 +1789,63 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         }
         workerClient.startStream();
 
-        workletNode.port.onmessage = (event) => {
-          const payload = event.data;
-          if (payload && payload.audioChunk) {
-            const chunk = payload.audioChunk;
-            oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
-            if (typeof payload.snrDb === 'number' && isFinite(payload.snrDb)) {
-              snrBadge.textContent = `SNR ${Math.max(0, Math.round(payload.snrDb))}dB`;
+        let usedWorklet = false;
+        let receivedWorkletChunks = 0;
+        if (audioCtx.audioWorklet && typeof AudioWorkletNode === 'function') {
+          try {
+            if (!workletModuleLoaded) {
+              await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js?v=1.5.0');
+              workletModuleLoaded = true;
             }
-            if (workerClient) {
-              const sendChunk = new Float32Array(chunk);
-              workerClient.pushAudio(sendChunk, false);
-            }
-            if (!payload.isTail) {
-              workletNode.port.postMessage({ type: 'recycle', buffer: chunk.buffer }, [chunk.buffer]);
-            }
-          }
-        };
+            workletNode = new AudioWorkletNode(audioCtx, 'swanada-audio-capture-processor', {
+              processorOptions: {
+                chunkSamples: isMobileDevice ? 2400 : 1600,
+                sampleRate: audioCtx.sampleRate,
+                noiseSuppressionEnabled: denoiseEnabled,
+              }
+            });
+            workletNode.port.onmessage = (event) => {
+              const payload = event.data;
+              if (payload && payload.audioChunk) {
+                receivedWorkletChunks++;
+                const chunk = payload.audioChunk;
+                oscilloscopeData.set(chunk.subarray(0, Math.min(chunk.length, oscilloscopeData.length)));
+                if (typeof payload.snrDb === 'number' && isFinite(payload.snrDb)) {
+                  snrBadge.textContent = `SNR ${Math.max(0, Math.round(payload.snrDb))}dB`;
+                }
+                if (workerClient) {
+                  const sendChunk = new Float32Array(chunk);
+                  workerClient.pushAudio(sendChunk, false);
+                }
+                if (!payload.isTail) {
+                  workletNode.port.postMessage({ type: 'recycle', buffer: chunk.buffer }, [chunk.buffer]);
+                }
+              }
+            };
+            micSourceNode.connect(workletNode);
+            workletNode.connect(silentSinkNode);
+            usedWorklet = true;
 
-        micSourceNode.connect(workletNode);
-        workletNode.connect(silentSinkNode);
-        silentSinkNode.connect(audioCtx.destination);
+            // Watchdog for mobile in-app WebViews where AudioWorklet connects silently without pumping quanta
+            workletWatchdogTimer = setTimeout(() => {
+              if (isRecording && receivedWorkletChunks === 0 && micSourceNode && silentSinkNode) {
+                if (audioCtx && (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted')) {
+                  audioCtx.resume().catch(() => {});
+                }
+                try { workletNode?.disconnect(); } catch (_) {}
+                workletNode = null;
+                attachScriptProcessorFallback(micSourceNode, silentSinkNode);
+              }
+            }, 900);
+          } catch (workletErr) {
+            console.warn('AudioWorklet unavailable, switching to ScriptProcessor fallback:', workletErr);
+            usedWorklet = false;
+          }
+        }
+
+        if (!usedWorklet) {
+          attachScriptProcessorFallback(micSourceNode, silentSinkNode);
+        }
 
         const hwKhz = Math.round(audioCtx.sampleRate / 100) / 10;
         sampleRateLabel.textContent = audioCtx.sampleRate === 16000 ? '16 kHz Mono' : `${hwKhz}k→16kHz Mono`;
@@ -1577,6 +1855,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         statusDot.className = 'status-dot recording';
         liveBadge.textContent = 'Streaming...';
       } catch (err) {
+        if (pendingStream) {
+          try { pendingStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+        }
+        releaseWakeLock();
         alert('Microphone access failed: ' + err.message);
       }
     }
@@ -1584,10 +1866,19 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     function stopRecording() {
       if (!isRecording) return;
       isRecording = false;
+      if (workletWatchdogTimer) {
+        clearTimeout(workletWatchdogTimer);
+        workletWatchdogTimer = null;
+      }
       if (workletNode) {
         try { workletNode.port.postMessage({ type: 'flush' }); } catch {}
         try { workletNode.disconnect(); } catch {}
         workletNode = null;
+      }
+      if (scriptProcessorNode) {
+        try { scriptProcessorNode.onaudioprocess = null; } catch {}
+        try { scriptProcessorNode.disconnect(); } catch {}
+        scriptProcessorNode = null;
       }
       if (micSourceNode) {
         try { micSourceNode.disconnect(); } catch {}
@@ -1601,6 +1892,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         micStream.getTracks().forEach(t => t.stop());
         micStream = null;
       }
+      releaseWakeLock();
       sampleRateLabel.textContent = '16 kHz Mono';
       micBtn.className = 'btn';
       micBtnText.textContent = 'Record Mic';
@@ -1614,8 +1906,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     // Audio File Drag and Drop / Upload with streaming
     async function processAudioFile(file) {
       if (!file) return;
+      unlockAudioContextSync();
       stopPresetPlayback();
       stopRecording();
+      revealTranscriptOnMobile();
 
       loaderWrap.style.display = 'flex';
       loaderMsg.textContent = `Decoding ${file.name}...`;
@@ -1632,13 +1926,13 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       }
       liveBadge.textContent = 'Streaming...';
 
-      if (!workerClient || window.__swanadaLoadedLang !== activeLanguage) {
+      if (!workerClient || !window.__swanadaReady || window.__swanadaLoadedLang !== activeLanguage) {
         await initEngine(activeLanguage);
       } else if (activeInitPromise) {
         await activeInitPromise;
       }
       workerClient.startStream();
-      return streamPcmToWorker(pcm, 2);
+      return streamPcmToWorker(pcm, isMobileDevice ? 1 : 2);
     }
 
     // Setup Event Listeners

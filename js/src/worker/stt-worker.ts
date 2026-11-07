@@ -164,6 +164,18 @@ async function resolveOrt(): Promise<any> {
   }
 }
 
+function detectWorkerMobileRuntime(): { isIOS: boolean; isMobile: boolean } {
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const platform = typeof navigator !== 'undefined' ? (navigator as any)?.platform || '' : '';
+  const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
+  const devMem = typeof navigator !== 'undefined' ? (navigator as any)?.deviceMemory || 8 : 8;
+  const isIOS =
+    /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1);
+  const isMobile = isIOS || /Android|Mobile/i.test(ua) || devMem <= 4;
+  return { isIOS, isMobile };
+}
+
 /**
  * Configures WASM environment for worker threads.
  */
@@ -188,16 +200,13 @@ function configureWasm(ortInstance: any, numThreads?: number, wasmPaths?: string
   }
 
   const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
-  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
-  const devMem = typeof navigator !== 'undefined' ? (navigator as any)?.deviceMemory || 8 : 8;
-  const isMobileRuntime = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4;
-  const maxThreads = isMobileRuntime ? 2 : 4;
+  const { isMobile } = detectWorkerMobileRuntime();
   let threads = 1;
   if (numThreads && numThreads >= 1) {
-    threads = isIsolated ? Math.min(maxThreads, numThreads) : 1;
-  } else if (isIsolated) {
+    threads = isIsolated ? Math.min(isMobile ? 2 : 4, numThreads) : 1;
+  } else if (isIsolated && !isMobile) {
     const cores = typeof navigator !== 'undefined' ? navigator?.hardwareConcurrency || 4 : 4;
-    threads = Math.min(maxThreads, Math.max(1, cores - 1));
+    threads = Math.min(4, Math.max(1, cores - 1));
   }
   ortInstance.env.wasm.numThreads = threads;
   return threads;
@@ -314,16 +323,17 @@ async function setupLanguage(
     activeSession = cached.session;
     activeVocab = cached.vocab;
     ctcDecoder = new CTCGreedyDecoder(activeVocab);
+    const { isMobile } = detectWorkerMobileRuntime();
     const engineAdapter: any = {
       config: { language: lang },
       getVocab: () => activeVocab,
       transcribe: async (pcm: Float32Array) => {
-        return runAcousticInference(pcm);
+        return runAcousticInference(pcm, isMobile);
       },
     };
     streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-      leftContextSamples: 30720,
-      maxBufferSamples: 61440,
+      leftContextSamples: isMobile ? 19200 : 30720,
+      maxBufferSamples: isMobile ? 38400 : 61440,
       vadSilenceThreshold: 0.005,
     });
     workerState = 'READY';
@@ -368,7 +378,7 @@ async function setupLanguage(
   };
 
   const isNodeEnv = typeof process !== 'undefined' && Boolean(process.versions?.node);
-  let modelBytes: Uint8Array;
+  let modelBytes: Uint8Array | null;
   try {
     modelBytes = await loadModelAsset(effectiveModelUrl, cacheStorageName, progressHandler);
   } catch (err) {
@@ -383,9 +393,8 @@ async function setupLanguage(
   }
 
   // Evict oldest cached ONNX session before allocating a new 187.5 MB model on mobile / constrained RAM
-  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
-  const devMem = typeof navigator !== 'undefined' ? (navigator as any)?.deviceMemory || 8 : 8;
-  const maxCachedSessions = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4 ? 1 : 2;
+  const { isMobile } = detectWorkerMobileRuntime();
+  const maxCachedSessions = isMobile ? 1 : 2;
   while (sessionCache.size >= maxCachedSessions) {
     const oldestKey = sessionCache.keys().next().value;
     if (oldestKey === undefined) break;
@@ -407,6 +416,7 @@ async function setupLanguage(
   const sessionOptions: any = {
     executionProviders: [executionProvider],
     graphOptimizationLevel: 'all',
+    ...(isMobile ? { enableCpuMemArena: false, enableMemPattern: false } : {}),
   };
 
   try {
@@ -419,6 +429,8 @@ async function setupLanguage(
     } else {
       throw err;
     }
+  } finally {
+    modelBytes = null;
   }
 
   // 5. Warmup inference with 100ms synthetic silence
@@ -456,12 +468,12 @@ async function setupLanguage(
     config: { language: lang },
     getVocab: () => activeVocab,
     transcribe: async (pcm: Float32Array) => {
-      return runAcousticInference(pcm);
+      return runAcousticInference(pcm, isMobile);
     },
   };
   streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-    leftContextSamples: 30720,
-    maxBufferSamples: 61440,
+    leftContextSamples: isMobile ? 19200 : 30720,
+    maxBufferSamples: isMobile ? 38400 : 61440,
     vadSilenceThreshold: 0.005,
   });
 
@@ -479,7 +491,10 @@ async function setupLanguage(
 /**
  * Runs feature extraction, acoustic inference, and CTC decoding on audio.
  */
-async function runAcousticInference(pcm: Float32Array): Promise<TranscriptionResult & { iast?: string }> {
+async function runAcousticInference(
+  pcm: Float32Array,
+  fastMobilePartial: boolean = false
+): Promise<TranscriptionResult & { iast?: string }> {
   if (!activeSession) {
     throw new Error('Inference session is not ready.');
   }
@@ -508,7 +523,7 @@ async function runAcousticInference(pcm: Float32Array): Promise<TranscriptionRes
 
   // 0. Multi-Stage Background Noise Cancellation & Speech Enhancement Layer
   let cleanPcm = pcm;
-  if (denoiseEnabled) {
+  if (!fastMobilePartial && denoiseEnabled) {
     const enhanced = enhanceSpeechWithTelemetry(pcm);
     lastEstimatedSnrDb = enhanced.estimatedSnrDb;
     if (!enhanced.isSpeechLikely) {

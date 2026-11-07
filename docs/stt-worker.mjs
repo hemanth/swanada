@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.4.0' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.5.0' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -59,6 +59,7 @@ let sharedEncoderThreads = 1;
 // Per-language head & monolithic fallback caches
 const headCache = new Map();
 const sessionCache = new Map();
+const languageUrlHistory = new Map();
 let streamingSession = null;
 
 // Concurrency & race-condition guards
@@ -224,6 +225,18 @@ async function resolveOrt() {
   }
 }
 
+function detectMobileRuntime() {
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const platform = typeof navigator !== 'undefined' ? navigator?.platform || '' : '';
+  const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
+  const devMem = typeof navigator !== 'undefined' ? navigator?.deviceMemory || 8 : 8;
+  const isIOS =
+    /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1);
+  const isMobile = isIOS || /Android|Mobile/i.test(ua) || devMem <= 4;
+  return { isIOS, isMobile };
+}
+
 function configureWasm(ortInstance, numThreads, wasmPaths) {
   if (!ortInstance?.env?.wasm) return 1;
   ortInstance.env.wasm.simd = true;
@@ -245,16 +258,13 @@ function configureWasm(ortInstance, numThreads, wasmPaths) {
   }
 
   const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
-  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
-  const devMem = typeof navigator !== 'undefined' ? navigator?.deviceMemory || 8 : 8;
-  const isMobileRuntime = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4;
-  const maxThreads = isMobileRuntime ? 2 : 4;
+  const { isMobile } = detectMobileRuntime();
   let threads = 1;
   if (numThreads && numThreads >= 1) {
-    threads = isIsolated ? Math.min(maxThreads, numThreads) : 1;
-  } else if (isIsolated) {
+    threads = isIsolated ? Math.min(isMobile ? 2 : 4, numThreads) : 1;
+  } else if (isIsolated && !isMobile) {
     const cores = typeof navigator !== 'undefined' ? navigator?.hardwareConcurrency || 4 : 4;
-    threads = Math.min(maxThreads, Math.max(1, cores - 1));
+    threads = Math.min(4, Math.max(1, cores - 1));
   }
   ortInstance.env.wasm.numThreads = threads;
   return threads;
@@ -280,7 +290,9 @@ async function loadVocab(vocabUrlOrPath) {
   if (typeof caches !== 'undefined') {
     try {
       const cache = await caches.open(cacheStorageName);
-      const matched = await cache.match(vocabUrlOrPath);
+      const matched =
+        (await cache.match(vocabUrlOrPath)) ||
+        (await cache.match(vocabUrlOrPath, { ignoreSearch: true }));
       if (matched && matched.ok) {
         const json = await matched.json();
         return Array.isArray(json) ? json : Object.values(json);
@@ -344,7 +356,9 @@ async function loadLinearHead(lang, headUrlOrPath) {
   if (typeof caches !== 'undefined') {
     try {
       const cache = await caches.open(cacheStorageName);
-      const matched = await cache.match(headUrlOrPath);
+      const matched =
+        (await cache.match(headUrlOrPath)) ||
+        (await cache.match(headUrlOrPath, { ignoreSearch: true }));
       if (matched && matched.ok) {
         arrayBuf = await matched.arrayBuffer();
       }
@@ -452,14 +466,15 @@ async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
       } catch (err) {
         const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
         if (!isNodeEnv && !isOffline && !encoderUrl.startsWith('https://huggingface.co/')) {
-          const hfFallbackUrl = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.4.0';
+          const hfFallbackUrl = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0';
           rawBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
         } else {
           throw err;
         }
       }
 
-      const patchedBytes = exposeEncoderHiddenOutput(rawBytes);
+      let patchedBytes = exposeEncoderHiddenOutput(rawBytes);
+      rawBytes = null; // Release 178 MB raw buffer BEFORE ORT session allocation to prevent iOS Jetsam OOM
 
       postWorkerMessage({
         type: 'PROGRESS',
@@ -468,9 +483,11 @@ async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
         fromCache: wasCacheHit,
       });
 
+      const { isMobile } = detectMobileRuntime();
       const sessionOptions = {
         executionProviders: [executionProvider],
         graphOptimizationLevel: 'all',
+        ...(isMobile ? { enableCpuMemArena: false, enableMemPattern: false } : {}),
       };
 
       let sess;
@@ -484,6 +501,8 @@ async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
         } else {
           throw err;
         }
+      } finally {
+        patchedBytes = null; // Release patched JS buffer immediately once copied into WASM heap
       }
 
       postWorkerMessage({
@@ -522,14 +541,15 @@ async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
 }
 
 function buildStreamingEngineForActiveLanguage(lang, vocab) {
+  const { isMobile } = detectMobileRuntime();
   const engineAdapter = {
     config: { language: lang },
     getVocab: () => vocab,
-    transcribe: async (pcm) => runAcousticInference(pcm),
+    transcribe: async (pcm) => runAcousticInference(pcm, isMobile),
   };
   return new StreamingAcousticEngine(engineAdapter, vocab, {
-    leftContextSamples: 30720,
-    maxBufferSamples: 61440,
+    leftContextSamples: isMobile ? 19200 : 30720,
+    maxBufferSamples: isMobile ? 38400 : 61440,
     vadSilenceThreshold: 0.005,
   });
 }
@@ -538,15 +558,36 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
   const myEpoch = ++latestSetupEpoch;
   workerState = 'INITIALIZING';
 
-  const effectiveVocabUrl = vocabUrl || `./models/vocabularies/${lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`}`;
+  const prevUrls = languageUrlHistory.get(lang);
+  const resolvedModelUrl = modelUrl || prevUrls?.modelUrl;
+  const resolvedVocabUrl =
+    vocabUrl ||
+    prevUrls?.vocabUrl ||
+    (sharedEncoderSession
+      ? `./vocabularies/${lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`}`
+      : undefined);
+  const resolvedHeadUrl =
+    headUrl || prevUrls?.headUrl || (sharedEncoderSession ? `./heads/${lang}.bin` : undefined);
+  if (resolvedModelUrl || resolvedVocabUrl || resolvedHeadUrl) {
+    languageUrlHistory.set(lang, {
+      modelUrl: resolvedModelUrl,
+      vocabUrl: resolvedVocabUrl,
+      headUrl: resolvedHeadUrl,
+    });
+  }
+
+  const effectiveVocabUrl =
+    resolvedVocabUrl ||
+    `./models/vocabularies/${lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`}`;
 
   // Fast path: Shared Encoder + 515 KB per-language linear CTC head (all 12 languages in Studio)
-  if (headUrl) {
-    const effectiveEncoderUrl = modelUrl || './models/onnx/sushrota_sanskrit_ctc_int8.onnx';
+  if (resolvedHeadUrl) {
+    const effectiveEncoderUrl =
+      resolvedModelUrl || './models/onnx/sushrota_sanskrit_ctc_int8.onnx';
     const [encInfo, vocab, head] = await Promise.all([
       ensureSharedEncoderSession(effectiveEncoderUrl, userThreads, wasmPaths),
       loadVocab(effectiveVocabUrl),
-      loadLinearHead(lang, headUrl),
+      loadLinearHead(lang, resolvedHeadUrl),
     ]);
 
     // Abort cleanly if user clicked another language tab while loading
@@ -636,9 +677,8 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
 
   if (myEpoch !== latestSetupEpoch) return;
 
-  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
-  const devMem = typeof navigator !== 'undefined' ? navigator?.deviceMemory || 8 : 8;
-  const maxCachedSessions = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4 ? 1 : 2;
+  const { isMobile } = detectMobileRuntime();
+  const maxCachedSessions = isMobile ? 1 : 2;
   while (sessionCache.size >= maxCachedSessions) {
     const oldestKey = sessionCache.keys().next().value;
     if (oldestKey === undefined) break;
@@ -659,6 +699,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
   const sessionOptions = {
     executionProviders: [executionProvider],
     graphOptimizationLevel: 'all',
+    ...(isMobile ? { enableCpuMemArena: false, enableMemPattern: false } : {}),
   };
 
   let sess;
@@ -672,6 +713,8 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     } else {
       throw err;
     }
+  } finally {
+    modelBytes = null;
   }
 
   if (myEpoch !== latestSetupEpoch) {
@@ -722,7 +765,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
 /**
  * Runs feature extraction, acoustic inference, and CTC decoding on audio.
  */
-async function runAcousticInference(pcm) {
+async function runAcousticInference(pcm, fastMobilePartial = false) {
   if (!activeSession) {
     throw new Error('Inference session is not ready.');
   }
@@ -750,8 +793,10 @@ async function runAcousticInference(pcm) {
   }
 
   // 0. Multi-Stage Background Noise Cancellation & Speech Enhancement Layer
+  // On mobile streaming partials, skip multi-pass 512-bin STFT Wiener re-filtering on every step
+  // so WASM partial inference stays sub-300ms (AudioWorklet + OS DSP already filter live mic audio).
   let cleanPcm = pcm;
-  if (denoiseEnabled && typeof enhanceSpeechWithTelemetry === 'function') {
+  if (!fastMobilePartial && denoiseEnabled && typeof enhanceSpeechWithTelemetry === 'function') {
     const enhanced = enhanceSpeechWithTelemetry(pcm);
     lastEstimatedSnrDb = enhanced.estimatedSnrDb;
     if (!enhanced.isSpeechLikely) {

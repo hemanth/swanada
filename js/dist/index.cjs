@@ -4580,6 +4580,23 @@ const CACHE_STORAGE_NAME = 'swanada-onnx-v1.0.0';
 const IDB_DATABASE_NAME = 'swanada-onnx-idb-v1';
 const IDB_STORE_NAME = 'models';
 
+const MOBILE_LARGE_MODEL_BYTES = 40 * 1024 * 1024;
+
+function getRuntimeMobility()                                        {
+  if (typeof navigator === 'undefined') {
+    return { isIOS: false, isMobile: false };
+  }
+  const ua = navigator.userAgent || '';
+  const platform = (navigator       ).platform || '';
+  const maxTouch = navigator.maxTouchPoints || 0;
+  const devMem = (navigator       ).deviceMemory || 8;
+  const isIOS =
+    /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1);
+  const isMobile = isIOS || /Android|Mobile/i.test(ua) || devMem <= 4;
+  return { isIOS, isMobile };
+}
+
 /**
  * Validates that binary buffer is a valid serialized ONNX ModelProto.
  * Field 1 of ONNX ModelProto is ir_version (varint tag 0x08).
@@ -4598,7 +4615,7 @@ async function getFromCacheStorage(cacheName        , url        )              
   if (typeof caches === 'undefined') return null;
   try {
     const cache = await caches.open(cacheName);
-    const response = await cache.match(url);
+    const response = (await cache.match(url)) || (await cache.match(url, { ignoreSearch: true }));
     if (response && response.ok) {
       const buffer = await response.arrayBuffer();
       const bytes = new Uint8Array(buffer);
@@ -4814,10 +4831,13 @@ async function loadModelAsset(
 
     buffer = new Uint8Array(loadedBytes);
     let offset = 0;
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i] ;
       buffer.set(chunk, offset);
       offset += chunk.byteLength;
+      chunks[i] = null       ; // Free chunk backing store immediately to prevent 2x RAM spike on mobile
     }
+    chunks.length = 0;
   } else {
     const arrayBuffer = await response.arrayBuffer();
     buffer = new Uint8Array(arrayBuffer);
@@ -4834,9 +4854,17 @@ async function loadModelAsset(
     throw new Error(`Corrupted model file received from ${urlOrPath}: protobuf 0x08 header verification failed`);
   }
 
-  // Save to persistent caches asynchronously
-  putToCacheStorage(cacheName, urlOrPath, buffer).catch(() => {});
-  putToIndexedDB(urlOrPath, buffer).catch(() => {});
+  // Mobile quota & Jetsam memory protection:
+  // - iOS WebKit enforces ~50 MB origin quota and cloning a 178 MB buffer into Response/IDB triggers Jetsam kills.
+  // - Android skips duplicate 178 MB IndexedDB structured-clone while keeping CacheStorage.
+  const { isIOS, isMobile } = getRuntimeMobility();
+  const isLargeModel = buffer.byteLength > MOBILE_LARGE_MODEL_BYTES;
+  if (!(isIOS && isLargeModel)) {
+    putToCacheStorage(cacheName, urlOrPath, buffer).catch(() => {});
+  }
+  if (!(isMobile && isLargeModel)) {
+    putToIndexedDB(urlOrPath, buffer).catch(() => {});
+  }
 
   return buffer;
 }
@@ -4919,10 +4947,19 @@ function configureWasmEnvironment(ort     , userThreads         , wasmPaths     
     ? (globalThis       ).crossOriginIsolated
     : true; // In Node.js, threading is always supported
 
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const platform = typeof navigator !== 'undefined' ? (navigator       )?.platform || '' : '';
+  const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
+  const devMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory || 8 : 8;
+  const isMobile =
+    /Android|iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|Mobile/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1) ||
+    devMem <= 4;
+
   let threads = 1;
   if (userThreads && userThreads >= 1) {
-    threads = isIsolated ? Math.min(8, userThreads) : 1;
-  } else if (isIsolated) {
+    threads = isIsolated ? Math.min(isMobile ? 2 : 8, userThreads) : 1;
+  } else if (isIsolated && !isMobile) {
     const hardwareConcurrency = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
     threads = Math.min(4, Math.max(1, hardwareConcurrency - 1));
   } else {
@@ -6612,6 +6649,18 @@ async function resolveOrt()               {
   }
 }
 
+function detectWorkerMobileRuntime()                                        {
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const platform = typeof navigator !== 'undefined' ? (navigator       )?.platform || '' : '';
+  const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
+  const devMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory || 8 : 8;
+  const isIOS =
+    /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1);
+  const isMobile = isIOS || /Android|Mobile/i.test(ua) || devMem <= 4;
+  return { isIOS, isMobile };
+}
+
 /**
  * Configures WASM environment for worker threads.
  */
@@ -6636,16 +6685,13 @@ function configureWasm(ortInstance     , numThreads         , wasmPaths         
   }
 
   const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
-  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
-  const devMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory || 8 : 8;
-  const isMobileRuntime = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4;
-  const maxThreads = isMobileRuntime ? 2 : 4;
+  const { isMobile } = detectWorkerMobileRuntime();
   let threads = 1;
   if (numThreads && numThreads >= 1) {
-    threads = isIsolated ? Math.min(maxThreads, numThreads) : 1;
-  } else if (isIsolated) {
+    threads = isIsolated ? Math.min(isMobile ? 2 : 4, numThreads) : 1;
+  } else if (isIsolated && !isMobile) {
     const cores = typeof navigator !== 'undefined' ? navigator?.hardwareConcurrency || 4 : 4;
-    threads = Math.min(maxThreads, Math.max(1, cores - 1));
+    threads = Math.min(4, Math.max(1, cores - 1));
   }
   ortInstance.env.wasm.numThreads = threads;
   return threads;
@@ -6762,16 +6808,17 @@ async function setupLanguage(
     activeSession = cached.session;
     activeVocab = cached.vocab;
     ctcDecoder = new CTCGreedyDecoder(activeVocab);
+    const { isMobile } = detectWorkerMobileRuntime();
     const engineAdapter      = {
       config: { language: lang },
       getVocab: () => activeVocab,
       transcribe: async (pcm              ) => {
-        return runAcousticInference(pcm);
+        return runAcousticInference(pcm, isMobile);
       },
     };
     streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-      leftContextSamples: 30720,
-      maxBufferSamples: 61440,
+      leftContextSamples: isMobile ? 19200 : 30720,
+      maxBufferSamples: isMobile ? 38400 : 61440,
       vadSilenceThreshold: 0.005,
     });
     workerState = 'READY';
@@ -6816,7 +6863,7 @@ async function setupLanguage(
   };
 
   const isNodeEnv = typeof process !== 'undefined' && Boolean(process.versions?.node);
-  let modelBytes            ;
+  let modelBytes                   ;
   try {
     modelBytes = await loadModelAsset(effectiveModelUrl, cacheStorageName, progressHandler);
   } catch (err) {
@@ -6831,9 +6878,8 @@ async function setupLanguage(
   }
 
   // Evict oldest cached ONNX session before allocating a new 187.5 MB model on mobile / constrained RAM
-  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
-  const devMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory || 8 : 8;
-  const maxCachedSessions = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || devMem <= 4 ? 1 : 2;
+  const { isMobile } = detectWorkerMobileRuntime();
+  const maxCachedSessions = isMobile ? 1 : 2;
   while (sessionCache.size >= maxCachedSessions) {
     const oldestKey = sessionCache.keys().next().value;
     if (oldestKey === undefined) break;
@@ -6855,6 +6901,7 @@ async function setupLanguage(
   const sessionOptions      = {
     executionProviders: [executionProvider],
     graphOptimizationLevel: 'all',
+    ...(isMobile ? { enableCpuMemArena: false, enableMemPattern: false } : {}),
   };
 
   try {
@@ -6867,6 +6914,8 @@ async function setupLanguage(
     } else {
       throw err;
     }
+  } finally {
+    modelBytes = null;
   }
 
   // 5. Warmup inference with 100ms synthetic silence
@@ -6904,12 +6953,12 @@ async function setupLanguage(
     config: { language: lang },
     getVocab: () => activeVocab,
     transcribe: async (pcm              ) => {
-      return runAcousticInference(pcm);
+      return runAcousticInference(pcm, isMobile);
     },
   };
   streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-    leftContextSamples: 30720,
-    maxBufferSamples: 61440,
+    leftContextSamples: isMobile ? 19200 : 30720,
+    maxBufferSamples: isMobile ? 38400 : 61440,
     vadSilenceThreshold: 0.005,
   });
 
@@ -6927,7 +6976,10 @@ async function setupLanguage(
 /**
  * Runs feature extraction, acoustic inference, and CTC decoding on audio.
  */
-async function runAcousticInference(pcm              )                                                   {
+async function runAcousticInference(
+  pcm              ,
+  fastMobilePartial          = false
+)                                                   {
   if (!activeSession) {
     throw new Error('Inference session is not ready.');
   }
@@ -6956,7 +7008,7 @@ async function runAcousticInference(pcm              )                          
 
   // 0. Multi-Stage Background Noise Cancellation & Speech Enhancement Layer
   let cleanPcm = pcm;
-  if (denoiseEnabled) {
+  if (!fastMobilePartial && denoiseEnabled) {
     const enhanced = enhanceSpeechWithTelemetry(pcm);
     lastEstimatedSnrDb = enhanced.estimatedSnrDb;
     if (!enhanced.isSpeechLikely) {

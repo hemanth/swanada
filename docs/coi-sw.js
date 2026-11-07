@@ -37,7 +37,7 @@ self.addEventListener('fetch', (event) => {
         if (!res || res.status === 0) return res;
         const headers = new Headers(res.headers);
         headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-        headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+        headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
         headers.set('Cross-Origin-Resource-Policy', 'same-origin');
         return new Response(res.body, {
           status: res.status,

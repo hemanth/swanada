@@ -76,10 +76,19 @@ export function configureWasmEnvironment(ort: any, userThreads?: number, wasmPat
     ? (globalThis as any).crossOriginIsolated
     : true; // In Node.js, threading is always supported
 
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const platform = typeof navigator !== 'undefined' ? (navigator as any)?.platform || '' : '';
+  const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
+  const devMem = typeof navigator !== 'undefined' ? (navigator as any)?.deviceMemory || 8 : 8;
+  const isMobile =
+    /Android|iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|Mobile/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1) ||
+    devMem <= 4;
+
   let threads = 1;
   if (userThreads && userThreads >= 1) {
-    threads = isIsolated ? Math.min(8, userThreads) : 1;
-  } else if (isIsolated) {
+    threads = isIsolated ? Math.min(isMobile ? 2 : 8, userThreads) : 1;
+  } else if (isIsolated && !isMobile) {
     const hardwareConcurrency = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
     threads = Math.min(4, Math.max(1, hardwareConcurrency - 1));
   } else {

@@ -71,7 +71,8 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
     // Resampling state
     this.lastInputSample = 0.0;
     this.phase = 0.0;
-    const currentSampleRate = typeof sampleRate !== 'undefined' ? sampleRate : 48000;
+    const currentSampleRate =
+      Number(opts.sampleRate) || (typeof sampleRate !== 'undefined' ? sampleRate : 48000);
     this.ratio = currentSampleRate / this.targetRate;
 
     // 2nd-order Butterworth Anti-Aliasing Low-Pass Filter (fc = 7500 Hz, Q = 1/sqrt(2))
@@ -195,6 +196,9 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
     const ch0 = inputChannels[0];
     if (!ch0 || ch0.length === 0) return true;
     const nFrames = ch0.length;
+    if (this.monoInput.length < nFrames) {
+      this.monoInput = new Float32Array(nFrames);
+    }
 
     // 1. Mono Downmixing into pre-allocated buffer
     if (inputChannels.length > 1) {
