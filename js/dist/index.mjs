@@ -6808,17 +6808,16 @@ async function setupLanguage(
     activeSession = cached.session;
     activeVocab = cached.vocab;
     ctcDecoder = new CTCGreedyDecoder(activeVocab);
-    const { isMobile } = detectWorkerMobileRuntime();
     const engineAdapter      = {
       config: { language: lang },
       getVocab: () => activeVocab,
       transcribe: async (pcm              ) => {
-        return runAcousticInference(pcm, isMobile);
+        return runAcousticInference(pcm);
       },
     };
     streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-      leftContextSamples: isMobile ? 19200 : 30720,
-      maxBufferSamples: isMobile ? 38400 : 61440,
+      leftContextSamples: 30720,
+      maxBufferSamples: 61440,
       vadSilenceThreshold: 0.005,
     });
     workerState = 'READY';
@@ -6953,12 +6952,12 @@ async function setupLanguage(
     config: { language: lang },
     getVocab: () => activeVocab,
     transcribe: async (pcm              ) => {
-      return runAcousticInference(pcm, isMobile);
+      return runAcousticInference(pcm);
     },
   };
   streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
-    leftContextSamples: isMobile ? 19200 : 30720,
-    maxBufferSamples: isMobile ? 38400 : 61440,
+    leftContextSamples: 30720,
+    maxBufferSamples: 61440,
     vadSilenceThreshold: 0.005,
   });
 
@@ -6977,8 +6976,7 @@ async function setupLanguage(
  * Runs feature extraction, acoustic inference, and CTC decoding on audio.
  */
 async function runAcousticInference(
-  pcm              ,
-  fastMobilePartial          = false
+  pcm              
 )                                                   {
   if (!activeSession) {
     throw new Error('Inference session is not ready.');
@@ -7008,7 +7006,7 @@ async function runAcousticInference(
 
   // 0. Multi-Stage Background Noise Cancellation & Speech Enhancement Layer
   let cleanPcm = pcm;
-  if (!fastMobilePartial && denoiseEnabled) {
+  if (denoiseEnabled) {
     const enhanced = enhanceSpeechWithTelemetry(pcm);
     lastEstimatedSnrDb = enhanced.estimatedSnrDb;
     if (!enhanced.isSpeechLikely) {

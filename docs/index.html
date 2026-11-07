@@ -905,7 +905,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.5.0';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.5.1';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -1495,7 +1495,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.5.0',
+              workerUrl: './stt-worker.mjs?v=1.5.1',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -1742,8 +1742,8 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: { ideal: 1 },
-            echoCancellation: true,
-            noiseSuppression: true,
+            echoCancellation: false,
+            noiseSuppression: false,
             autoGainControl: true,
           }
         });
@@ -1794,7 +1794,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         if (audioCtx.audioWorklet && typeof AudioWorkletNode === 'function') {
           try {
             if (!workletModuleLoaded) {
-              await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js?v=1.5.0');
+              await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js?v=1.5.1');
               workletModuleLoaded = true;
             }
             workletNode = new AudioWorkletNode(audioCtx, 'swanada-audio-capture-processor', {

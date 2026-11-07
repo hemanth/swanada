@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.5.0' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.5.1' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -541,15 +541,14 @@ async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
 }
 
 function buildStreamingEngineForActiveLanguage(lang, vocab) {
-  const { isMobile } = detectMobileRuntime();
   const engineAdapter = {
     config: { language: lang },
     getVocab: () => vocab,
-    transcribe: async (pcm) => runAcousticInference(pcm, isMobile),
+    transcribe: async (pcm) => runAcousticInference(pcm),
   };
   return new StreamingAcousticEngine(engineAdapter, vocab, {
-    leftContextSamples: isMobile ? 19200 : 30720,
-    maxBufferSamples: isMobile ? 38400 : 61440,
+    leftContextSamples: 30720,
+    maxBufferSamples: 61440,
     vadSilenceThreshold: 0.005,
   });
 }
@@ -765,7 +764,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
 /**
  * Runs feature extraction, acoustic inference, and CTC decoding on audio.
  */
-async function runAcousticInference(pcm, fastMobilePartial = false) {
+async function runAcousticInference(pcm) {
   if (!activeSession) {
     throw new Error('Inference session is not ready.');
   }
@@ -793,10 +792,8 @@ async function runAcousticInference(pcm, fastMobilePartial = false) {
   }
 
   // 0. Multi-Stage Background Noise Cancellation & Speech Enhancement Layer
-  // On mobile streaming partials, skip multi-pass 512-bin STFT Wiener re-filtering on every step
-  // so WASM partial inference stays sub-300ms (AudioWorklet + OS DSP already filter live mic audio).
   let cleanPcm = pcm;
-  if (!fastMobilePartial && denoiseEnabled && typeof enhanceSpeechWithTelemetry === 'function') {
+  if (denoiseEnabled && typeof enhanceSpeechWithTelemetry === 'function') {
     const enhanced = enhanceSpeechWithTelemetry(pcm);
     lastEstimatedSnrDb = enhanced.estimatedSnrDb;
     if (!enhanced.isSpeechLikely) {
