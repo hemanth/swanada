@@ -103,7 +103,8 @@ cat stream.wav | swanada -l ta --stream
 
 ## Live Playground
 
-- Interactive Web Studio (Desktop & Mobile Streaming + ANC + 1-Tap Copy): [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
+- h3manth.com AI Experiments Studio: [https://h3manth.com/ai/swanada/](https://h3manth.com/ai/swanada/)
+- GitHub Pages Web Studio: [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
 
 ## Model Weights & Hugging Face Hub
 

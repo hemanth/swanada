@@ -30,6 +30,8 @@ models/heads/
 *.wav
 !docs/samples/*.wav
 *.mp3
+*.mp4
+*.gif
 *.flac
 *.ogg
 *.pt
