@@ -1787,7 +1787,79 @@ const PACKED_EN_LEXICON: string = [
 let cachedEnWords: Set<string> | null = null;
 let cachedEnPrefixes: Set<string> | null = null;
 
-const EN_CLITIC_SUFFIXES = ["'s", "'d", "'ll", "'re", "'ve", "'m"];
+const EN_LEX_CLITIC_MOD_SUFFIXES = ["'s", "'d", "'ll"];
+const EN_LEX_CLITIC_PRON_SUFFIXES = ["'re", "'ve"];
+const EN_LEX_PRON_CLITIC_STEMS = new Set<string>([
+  'i', 'you', 'we', 'they', 'who', 'what', 'where', 'when', 'why', 'how',
+  'there', 'that', 'these', 'those', 'could', 'would', 'should', 'might', 'must', 'may',
+]);
+
+const EN_LEX_CONVERSATIONAL_WORDS: string[] = [
+  "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't",
+  "won't", "wouldn't", "can't", "couldn't", "shouldn't", "haven't",
+  "hasn't", "hadn't", "mustn't", "needn't", "let's", "that's", "what's",
+  "there's", "here's", "who's", "where's", "how's", "it's", "he's",
+  "she's", "o'clock", "ain't", "y'all", "yall", "ma'am", "c'mon",
+  "gonna", "wanna", "gotta", "kinda", "sorta", "lemme", "gimme", "dunno",
+  "outta", "cuppa", "tryna", "imma", "finna", "hafta", "oughta",
+  "yeah", "yep", "yup", "nope", "nah", "okay", "ok", "hey", "yo", "sup",
+  "uh", "um", "hmm", "whoa", "yay", "ouch", "oops", "meh", "haha", "lol",
+  "cuz", "cos", "tho", "thru", "reckon", "dodgy", "iffy", "sketchy",
+  "bro", "bros", "bruh", "dude", "dudes", "mate", "mates", "folks", "guys",
+  "kiddo", "buddy", "vibe", "vibes", "vibing", "chill", "chilling", "chilled",
+  "legit", "cringe", "cringey", "lowkey", "highkey", "fomo", "banger", "bangers",
+  "clout", "hype", "hyped", "glitch", "glitches", "glitchy", "spam", "scam",
+  "ghosted", "ghosting", "binge", "selfie", "selfies", "meme", "memes",
+  "vlog", "vlogs", "podcast", "podcasts", "playlist", "playlists",
+  "livestream", "livestreams", "livestreaming", "collab", "collabs", "merch",
+  "promo", "inbox", "offline", "online", "hashtag", "hashtags", "trending",
+  "unbox", "unboxing", "repost", "shoutout", "hangout", "hangouts", "burnout",
+  "noob", "veggie", "veggies", "carbs", "cardio",
+  "yaar", "acha", "accha", "arre", "arrey", "bhai", "bhaiya", "didi",
+  "anna", "akka", "amma", "appa", "ji", "sahib", "macha", "machan", "guru",
+  "pakka", "pukka", "jugaad", "timepass", "prepone", "preponed", "preponing",
+  "updation", "needful", "revert", "reverted", "reverting",
+  "lakh", "lakhs", "crore", "crores", "rupee", "rupees", "paisa", "paise",
+  "aadhaar", "upi", "challan", "tatkal", "bandh", "ghat", "dhaba", "kirana",
+  "tiffin", "chai", "masala", "dosa", "idli", "sambar", "vada", "upma", "poha",
+  "paratha", "roti", "naan", "kulcha", "biryani", "pulao", "paneer", "dal",
+  "chutney", "raita", "lassi", "kulfi", "jalebi", "samosa", "samosas", "pakora",
+  "kurta", "saree", "namaste", "namaskara", "vanakkam", "pranam",
+  "diwali", "holi", "pongal", "onam", "navratri", "ugadi",
+  "bengaluru", "mumbai", "chennai", "kolkata", "hyderabad", "delhi", "noida",
+  "gurgaon", "gurugram", "pune", "ahmedabad", "jaipur", "lucknow", "kochi",
+  "mysuru", "mangaluru", "coimbatore", "madurai", "visakhapatnam", "vijayawada",
+  "bhubaneswar", "chandigarh", "guwahati", "indore", "bhopal", "nagpur", "surat",
+  "app", "apps", "api", "apis", "ui", "ux", "ai", "ml", "nlp", "asr", "stt",
+  "tts", "ctc", "llm", "llms", "gpt", "gpu", "gpus", "cpu", "cpus", "npu",
+  "tpu", "ram", "vram", "ssd", "usb", "hdmi", "wifi", "bluetooth", "ethernet",
+  "hotspot", "router", "modem", "pixel", "android", "ios", "macos", "linux",
+  "ubuntu", "chrome", "safari", "firefox", "webkit", "wasm", "webgpu", "webgl",
+  "onnx", "pytorch", "tensorflow", "numpy", "scipy", "pandas", "python",
+  "javascript", "typescript", "rust", "golang", "kotlin", "swift", "html",
+  "css", "json", "yaml", "toml", "xml", "csv", "sql", "nosql", "graphql",
+  "grpc", "http", "https", "ssl", "tls", "ssh", "dns", "url", "urls", "cli",
+  "sdk", "sdks", "ide", "npm", "yarn", "pnpm", "pip", "conda", "git", "github",
+  "gitlab", "repo", "repos", "commit", "commits", "rebase", "diff", "diffs",
+  "devops", "docker", "dockerfile", "kubernetes", "aws", "gcp", "azure",
+  "cloudflare", "vercel", "supabase", "firebase", "postgres", "postgresql",
+  "mysql", "sqlite", "redis", "kafka", "mongodb", "frontend", "backend",
+  "fullstack", "microservice", "microservices", "serverless", "endpoint",
+  "endpoints", "webhook", "webhooks", "payload", "payloads", "latency",
+  "throughput", "bandwidth", "cache", "cached", "caching", "mutex", "async",
+  "await", "sync", "synced", "syncing", "config", "configs", "env", "auth",
+  "oauth", "jwt", "sso", "login", "logins", "logout", "signup", "signups",
+  "onboarding", "dashboard", "dashboards", "analytics", "telemetry", "metrics",
+  "logs", "logging", "logger", "debug", "debugged", "debugging", "debugger",
+  "refactor", "refactored", "refactoring", "codebase", "workflow", "workflows",
+  "pipeline", "pipelines", "deploy", "deployed", "deploying", "deployment",
+  "deployments", "rollback", "prod", "staging", "dev", "devs", "qa", "hotfix",
+  "bugfix", "changelog", "readme", "screenshot", "screenshots", "dropdown",
+  "modal", "navbar", "sidebar", "tooltip", "checkbox", "toggle", "worklet",
+  "subword", "subwords", "tokenizer", "quantized", "quantization", "finetune",
+  "finetuned", "finetuning", "checkpoint", "checkpoints", "inference", "logits",
+  "softmax", "lexicon", "swanada", "sarvam",
+];
 
 export function getEnLexicon(): { words: Set<string>; prefixes: Set<string> } {
   if (cachedEnWords !== null && cachedEnPrefixes !== null) {
@@ -1811,15 +1883,8 @@ export function getEnLexicon(): { words: Set<string>; prefixes: Set<string> } {
     }
   }
 
-  const contractions = [
-    "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't",
-    "won't", "wouldn't", "can't", "couldn't", "shouldn't", "haven't",
-    "hasn't", "hadn't", "mustn't", "needn't", "let's", "that's", "what's",
-    "there's", "here's", "who's", "where's", "how's", "it's", "he's",
-    "she's", "o'clock",
-  ];
-  for (let c = 0; c < contractions.length; c++) {
-    const contr = contractions[c];
+  for (let c = 0; c < EN_LEX_CONVERSATIONAL_WORDS.length; c++) {
+    const contr = EN_LEX_CONVERSATIONAL_WORDS[c];
     words.add(contr);
     for (let k = 2; k <= contr.length; k++) {
       prefixes.add(contr.slice(0, k));
@@ -1833,13 +1898,30 @@ export function getEnLexicon(): { words: Set<string>; prefixes: Set<string> } {
 
 export function isEnWord(word: string, words: Set<string>): boolean {
   if (words.has(word)) return true;
-  for (let s = 0; s < EN_CLITIC_SUFFIXES.length; s++) {
-    const suf = EN_CLITIC_SUFFIXES[s];
+  if (word === "i'm") return true;
+  for (let s = 0; s < EN_LEX_CLITIC_MOD_SUFFIXES.length; s++) {
+    const suf = EN_LEX_CLITIC_MOD_SUFFIXES[s];
     if (word.endsWith(suf) && word.length > suf.length) {
-      if (words.has(word.slice(0, word.length - suf.length))) {
+      const stem = word.slice(0, word.length - suf.length);
+      if ((stem.length >= 2 || stem === 'i') && words.has(stem)) {
         return true;
       }
     }
+  }
+  for (let s = 0; s < EN_LEX_CLITIC_PRON_SUFFIXES.length; s++) {
+    const suf = EN_LEX_CLITIC_PRON_SUFFIXES[s];
+    if (word.endsWith(suf) && word.length > suf.length) {
+      const stem = word.slice(0, word.length - suf.length);
+      if (EN_LEX_PRON_CLITIC_STEMS.has(stem) || (stem.length >= 3 && words.has(stem))) {
+        return true;
+      }
+    }
+  }
+  if (word.endsWith("in'") && word.length >= 5 && words.has(word.slice(0, -1) + 'g')) {
+    return true;
+  }
+  if (word.endsWith('ish') && word.length >= 6 && words.has(word.slice(0, -3))) {
+    return true;
   }
   return false;
 }
@@ -1851,9 +1933,16 @@ export function isEnPrefix(prefix: string, prefixes: Set<string>, words: Set<str
     const stem = prefix.slice(0, idx);
     const tail = prefix.slice(idx);
     if (
+      stem === 'i' &&
+      (tail === "'" || tail === "'m" || tail === "'d" || tail === "'l" || tail === "'ll" || tail === "'v" || tail === "'ve")
+    ) {
+      return true;
+    }
+    if (
+      stem.length >= 2 &&
       words.has(stem) &&
       (tail === "'" || tail === "'s" || tail === "'d" || tail === "'l" || tail === "'ll" ||
-       tail === "'r" || tail === "'re" || tail === "'v" || tail === "'ve" || tail === "'m" || tail === "'t")
+       tail === "'r" || tail === "'re" || tail === "'v" || tail === "'ve" || tail === "'t")
     ) {
       return true;
     }

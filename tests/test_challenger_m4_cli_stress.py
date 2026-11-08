@@ -41,8 +41,8 @@ def test_cli_version(check_prerequisites):
 
     assert code_node == 0, f"Node --version failed: {out_node}"
     assert code_py == 0, f"Python --version failed: {out_py}"
-    assert out_node.strip() == "swanada 1.0.1"
-    assert out_py.strip() == "swanada 1.0.1"
+    assert out_node.strip() == "swanada 1.0.2"
+    assert out_py.strip() == "swanada 1.0.2"
 
 
 def test_cli_help(check_prerequisites):

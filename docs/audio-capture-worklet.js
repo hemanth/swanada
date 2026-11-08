@@ -16,6 +16,11 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
     this.silenceGateEnabled = Boolean(opts.silenceGateEnabled);
     this.vadHangoverFrames = Number(opts.vadHangoverFrames) || 2;
     this.noiseSuppressionEnabled = Boolean(opts.noiseSuppressionEnabled);
+    this.alcEnabled = Boolean(opts.alcEnabled);
+
+    // Causal Automatic Level Control (ALC) state for quiet / distant microphones
+    this.alcEnv = 0.0;
+    this.alcGain = 1.0;
 
     // 16 kHz post-decimation biquad states for 80 Hz HPF + 50 Hz / 60 Hz hum notch + online noise floor
     // 80 Hz 2nd-order Butterworth HPF @ 16000 Hz
@@ -75,31 +80,39 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
       Number(opts.sampleRate) || (typeof sampleRate !== 'undefined' ? sampleRate : 48000);
     this.ratio = currentSampleRate / this.targetRate;
 
-    // 2nd-order Butterworth Anti-Aliasing Low-Pass Filter (fc = 7500 Hz, Q = 1/sqrt(2))
+    // 4th-order cascaded Butterworth Anti-Aliasing Low-Pass Filter (fc = 7400 Hz, -24 dB/oct)
     if (currentSampleRate > this.targetRate) {
-      const fc = 7500.0;
+      const fc = 7400.0;
       const omega = (2.0 * Math.PI * fc) / currentSampleRate;
       const sinOmega = Math.sin(omega);
       const cosOmega = Math.cos(omega);
-      const alpha = sinOmega / (2.0 * 0.7071067811865476); // Q = 1/sqrt(2)
 
-      const b0 = (1.0 - cosOmega) * 0.5;
-      const b1 = 1.0 - cosOmega;
-      const b2 = (1.0 - cosOmega) * 0.5;
-      const a0 = 1.0 + alpha;
-      const a1 = -2.0 * cosOmega;
-      const a2 = 1.0 - alpha;
+      // Section 1: Q1 = 0.541196100146197
+      const alpha1 = sinOmega / (2.0 * 0.541196100146197);
+      const a0_1 = 1.0 + alpha1;
+      this.b0 = ((1.0 - cosOmega) * 0.5) / a0_1;
+      this.b1 = (1.0 - cosOmega) / a0_1;
+      this.b2 = ((1.0 - cosOmega) * 0.5) / a0_1;
+      this.a1 = (-2.0 * cosOmega) / a0_1;
+      this.a2 = (1.0 - alpha1) / a0_1;
 
-      this.b0 = b0 / a0;
-      this.b1 = b1 / a0;
-      this.b2 = b2 / a0;
-      this.a1 = a1 / a0;
-      this.a2 = a2 / a0;
+      // Section 2: Q2 = 1.3065629648763766
+      const alpha2 = sinOmega / (2.0 * 1.3065629648763766);
+      const a0_2 = 1.0 + alpha2;
+      this.s2B0 = ((1.0 - cosOmega) * 0.5) / a0_2;
+      this.s2B1 = (1.0 - cosOmega) / a0_2;
+      this.s2B2 = ((1.0 - cosOmega) * 0.5) / a0_2;
+      this.s2A1 = (-2.0 * cosOmega) / a0_2;
+      this.s2A2 = (1.0 - alpha2) / a0_2;
 
       this.x1 = 0.0;
       this.x2 = 0.0;
       this.y1 = 0.0;
       this.y2 = 0.0;
+      this.s2X1 = 0.0;
+      this.s2X2 = 0.0;
+      this.s2Y1 = 0.0;
+      this.s2Y2 = 0.0;
       this.filterEnabled = true;
     } else {
       this.filterEnabled = false;
@@ -135,6 +148,10 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
           this.x2 = 0.0;
           this.y1 = 0.0;
           this.y2 = 0.0;
+          this.s2X1 = 0.0;
+          this.s2X2 = 0.0;
+          this.s2Y1 = 0.0;
+          this.s2Y2 = 0.0;
         }
         this.hpX1 = 0.0; this.hpX2 = 0.0; this.hpY1 = 0.0; this.hpY2 = 0.0;
         this.n50X1 = 0.0; this.n50X2 = 0.0; this.n50Y1 = 0.0; this.n50Y2 = 0.0;
@@ -142,6 +159,8 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
         this.noiseFloorRms = 0.002;
         this.smoothEnv = 0.0;
         this.expanderGain = 1.0;
+        this.alcEnv = 0.0;
+        this.alcGain = 1.0;
       } else if (type === 'config') {
         if (typeof msg.vadThreshold === 'number') this.vadThreshold = msg.vadThreshold;
         if (typeof msg.silenceGateEnabled === 'boolean') this.silenceGateEnabled = msg.silenceGateEnabled;
@@ -149,6 +168,9 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
         if (typeof msg.vadEnabled === 'boolean') this.vadEnabled = msg.vadEnabled;
         if (typeof msg.noiseSuppressionEnabled === 'boolean') {
           this.noiseSuppressionEnabled = msg.noiseSuppressionEnabled;
+        }
+        if (typeof msg.alcEnabled === 'boolean') {
+          this.alcEnabled = msg.alcEnabled;
         }
       } else if (type === 'pause') {
         this.isActive = false;
@@ -210,16 +232,22 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
       this.monoInput.set(ch0);
     }
 
-    // 2. Anti-Aliasing Low-Pass Filtering
+    // 2. 4th-Order Cascaded Anti-Aliasing Low-Pass Filtering
     if (this.filterEnabled) {
       for (let i = 0; i < nFrames; i++) {
         const x = this.monoInput[i];
-        const y = this.b0 * x + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
+        const y1 = this.b0 * x + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
         this.x2 = this.x1;
         this.x1 = x;
         this.y2 = this.y1;
-        this.y1 = y;
-        this.monoInput[i] = y;
+        this.y1 = y1;
+
+        const y2 = this.s2B0 * y1 + this.s2B1 * this.s2X1 + this.s2B2 * this.s2X2 - this.s2A1 * this.s2Y1 - this.s2A2 * this.s2Y2;
+        this.s2X2 = this.s2X1;
+        this.s2X1 = y1;
+        this.s2Y2 = this.s2Y1;
+        this.s2Y1 = y2;
+        this.monoInput[i] = y2;
       }
     }
 
@@ -281,14 +309,29 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
         this.noiseFloorRms = 0.99985 * this.noiseFloorRms + 0.00015 * this.smoothEnv;
       }
       if (this.noiseFloorRms < 0.0003) this.noiseFloorRms = 0.0003;
-      if (this.noiseFloorRms > 0.03) this.noiseFloorRms = 0.03;
+      if (this.noiseFloorRms > 0.008) this.noiseFloorRms = 0.008;
 
-      const gateThresh = this.noiseFloorRms * 1.8;
+      const gateThresh = this.noiseFloorRms * 1.6;
       const targetG = this.smoothEnv >= gateThresh
         ? 1.0
-        : Math.max(0.18, this.smoothEnv / (gateThresh + 1e-8));
+        : Math.max(0.45, this.smoothEnv / (gateThresh + 1e-8));
       this.expanderGain = 0.985 * this.expanderGain + 0.015 * targetG;
       s = n60Y * this.expanderGain;
+    }
+
+    if (this.alcEnabled) {
+      const absIn = s >= 0.0 ? s : -s;
+      this.alcEnv = absIn > this.alcEnv
+        ? (0.985 * this.alcEnv + 0.015 * absIn)
+        : (0.9992 * this.alcEnv + 0.0008 * absIn);
+      let targetAlc = 1.0;
+      if (this.alcEnv >= 0.0025 && this.alcEnv < 0.075) {
+        targetAlc = Math.min(5.0, 0.075 / (this.alcEnv + 1e-6));
+      } else if (this.alcEnv > 0.14) {
+        targetAlc = Math.max(0.6, 0.14 / this.alcEnv);
+      }
+      this.alcGain = 0.996 * this.alcGain + 0.004 * targetAlc;
+      s *= this.alcGain;
     }
 
     // Clamping to standard PCM range [-1.0, 1.0]

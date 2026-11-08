@@ -905,7 +905,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.5.3';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.5.4';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -1495,7 +1495,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.5.3',
+              workerUrl: './stt-worker.mjs?v=1.5.4',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -1634,7 +1634,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           const encoderUrl = isLocalDevHost()
             ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0'
             : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0`;
-          const headUrl = `./heads/${lang}.bin?v=1.5.0`;
+          const headUrl = lang === 'en' ? './heads/en.bin?v=1.5.4' : `./heads/${lang}.bin?v=1.5.0`;
           const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
           const vocabUrl = `./vocabularies/${vocabFile}?v=1.5.0`;
 
@@ -1700,6 +1700,13 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       const proc = createProc.call(audioCtx, 4096, 1, 1);
       const srcRate = audioCtx.sampleRate || 48000;
       let accum = new Float32Array(0);
+      proc.__flushTail = () => {
+        if (accum.length > 0 && workerClient) {
+          const tail = accum;
+          accum = new Float32Array(0);
+          workerClient.pushAudio(tail, false);
+        }
+      };
       proc.onaudioprocess = (ev) => {
         if (!isRecording || !workerClient) return;
         const input = ev.inputBuffer.getChannelData(0);
@@ -1721,6 +1728,8 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       proc.connect(sinkNode);
       scriptProcessorNode = proc;
     }
+
+    let pendingWorkletFlushResolve = null;
 
     // Live Microphone Capture (Desktop & Mobile Hardware Sample-Rate Safe)
     async function toggleMicrophone() {
@@ -1745,7 +1754,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: { ideal: 1 },
-            echoCancellation: false,
+            echoCancellation: true,
             noiseSuppression: false,
             autoGainControl: true,
           }
@@ -1797,17 +1806,19 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         if (audioCtx.audioWorklet && typeof AudioWorkletNode === 'function') {
           try {
             if (!workletModuleLoaded) {
-              await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js?v=1.5.1');
+              await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js?v=1.5.4');
               workletModuleLoaded = true;
             }
-            workletNode = new AudioWorkletNode(audioCtx, 'swanada-audio-capture-processor', {
+            const activeWorklet = new AudioWorkletNode(audioCtx, 'swanada-audio-capture-processor', {
               processorOptions: {
                 chunkSamples: isMobileDevice ? 2400 : 1600,
                 sampleRate: audioCtx.sampleRate,
-                noiseSuppressionEnabled: denoiseEnabled,
+                noiseSuppressionEnabled: false,
+                alcEnabled: true,
               }
             });
-            workletNode.port.onmessage = (event) => {
+            workletNode = activeWorklet;
+            activeWorklet.port.onmessage = (event) => {
               const payload = event.data;
               if (payload && payload.audioChunk) {
                 receivedWorkletChunks++;
@@ -1821,7 +1832,15 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
                   workerClient.pushAudio(sendChunk, false);
                 }
                 if (!payload.isTail) {
-                  workletNode.port.postMessage({ type: 'recycle', buffer: chunk.buffer }, [chunk.buffer]);
+                  try {
+                    activeWorklet.port.postMessage({ type: 'recycle', buffer: chunk.buffer }, [chunk.buffer]);
+                  } catch {}
+                }
+              } else if (payload && payload.type === 'flushed') {
+                if (pendingWorkletFlushResolve) {
+                  const fn = pendingWorkletFlushResolve;
+                  pendingWorkletFlushResolve = null;
+                  fn();
                 }
               }
             };
@@ -1873,36 +1892,65 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         clearTimeout(workletWatchdogTimer);
         workletWatchdogTimer = null;
       }
-      if (workletNode) {
-        try { workletNode.port.postMessage({ type: 'flush' }); } catch {}
-        try { workletNode.disconnect(); } catch {}
-        workletNode = null;
-      }
-      if (scriptProcessorNode) {
-        try { scriptProcessorNode.onaudioprocess = null; } catch {}
-        try { scriptProcessorNode.disconnect(); } catch {}
-        scriptProcessorNode = null;
-      }
-      if (micSourceNode) {
-        try { micSourceNode.disconnect(); } catch {}
-        micSourceNode = null;
-      }
-      if (silentSinkNode) {
-        try { silentSinkNode.disconnect(); } catch {}
-        silentSinkNode = null;
-      }
-      if (micStream) {
-        micStream.getTracks().forEach(t => t.stop());
-        micStream = null;
-      }
+      const closingWorklet = workletNode;
+      workletNode = null;
+      const closingScriptProc = scriptProcessorNode;
+      scriptProcessorNode = null;
+      const closingSource = micSourceNode;
+      micSourceNode = null;
+      const closingSink = silentSinkNode;
+      silentSinkNode = null;
+      const closingStream = micStream;
+      micStream = null;
+
       releaseWakeLock();
       sampleRateLabel.textContent = '16 kHz Mono';
       micBtn.className = 'btn';
       micBtnText.textContent = 'Record Mic';
       statusDot.className = 'status-dot ready';
       liveBadge.textContent = 'Processing Final...';
-      if (workerClient) {
-        workerClient.finishStream().catch(() => {});
+
+      const teardownAndFinish = () => {
+        if (closingWorklet) {
+          try { closingWorklet.disconnect(); } catch {}
+        }
+        if (closingScriptProc) {
+          try { if (typeof closingScriptProc.__flushTail === 'function') closingScriptProc.__flushTail(); } catch {}
+          try { closingScriptProc.onaudioprocess = null; } catch {}
+          try { closingScriptProc.disconnect(); } catch {}
+        }
+        if (closingSource) {
+          try { closingSource.disconnect(); } catch {}
+        }
+        if (closingSink) {
+          try { closingSink.disconnect(); } catch {}
+        }
+        if (closingStream) {
+          try { closingStream.getTracks().forEach(t => t.stop()); } catch {}
+        }
+        if (workerClient) {
+          workerClient.finishStream().catch(() => {});
+        }
+      };
+
+      if (closingWorklet) {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          pendingWorkletFlushResolve = null;
+          teardownAndFinish();
+        };
+        pendingWorkletFlushResolve = done;
+        const fallbackTimer = setTimeout(done, 90);
+        try {
+          closingWorklet.port.postMessage({ type: 'flush' });
+        } catch {
+          clearTimeout(fallbackTimer);
+          done();
+        }
+      } else {
+        teardownAndFinish();
       }
     }
 
@@ -1953,7 +2001,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       }
       if (workletNode) {
         try {
-          workletNode.port.postMessage({ type: 'config', noiseSuppressionEnabled: denoiseEnabled });
+          workletNode.port.postMessage({ type: 'config', noiseSuppressionEnabled: false, alcEnabled: true });
         } catch {}
       }
     });

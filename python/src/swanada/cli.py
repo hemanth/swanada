@@ -85,7 +85,7 @@ def parse_cli_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "-v",
         "--version",
         action="version",
-        version="swanada 1.0.1",
+        version="swanada 1.0.2",
         help="Display version information and exit",
     )
     return parser.parse_args(argv)

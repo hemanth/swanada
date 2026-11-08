@@ -525,7 +525,15 @@ class SwanadaStream:
     def _segment_turn_on_pause(self, duration_ms: float) -> bool:
         did_infer = False
         if len(self.audio_buffer) >= 4800:
-            if self.has_untranscribed_tail or not self.decoder.last_hyp_tokens:
+            need_tail_infer = (
+                (self.has_untranscribed_tail or not self.decoder.last_hyp_tokens)
+                and (
+                    self.total_audio_samples <= 48000
+                    or self.infer_interval_samples == 0
+                    or self.samples_since_last_inference >= max(self.infer_interval_samples, 38400)
+                )
+            )
+            if need_tail_infer:
                 try:
                     use_tail_slice = (
                         self.is_window_sliding
@@ -572,7 +580,8 @@ class SwanadaStream:
             self.audio_buffer = np.zeros(0, dtype=np.float32)
             self.pending_chunk = np.zeros(0, dtype=np.float32)
             self.is_window_sliding = False
-            self.samples_since_last_inference = 0
+            if did_infer:
+                self.samples_since_last_inference = 0
             self.has_untranscribed_tail = False
         return did_infer
 
@@ -706,11 +715,16 @@ class SwanadaStream:
                 return None
             return self._cached_or_empty_transcript(duration_ms)
 
+        effective_interval = (
+            max(self.infer_interval_samples, 38400)
+            if (self.infer_interval_samples > 0 and self.total_audio_samples > 64000)
+            else self.infer_interval_samples
+        )
         if (
-            self.infer_interval_samples > 0
+            effective_interval > 0
             and self.last_transcript is not None
-            and not self.pending_turn_flush
-            and self.samples_since_last_inference < self.infer_interval_samples
+            and (not self.pending_turn_flush or self.total_audio_samples > 64000)
+            and self.samples_since_last_inference < effective_interval
         ):
             self.has_untranscribed_tail = True
             if len(self.audio_buffer) > self.max_buffer_samples:
@@ -743,11 +757,7 @@ class SwanadaStream:
         )
         eval_buf = (
             self.audio_buffer[-36000:]
-            if (
-                not self.is_window_sliding
-                and use_partial_tail_slice
-                and len(self.audio_buffer) > 36000
-            )
+            if (use_partial_tail_slice and len(self.audio_buffer) > 36000)
             else (
                 self.audio_buffer[-self.max_buffer_samples:]
                 if (self.is_window_sliding and len(self.audio_buffer) > self.max_buffer_samples)
@@ -787,9 +797,7 @@ class SwanadaStream:
         ):
             global_tokens = committed + prev_hyp[len(committed):]
 
-        commit_min_samples = (
-            28800 if (self.decoder._is_english or self.chunk_size_samples <= 3200) else 34000
-        )
+        commit_min_samples = 28800 if self.decoder._is_english else 34000
         allow_commit = (not self.pending_turn_flush) and (
             self.is_window_sliding or len(self.audio_buffer) >= commit_min_samples
         )

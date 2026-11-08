@@ -1670,17 +1670,76 @@ for (let i = 0; i < INDIC_LEX_SAFE_ASCII.length; i++) {
 const INDIC_LEX_VIRAMAS = new Set        (['\u094d', '\u09cd', '\u0a4d', '\u0acd', '\u0b4d', '\u0bcd', '\u0c4d', '\u0ccd', '\u0d4d']);
 
 const INDIC_PRODUCTIVE_SUFFIXES                           = {
-  sa: ["स्य", "ेषु", "ानां", "ेभ्यः", "ैः", "म्"],
-  hi: ["ों", "ें", "ियों"],
-  kn: ["ಗಳನ್ನು", "ಗಳಲ್ಲಿ", "ಗಳಿಗೆ", "ಗಳಿಂದ", "ಗಳ", "ವನ್ನು", "ದಲ್ಲಿ", "ದಿಂದ", "ಕ್ಕಾಗಿ", "ಯಲ್ಲಿ", "ನನ್ನು"],
-  mr: ["मध्ये", "साठी", "कडून", "वर", "चा", "ची", "चे", "च्या", "ला", "ना"],
-  bn: ["গুলোর", "গুলো", "গুলি", "দের", "তে", "কে", "র", "ের", "য়"],
-  ta: ["களுக்கு", "களில்", "களால்", "களின்", "களை", "களும்", "மும்", "யில்", "யின்", "வது", "ிறது", "கிறது"],
-  te: ["లలో", "లను", "లకు", "లతో", "లోని", "మైన", "డానికి", "టానికి"],
-  ml: ["യ്ക്കതിൽ", "യ്ക്ക്", "തിൽ", "യിൽ", "യിലെ", "മുണ്ട്", "യുണ്ട്", "ന്നു", "ുന്നു", "ുകയാണ്", "യാണ്", "ാണ്", "കൾ", "കളിൽ", "ങ്ങളെ", "ങ്ങൾ"],
-  gu: ["માંથી", "માં", "થી", "નો", "ની", "નું", "ના", "ને", "એ"],
-  pa: ["ੀਆਂ", "ਿਆਂ", "ਾਂ"],
-  or: ["ମାନଙ୍କୁ", "ମାନଙ୍କ", "ମାନେ", "ଙ୍କୁ", "ଙ୍କର", "ଙ୍କ", "ରେ", "ରୁ", "କୁ", "ଟି", "ଗୁଡ଼ିକ"],
+  sa: ['स्य', 'ेषु', 'ानां', 'ेभ्यः', 'ैः', 'म्'],
+  hi: ['ों', 'ें', 'ियों', 'ूंगा', 'ूँगा', 'ूंगी', 'ूँगी', 'ेंगे', 'ोगी', 'ोगे', 'वाला', 'वाले', 'वाली'],
+  kn: [
+    'ಗಳನ್ನು', 'ಗಳಲ್ಲಿ', 'ಗಳಿಗೆ', 'ಗಳಿಂದ', 'ಗಳ', 'ವನ್ನು', 'ದಲ್ಲಿ', 'ದಿಂದ', 'ಕ್ಕಾಗಿ', 'ಯಲ್ಲಿ', 'ನನ್ನು',
+    'ತೀನಿ', 'ತ್ತೀನಿ', 'ತೀಯಾ', 'ತಾರೆ', 'ತೇವೆ', 'ೋಣ', 'ಲ್ಲ', 'ಲ್ವಾ', 'ದಾ', 'ನಲ್ಲಿ', 'ಗೆ', 'ಯಿಂದ',
+  ],
+  mr: ['मध्ये', 'साठी', 'कडून', 'वर', 'चा', 'ची', 'चे', 'च्या', 'ला', 'ना', 'तोय', 'तेय', 'णार'],
+  bn: ['গুলোর', 'গুলো', 'গুলি', 'দের', 'তে', 'কে', 'র', 'ের', 'য়', 'য়ে', 'টা', 'টি', 'ছি', 'ছে', 'বো'],
+  ta: [
+    'களுக்கு', 'களில்', 'களால்', 'களின்', 'களை', 'களும்', 'மும்', 'யில்', 'யின்', 'வது', 'ிறது', 'கிறது',
+    'றேன்', 'றோம்', 'றாங்க', 'ச்சுட்டு', 'ச்சிட்டு', 'ங்க', 'ல', 'ப்பா', 'ண்ணா', 'க்கு',
+  ],
+  te: ['లలో', 'లను', 'లకు', 'లతో', 'లోని', 'మైన', 'డానికి', 'టానికి', 'తున్నా', 'స్తున్నా', 'ద్దాం', 'లేదు', 'లో'],
+  ml: [
+    'യ്ക്കതിൽ', 'യ്ക്ക്', 'തിൽ', 'യിൽ', 'യിലെ', 'മുണ്ട്', 'യുണ്ട്', 'ന്നു', 'ുന്നു', 'ുകയാണ്', 'യാണ്', 'ാണ്',
+    'കൾ', 'കളിൽ', 'ങ്ങളെ', 'ങ്ങൾ', 'ാം', 'ല്ലേ', 'ട്ടെ',
+  ],
+  gu: ['માંથી', 'માં', 'થી', 'નો', 'ની', 'નું', 'ના', 'ને', 'એ', 'ીશ', 'શું', 'વાનું'],
+  pa: ['ੀਆਂ', 'ਿਆਂ', 'ਾਂ', 'ਾਂਗਾ', 'ਾਂਗੇ'],
+  or: ['ମାନଙ୍କୁ', 'ମାନଙ୍କ', 'ମାନେ', 'ଙ୍କୁ', 'ଙ୍କର', 'ଙ୍କ', 'ରେ', 'ରୁ', 'କୁ', 'ଟି', 'ଗୁଡ଼ିକ', 'ୁଛି', 'ିବି'],
+};
+
+const INDIC_LEX_COLLOQUIAL_SUPPLEMENTS                           = {
+  hi: [
+    'यार', 'भाई', 'अच्छा', 'अरे', 'मस्त', 'पक्का', 'जुगाड़', 'टाइमपास', 'ऑफिस', 'ऑफ़िस',
+    'मीटिंग', 'मोबाइल', 'मैसेज', 'वीडियो', 'कॉल', 'ऑनलाइन', 'प्रॉब्लम', 'टाइम', 'ऐप',
+    'हूं', 'करूंगा', 'करूंगी', 'जाऊंगा', 'आऊंगा', 'बताओ', 'बोलो', 'सुनो', 'चलो',
+  ],
+  kn: [
+    'ಮಚ್ಚಾ', 'ಮಚ್ಚ', 'ಗುರು', 'ಇವಾಗ', 'ಹೌದಾ', 'ಅಲ್ವಾ', 'ಯಾಕೆ', 'ಗೊತ್ತಿಲ್ಲ', 'ಗೊತ್ತು',
+    'ಚೆನ್ನಾಗಿದೆ', 'ಮಾಡ್ತೀನಿ', 'ಬರ್ತೀನಿ', 'ಹೋಗ್ತೀನಿ', 'ಹೋಗೋಣ', 'ಮಾಡೋಣ', 'ನೋಡೋಣ',
+    'ಆಫೀಸ್', 'ಮೀಟಿಂಗ್', 'ಮೊಬೈಲ್', 'ಮೆಸೇಜ್', 'ವಿಡಿಯೋ', 'ವೀಡಿಯೊ', 'ಕಾಲ್', 'ಆನ್‌ಲೈನ್',
+    'ಆನ್ಲೈನ್', 'ಟೈಮ್', 'ಆಪ್', 'ವೇಟ್', 'ಫೋನ್', 'ಬ್ಯಾಂಕ್', 'ಪ್ರಾಬ್ಲಮ್', 'ಸ್ವಲ್ಪ', 'ತುಂಬಾ',
+  ],
+  ta: [
+    'மச்சான்', 'மச்சி', 'ண்ணா', 'ப்பா', 'இப்போ', 'அப்போ', 'எப்போ', 'இல்ல', 'இல்லப்பா',
+    'ரொம்ப', 'நல்லா', 'பண்றேன்', 'வர்றேன்', 'போறேன்', 'சொல்றேன்', 'பண்ணுங்க', 'பண்ணல',
+    'வரல', 'முடிச்சுட்டு', 'கண்டிப்பா', 'ஆபீஸ்', 'மீட்டிங்', 'மொபைல்', 'மெசேஜ்', 'வீடியோ',
+    'கால்', 'ஆன்லைன்', 'ஆன்லைன்ல', 'டைம்', 'ஆப்', 'ட்ரை', 'அப்லோட்', 'காலைல',
+  ],
+  te: [
+    'బ్రో', 'రా', 'భయ్యా', 'అవునా', 'ఏంటి', 'బాగుంది', 'చాలా', 'ఇప్పుడే',
+    'వస్తున్నా', 'చేస్తున్నా', 'వెళ్తున్నా', 'చేద్దాం', 'తెలియదు', 'ఆఫీస్', 'మీటింగ్',
+    '\u0c2e\u0c4a\u0c2c\u0c48\u0c32\u0c4d', 'మెసేజ్', 'వీడియో', 'కాల్', 'ఆన్లైన్', 'టైమ్', 'యాప్', 'ఫోన్', 'పేమెంట్', 'ప్రాబ్లం',
+  ],
+  ml: [
+    'മച്ചാനെ', 'അടിപൊളി', 'അല്ലേ', 'ചെയ്യാം', 'വരാം', 'പോകാം', 'അറിയില്ല', 'ഓഫീസ്',
+    'മീറ്റിംഗ്', 'മൊബൈൽ', 'മെസ്സേജ്', 'വീഡിയോ', 'കോൾ', 'ഓൺലൈൻ', 'ടൈം', 'ആപ്പ്', 'ഫോൺ',
+  ],
+  mr: [
+    'यार', 'भाऊ', 'मस्त', 'नक्की', 'ऑफिस', 'मीटिंग', 'मोबाईल', 'मेसेज', 'व्हिडिओ',
+    'कॉल', 'ऑनलाईन', '\u092a\u094d\u0930\u0949\u092c\u094d\u0932\u0947\u092e', 'टाईम', 'ॲप', 'येतोय', 'करतोय', 'जाऊया',
+  ],
+  bn: [
+    'ভাই', 'দাদা', 'ইয়ার', 'আরে', 'দারুণ', 'আড্ডা', 'অফিস', 'অফিসের', 'মিটিং',
+    'মিটিংয়ে', 'মোবাইল', 'মোবাইলে', 'মেসেজ', 'ভিডিও', 'কল', 'অনলাইন', 'অনলাইনে',
+    'প্রবলেম', 'টাইম', 'অ্যাপ', 'অ্যাপটা', 'করছি', 'আসছি', 'যাচ্ছি', 'তোমায়',
+  ],
+  gu: [
+    'યાર', 'ભાઈ', 'મસ્ત', 'પાક્કું', 'ઓફિસ', 'મીટિંગ', 'મોબાઇલ', 'મેસેજ', 'વીડિયો',
+    'કોલ', 'ઓનલાઇન', 'પ્રોબ્લેમ', 'ટાઇમ', 'એપ', 'આવું', 'કરું',
+  ],
+  pa: [
+    'ਯਾਰ', 'ਭਾਈ', 'ਵਧੀਆ', 'ਪੱਕਾ', 'ਆਫਿਸ', 'ਮੀਟਿੰਗ', 'ਮੋਬਾਈਲ', 'ਮੈਸੇਜ', 'ਵੀਡੀਓ',
+    'ਕਾਲ', 'ਆਨਲਾਈਨ', 'ਪ੍ਰਾਬਲਮ', 'ਟਾਈਮ', 'ਐਪ',
+  ],
+  or: [
+    'ଭାଇ', 'ବହୁତ', 'ଅଫିସ', 'ମିଟିଂ', 'ମୋବାଇଲ', 'ମେସେଜ', 'ଭିଡିଓ', 'କଲ', 'ଅନଲାଇନ',
+    'ପ୍ରବ୍ଲେମ', 'ଟାଇମ', 'ଆପ', 'ଇମେଲ',
+  ],
 };
 
 const PACKED_INDIC_LEXICONS                                           = {
@@ -5651,9 +5710,17 @@ function getIndicLexicon(lang        )                   {
     unpackedIndicLexCache.set(lang, empty);
     return empty;
   }
+  const coreSet = unpackIndicWordList(raw[1], raw[0]);
+  const extSet = unpackIndicWordList(raw[2], raw[0]);
+  const supp = INDIC_LEX_COLLOQUIAL_SUPPLEMENTS[lang];
+  if (supp) {
+    for (let i = 0; i < supp.length; i++) {
+      extSet.add(supp[i]);
+    }
+  }
   const pair                   = {
-    core: unpackIndicWordList(raw[1], raw[0]),
-    ext: unpackIndicWordList(raw[2], raw[0]),
+    core: coreSet,
+    ext: extSet,
   };
   unpackedIndicLexCache.set(lang, pair);
   return pair;
@@ -5690,6 +5757,20 @@ function classifyIndicWord(word        , lang        , coreSet             , ext
   if (word.length < 2) return 0;
   if (coreSet.has(word)) return 3;
   if (extSet.has(word)) return word.length >= 3 ? 2 : 1;
+  if (word.includes('\u0902') || word.includes('\u0901') || word.includes('\u093c')) {
+    const altN = word.replaceAll('\u093c', '');
+    if (altN !== word && (coreSet.has(altN) || extSet.has(altN))) {
+      return word.length >= 3 ? 2 : 1;
+    }
+    const altC = altN.replaceAll('\u0902', '\u0901');
+    if (altC !== altN && (coreSet.has(altC) || extSet.has(altC))) {
+      return word.length >= 3 ? 2 : 1;
+    }
+    const altA = altN.replaceAll('\u0901', '\u0902');
+    if (altA !== altN && (coreSet.has(altA) || extSet.has(altA))) {
+      return word.length >= 3 ? 2 : 1;
+    }
+  }
   const lastCh = word[word.length - 1];
   if (INDIC_LEX_VIRAMAS.has(lastCh) && word.length >= 3) {
     const bare = word.slice(0, -1);
@@ -7889,7 +7970,79 @@ const PACKED_EN_LEXICON         = [
 let cachedEnWords                     = null;
 let cachedEnPrefixes                     = null;
 
-const EN_CLITIC_SUFFIXES = ["'s", "'d", "'ll", "'re", "'ve", "'m"];
+const EN_LEX_CLITIC_MOD_SUFFIXES = ["'s", "'d", "'ll"];
+const EN_LEX_CLITIC_PRON_SUFFIXES = ["'re", "'ve"];
+const EN_LEX_PRON_CLITIC_STEMS = new Set        ([
+  'i', 'you', 'we', 'they', 'who', 'what', 'where', 'when', 'why', 'how',
+  'there', 'that', 'these', 'those', 'could', 'would', 'should', 'might', 'must', 'may',
+]);
+
+const EN_LEX_CONVERSATIONAL_WORDS           = [
+  "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't",
+  "won't", "wouldn't", "can't", "couldn't", "shouldn't", "haven't",
+  "hasn't", "hadn't", "mustn't", "needn't", "let's", "that's", "what's",
+  "there's", "here's", "who's", "where's", "how's", "it's", "he's",
+  "she's", "o'clock", "ain't", "y'all", "yall", "ma'am", "c'mon",
+  "gonna", "wanna", "gotta", "kinda", "sorta", "lemme", "gimme", "dunno",
+  "outta", "cuppa", "tryna", "imma", "finna", "hafta", "oughta",
+  "yeah", "yep", "yup", "nope", "nah", "okay", "ok", "hey", "yo", "sup",
+  "uh", "um", "hmm", "whoa", "yay", "ouch", "oops", "meh", "haha", "lol",
+  "cuz", "cos", "tho", "thru", "reckon", "dodgy", "iffy", "sketchy",
+  "bro", "bros", "bruh", "dude", "dudes", "mate", "mates", "folks", "guys",
+  "kiddo", "buddy", "vibe", "vibes", "vibing", "chill", "chilling", "chilled",
+  "legit", "cringe", "cringey", "lowkey", "highkey", "fomo", "banger", "bangers",
+  "clout", "hype", "hyped", "glitch", "glitches", "glitchy", "spam", "scam",
+  "ghosted", "ghosting", "binge", "selfie", "selfies", "meme", "memes",
+  "vlog", "vlogs", "podcast", "podcasts", "playlist", "playlists",
+  "livestream", "livestreams", "livestreaming", "collab", "collabs", "merch",
+  "promo", "inbox", "offline", "online", "hashtag", "hashtags", "trending",
+  "unbox", "unboxing", "repost", "shoutout", "hangout", "hangouts", "burnout",
+  "noob", "veggie", "veggies", "carbs", "cardio",
+  "yaar", "acha", "accha", "arre", "arrey", "bhai", "bhaiya", "didi",
+  "anna", "akka", "amma", "appa", "ji", "sahib", "macha", "machan", "guru",
+  "pakka", "pukka", "jugaad", "timepass", "prepone", "preponed", "preponing",
+  "updation", "needful", "revert", "reverted", "reverting",
+  "lakh", "lakhs", "crore", "crores", "rupee", "rupees", "paisa", "paise",
+  "aadhaar", "upi", "challan", "tatkal", "bandh", "ghat", "dhaba", "kirana",
+  "tiffin", "chai", "masala", "dosa", "idli", "sambar", "vada", "upma", "poha",
+  "paratha", "roti", "naan", "kulcha", "biryani", "pulao", "paneer", "dal",
+  "chutney", "raita", "lassi", "kulfi", "jalebi", "samosa", "samosas", "pakora",
+  "kurta", "saree", "namaste", "namaskara", "vanakkam", "pranam",
+  "diwali", "holi", "pongal", "onam", "navratri", "ugadi",
+  "bengaluru", "mumbai", "chennai", "kolkata", "hyderabad", "delhi", "noida",
+  "gurgaon", "gurugram", "pune", "ahmedabad", "jaipur", "lucknow", "kochi",
+  "mysuru", "mangaluru", "coimbatore", "madurai", "visakhapatnam", "vijayawada",
+  "bhubaneswar", "chandigarh", "guwahati", "indore", "bhopal", "nagpur", "surat",
+  "app", "apps", "api", "apis", "ui", "ux", "ai", "ml", "nlp", "asr", "stt",
+  "tts", "ctc", "llm", "llms", "gpt", "gpu", "gpus", "cpu", "cpus", "npu",
+  "tpu", "ram", "vram", "ssd", "usb", "hdmi", "wifi", "bluetooth", "ethernet",
+  "hotspot", "router", "modem", "pixel", "android", "ios", "macos", "linux",
+  "ubuntu", "chrome", "safari", "firefox", "webkit", "wasm", "webgpu", "webgl",
+  "onnx", "pytorch", "tensorflow", "numpy", "scipy", "pandas", "python",
+  "javascript", "typescript", "rust", "golang", "kotlin", "swift", "html",
+  "css", "json", "yaml", "toml", "xml", "csv", "sql", "nosql", "graphql",
+  "grpc", "http", "https", "ssl", "tls", "ssh", "dns", "url", "urls", "cli",
+  "sdk", "sdks", "ide", "npm", "yarn", "pnpm", "pip", "conda", "git", "github",
+  "gitlab", "repo", "repos", "commit", "commits", "rebase", "diff", "diffs",
+  "devops", "docker", "dockerfile", "kubernetes", "aws", "gcp", "azure",
+  "cloudflare", "vercel", "supabase", "firebase", "postgres", "postgresql",
+  "mysql", "sqlite", "redis", "kafka", "mongodb", "frontend", "backend",
+  "fullstack", "microservice", "microservices", "serverless", "endpoint",
+  "endpoints", "webhook", "webhooks", "payload", "payloads", "latency",
+  "throughput", "bandwidth", "cache", "cached", "caching", "mutex", "async",
+  "await", "sync", "synced", "syncing", "config", "configs", "env", "auth",
+  "oauth", "jwt", "sso", "login", "logins", "logout", "signup", "signups",
+  "onboarding", "dashboard", "dashboards", "analytics", "telemetry", "metrics",
+  "logs", "logging", "logger", "debug", "debugged", "debugging", "debugger",
+  "refactor", "refactored", "refactoring", "codebase", "workflow", "workflows",
+  "pipeline", "pipelines", "deploy", "deployed", "deploying", "deployment",
+  "deployments", "rollback", "prod", "staging", "dev", "devs", "qa", "hotfix",
+  "bugfix", "changelog", "readme", "screenshot", "screenshots", "dropdown",
+  "modal", "navbar", "sidebar", "tooltip", "checkbox", "toggle", "worklet",
+  "subword", "subwords", "tokenizer", "quantized", "quantization", "finetune",
+  "finetuned", "finetuning", "checkpoint", "checkpoints", "inference", "logits",
+  "softmax", "lexicon", "swanada", "sarvam",
+];
 
 function getEnLexicon()                                                {
   if (cachedEnWords !== null && cachedEnPrefixes !== null) {
@@ -7913,15 +8066,8 @@ function getEnLexicon()                                                {
     }
   }
 
-  const contractions = [
-    "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't",
-    "won't", "wouldn't", "can't", "couldn't", "shouldn't", "haven't",
-    "hasn't", "hadn't", "mustn't", "needn't", "let's", "that's", "what's",
-    "there's", "here's", "who's", "where's", "how's", "it's", "he's",
-    "she's", "o'clock",
-  ];
-  for (let c = 0; c < contractions.length; c++) {
-    const contr = contractions[c];
+  for (let c = 0; c < EN_LEX_CONVERSATIONAL_WORDS.length; c++) {
+    const contr = EN_LEX_CONVERSATIONAL_WORDS[c];
     words.add(contr);
     for (let k = 2; k <= contr.length; k++) {
       prefixes.add(contr.slice(0, k));
@@ -7935,13 +8081,30 @@ function getEnLexicon()                                                {
 
 function isEnWord(word        , words             )          {
   if (words.has(word)) return true;
-  for (let s = 0; s < EN_CLITIC_SUFFIXES.length; s++) {
-    const suf = EN_CLITIC_SUFFIXES[s];
+  if (word === "i'm") return true;
+  for (let s = 0; s < EN_LEX_CLITIC_MOD_SUFFIXES.length; s++) {
+    const suf = EN_LEX_CLITIC_MOD_SUFFIXES[s];
     if (word.endsWith(suf) && word.length > suf.length) {
-      if (words.has(word.slice(0, word.length - suf.length))) {
+      const stem = word.slice(0, word.length - suf.length);
+      if ((stem.length >= 2 || stem === 'i') && words.has(stem)) {
         return true;
       }
     }
+  }
+  for (let s = 0; s < EN_LEX_CLITIC_PRON_SUFFIXES.length; s++) {
+    const suf = EN_LEX_CLITIC_PRON_SUFFIXES[s];
+    if (word.endsWith(suf) && word.length > suf.length) {
+      const stem = word.slice(0, word.length - suf.length);
+      if (EN_LEX_PRON_CLITIC_STEMS.has(stem) || (stem.length >= 3 && words.has(stem))) {
+        return true;
+      }
+    }
+  }
+  if (word.endsWith("in'") && word.length >= 5 && words.has(word.slice(0, -1) + 'g')) {
+    return true;
+  }
+  if (word.endsWith('ish') && word.length >= 6 && words.has(word.slice(0, -3))) {
+    return true;
   }
   return false;
 }
@@ -7953,9 +8116,16 @@ function isEnPrefix(prefix        , prefixes             , words             )  
     const stem = prefix.slice(0, idx);
     const tail = prefix.slice(idx);
     if (
+      stem === 'i' &&
+      (tail === "'" || tail === "'m" || tail === "'d" || tail === "'l" || tail === "'ll" || tail === "'v" || tail === "'ve")
+    ) {
+      return true;
+    }
+    if (
+      stem.length >= 2 &&
       words.has(stem) &&
       (tail === "'" || tail === "'s" || tail === "'d" || tail === "'l" || tail === "'ll" ||
-       tail === "'r" || tail === "'re" || tail === "'v" || tail === "'ve" || tail === "'m" || tail === "'t")
+       tail === "'r" || tail === "'re" || tail === "'v" || tail === "'ve" || tail === "'t")
     ) {
       return true;
     }
@@ -8189,6 +8359,34 @@ function formatEnCtcDisplay(text        )         {
   return out;
 }
 
+function ctcIsPlausibleEnOov(word        )          {
+  const n = word.length;
+  if (n < 2 || word.indexOf("'") >= 0) return false;
+  let hasVowel = false;
+  let runLen = 1;
+  for (let i = 0; i < n; i++) {
+    const ch = word[i];
+    if (ch === 'a' || ch === 'e' || ch === 'i' || ch === 'o' || ch === 'u' || ch === 'y') {
+      hasVowel = true;
+    }
+    if (i > 0) {
+      if (ch === word[i - 1]) {
+        runLen++;
+        if (runLen >= 3) return false;
+      } else {
+        runLen = 1;
+      }
+    }
+  }
+  return hasVowel;
+}
+
+function ctcScoreKnownEnWord(clean        )         {
+  const wlen = clean.length;
+  if (wlen <= 2) return 0.70;
+  return Math.min(3.05, 0.70 + 0.34 * wlen);
+}
+
 function extendEnLexicalState(
   lmScore        ,
   curWord        ,
@@ -8215,7 +8413,7 @@ function extendEnLexicalState(
       const nextWord = cw + lc;
       if (ip && !isEnPrefix(nextWord, prefixes, words)) {
         ip = false;
-        sc -= 2.85;
+        sc -= 2.35;
       }
       cw = nextWord;
     } else {
@@ -8226,13 +8424,11 @@ function extendEnLexicalState(
         const clean = stripTrailingApostrophes(cw);
         if (clean.length > 0) {
           if (isEnWord(clean, words)) {
-            if (nearCutEdge && (ch === '.' || ch === '?' || ch === '!')) {
-              sc += 0.35;
-            } else {
-              sc += clean.length >= 3 ? 2.55 : 0.85;
-            }
+            sc += ctcScoreKnownEnWord(clean);
+          } else if (ctcIsPlausibleEnOov(clean)) {
+            sc += ip ? -3.40 : -2.75;
           } else {
-            sc += ip ? -4.75 : -1.90;
+            sc += ip ? -4.35 : -2.85;
           }
         }
         cw = '';
@@ -8255,12 +8451,15 @@ function finalizeEnLexicalScore(
   if (clean.length === 0) return lmScore;
   if (isEnWord(clean, words)) {
     if (isPartial) {
-      return lmScore + (clean.length >= 4 ? 0.55 : 0.20);
+      return lmScore + (clean.length >= 4 ? 0.65 : 0.20);
     }
-    return lmScore + (clean.length >= 3 ? 2.55 : 0.85);
+    return lmScore + ctcScoreKnownEnWord(clean);
   }
   if (inPrefix) return lmScore;
-  return lmScore - 1.90;
+  if (ctcIsPlausibleEnOov(clean)) {
+    return lmScore - 2.75;
+  }
+  return lmScore - 2.85;
 }
 
 function beamDecodeCTC(
@@ -8273,8 +8472,8 @@ function beamDecodeCTC(
 )                  {
   const isEn = isEnglishSentencePieceVocab(vocabList);
   const isPartial = options?.isPartial === true;
-  const beamWidth = isEn ? 14 : 12;
-  const topK = Math.min(numClasses - 1, isEn ? 10 : 8);
+  const beamWidth = isEn ? 20 : 12;
+  const topK = Math.min(numClasses - 1, isEn ? 18 : 8);
 
   const lex = isEn ? getEnLexicon() : null;
   const enWords = lex ? lex.words : new Set        ();
@@ -8442,11 +8641,11 @@ function beamDecodeCTC(
         entries.sort((a, b) => {
           const wa = a[1].curWord;
           const pa = a[1].inPrefix
-            ? (enWords.has(wa) ? (wa.length >= 4 ? 1.55 : 0.45) : (wa.length >= 2 ? 0.35 : 0.0))
+            ? (enWords.has(wa) ? Math.min(1.45, 0.28 * wa.length) : (wa.length >= 2 ? 0.35 : 0.0))
             : 0.0;
           const wb = b[1].curWord;
           const pb = b[1].inPrefix
-            ? (enWords.has(wb) ? (wb.length >= 4 ? 1.55 : 0.45) : (wb.length >= 2 ? 0.35 : 0.0))
+            ? (enWords.has(wb) ? Math.min(1.45, 0.28 * wb.length) : (wb.length >= 2 ? 0.35 : 0.0))
             : 0.0;
           const sa = logAddExp(a[1].pb, a[1].pnb) + a[1].lmScore + pa;
           const sb = logAddExp(b[1].pb, b[1].pnb) + b[1].lmScore + pb;

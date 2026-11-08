@@ -224,6 +224,34 @@ function formatEnCtcDisplay(text: string): string {
   return out;
 }
 
+function ctcIsPlausibleEnOov(word: string): boolean {
+  const n = word.length;
+  if (n < 2 || word.indexOf("'") >= 0) return false;
+  let hasVowel = false;
+  let runLen = 1;
+  for (let i = 0; i < n; i++) {
+    const ch = word[i];
+    if (ch === 'a' || ch === 'e' || ch === 'i' || ch === 'o' || ch === 'u' || ch === 'y') {
+      hasVowel = true;
+    }
+    if (i > 0) {
+      if (ch === word[i - 1]) {
+        runLen++;
+        if (runLen >= 3) return false;
+      } else {
+        runLen = 1;
+      }
+    }
+  }
+  return hasVowel;
+}
+
+function ctcScoreKnownEnWord(clean: string): number {
+  const wlen = clean.length;
+  if (wlen <= 2) return 0.70;
+  return Math.min(3.05, 0.70 + 0.34 * wlen);
+}
+
 function extendEnLexicalState(
   lmScore: number,
   curWord: string,
@@ -250,7 +278,7 @@ function extendEnLexicalState(
       const nextWord = cw + lc;
       if (ip && !isEnPrefix(nextWord, prefixes, words)) {
         ip = false;
-        sc -= 2.85;
+        sc -= 2.35;
       }
       cw = nextWord;
     } else {
@@ -261,13 +289,11 @@ function extendEnLexicalState(
         const clean = stripTrailingApostrophes(cw);
         if (clean.length > 0) {
           if (isEnWord(clean, words)) {
-            if (nearCutEdge && (ch === '.' || ch === '?' || ch === '!')) {
-              sc += 0.35;
-            } else {
-              sc += clean.length >= 3 ? 2.55 : 0.85;
-            }
+            sc += ctcScoreKnownEnWord(clean);
+          } else if (ctcIsPlausibleEnOov(clean)) {
+            sc += ip ? -3.40 : -2.75;
           } else {
-            sc += ip ? -4.75 : -1.90;
+            sc += ip ? -4.35 : -2.85;
           }
         }
         cw = '';
@@ -290,12 +316,15 @@ function finalizeEnLexicalScore(
   if (clean.length === 0) return lmScore;
   if (isEnWord(clean, words)) {
     if (isPartial) {
-      return lmScore + (clean.length >= 4 ? 0.55 : 0.20);
+      return lmScore + (clean.length >= 4 ? 0.65 : 0.20);
     }
-    return lmScore + (clean.length >= 3 ? 2.55 : 0.85);
+    return lmScore + ctcScoreKnownEnWord(clean);
   }
   if (inPrefix) return lmScore;
-  return lmScore - 1.90;
+  if (ctcIsPlausibleEnOov(clean)) {
+    return lmScore - 2.75;
+  }
+  return lmScore - 2.85;
 }
 
 function beamDecodeCTC(
@@ -308,8 +337,8 @@ function beamDecodeCTC(
 ): CTCDecodeResult {
   const isEn = isEnglishSentencePieceVocab(vocabList);
   const isPartial = options?.isPartial === true;
-  const beamWidth = isEn ? 14 : 12;
-  const topK = Math.min(numClasses - 1, isEn ? 10 : 8);
+  const beamWidth = isEn ? 20 : 12;
+  const topK = Math.min(numClasses - 1, isEn ? 18 : 8);
 
   const lex = isEn ? getEnLexicon() : null;
   const enWords = lex ? lex.words : new Set<string>();
@@ -477,11 +506,11 @@ function beamDecodeCTC(
         entries.sort((a, b) => {
           const wa = a[1].curWord;
           const pa = a[1].inPrefix
-            ? (enWords.has(wa) ? (wa.length >= 4 ? 1.55 : 0.45) : (wa.length >= 2 ? 0.35 : 0.0))
+            ? (enWords.has(wa) ? Math.min(1.45, 0.28 * wa.length) : (wa.length >= 2 ? 0.35 : 0.0))
             : 0.0;
           const wb = b[1].curWord;
           const pb = b[1].inPrefix
-            ? (enWords.has(wb) ? (wb.length >= 4 ? 1.55 : 0.45) : (wb.length >= 2 ? 0.35 : 0.0))
+            ? (enWords.has(wb) ? Math.min(1.45, 0.28 * wb.length) : (wb.length >= 2 ? 0.35 : 0.0))
             : 0.0;
           const sa = logAddExp(a[1].pb, a[1].pnb) + a[1].lmScore + pa;
           const sb = logAddExp(b[1].pb, b[1].pnb) + b[1].lmScore + pb;

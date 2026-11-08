@@ -1789,7 +1789,84 @@ _PACKED_LEXICON = "".join((
 _EN_WORDS: Optional[Set[str]] = None
 _EN_PREFIXES: Optional[Set[str]] = None
 
-_CLITIC_SUFFIXES = ("'s", "'d", "'ll", "'re", "'ve", "'m")
+_CLITIC_MOD_SUFFIXES = ("'s", "'d", "'ll")
+_CLITIC_PRON_SUFFIXES = ("'re", "'ve")
+_PRON_CLITIC_STEMS = frozenset({
+    "i", "you", "we", "they", "who", "what", "where", "when", "why", "how",
+    "there", "that", "these", "those", "could", "would", "should", "might", "must", "may",
+})
+
+# General open-domain conversational, contraction, modern tech & pan-Indian English vocabulary
+_CONVERSATIONAL_EN_WORDS = (
+    # Standard & informal contractions / interjections
+    "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't",
+    "won't", "wouldn't", "can't", "couldn't", "shouldn't", "haven't",
+    "hasn't", "hadn't", "mustn't", "needn't", "let's", "that's", "what's",
+    "there's", "here's", "who's", "where's", "how's", "it's", "he's",
+    "she's", "o'clock", "ain't", "y'all", "yall", "ma'am", "c'mon",
+    "gonna", "wanna", "gotta", "kinda", "sorta", "lemme", "gimme", "dunno",
+    "outta", "cuppa", "tryna", "imma", "finna", "hafta", "oughta",
+    "yeah", "yep", "yup", "nope", "nah", "okay", "ok", "hey", "yo", "sup",
+    "uh", "um", "hmm", "whoa", "yay", "ouch", "oops", "meh", "haha", "lol",
+    "cuz", "cos", "tho", "thru", "reckon", "dodgy", "iffy", "sketchy",
+    # Everyday conversational & modern slang
+    "bro", "bros", "bruh", "dude", "dudes", "mate", "mates", "folks", "guys",
+    "kiddo", "buddy", "vibe", "vibes", "vibing", "chill", "chilling", "chilled",
+    "legit", "cringe", "cringey", "lowkey", "highkey", "fomo", "banger", "bangers",
+    "clout", "hype", "hyped", "glitch", "glitches", "glitchy", "spam", "scam",
+    "ghosted", "ghosting", "binge", "selfie", "selfies", "meme", "memes",
+    "vlog", "vlogs", "podcast", "podcasts", "playlist", "playlists",
+    "livestream", "livestreams", "livestreaming", "collab", "collabs", "merch",
+    "promo", "inbox", "offline", "online", "hashtag", "hashtags", "trending",
+    "unbox", "unboxing", "repost", "shoutout", "hangout", "hangouts", "burnout",
+    "noob", "veggie", "veggies", "carbs", "cardio",
+    # Pan-Indian English & everyday loanwords
+    "yaar", "acha", "accha", "arre", "arrey", "bhai", "bhaiya", "didi",
+    "anna", "akka", "amma", "appa", "ji", "sahib", "macha", "machan", "guru",
+    "pakka", "pukka", "jugaad", "timepass", "prepone", "preponed", "preponing",
+    "updation", "needful", "revert", "reverted", "reverting",
+    "lakh", "lakhs", "crore", "crores", "rupee", "rupees", "paisa", "paise",
+    "aadhaar", "upi", "challan", "tatkal", "bandh", "ghat", "dhaba", "kirana",
+    "tiffin", "chai", "masala", "dosa", "idli", "sambar", "vada", "upma", "poha",
+    "paratha", "roti", "naan", "kulcha", "biryani", "pulao", "paneer", "dal",
+    "chutney", "raita", "lassi", "kulfi", "jalebi", "samosa", "samosas", "pakora",
+    "kurta", "saree", "namaste", "namaskara", "vanakkam", "pranam",
+    "diwali", "holi", "pongal", "onam", "navratri", "ugadi",
+    "bengaluru", "mumbai", "chennai", "kolkata", "hyderabad", "delhi", "noida",
+    "gurgaon", "gurugram", "pune", "ahmedabad", "jaipur", "lucknow", "kochi",
+    "mysuru", "mangaluru", "coimbatore", "madurai", "visakhapatnam", "vijayawada",
+    "bhubaneswar", "chandigarh", "guwahati", "indore", "bhopal", "nagpur", "surat",
+    # Computing, software engineering & AI vocabulary
+    "app", "apps", "api", "apis", "ui", "ux", "ai", "ml", "nlp", "asr", "stt",
+    "tts", "ctc", "llm", "llms", "gpt", "gpu", "gpus", "cpu", "cpus", "npu",
+    "tpu", "ram", "vram", "ssd", "usb", "hdmi", "wifi", "bluetooth", "ethernet",
+    "hotspot", "router", "modem", "pixel", "android", "ios", "macos", "linux",
+    "ubuntu", "chrome", "safari", "firefox", "webkit", "wasm", "webgpu", "webgl",
+    "onnx", "pytorch", "tensorflow", "numpy", "scipy", "pandas", "python",
+    "javascript", "typescript", "rust", "golang", "kotlin", "swift", "html",
+    "css", "json", "yaml", "toml", "xml", "csv", "sql", "nosql", "graphql",
+    "grpc", "http", "https", "ssl", "tls", "ssh", "dns", "url", "urls", "cli",
+    "sdk", "sdks", "ide", "npm", "yarn", "pnpm", "pip", "conda", "git", "github",
+    "gitlab", "repo", "repos", "commit", "commits", "rebase", "diff", "diffs",
+    "devops", "docker", "dockerfile", "kubernetes", "aws", "gcp", "azure",
+    "cloudflare", "vercel", "supabase", "firebase", "postgres", "postgresql",
+    "mysql", "sqlite", "redis", "kafka", "mongodb", "frontend", "backend",
+    "fullstack", "microservice", "microservices", "serverless", "endpoint",
+    "endpoints", "webhook", "webhooks", "payload", "payloads", "latency",
+    "throughput", "bandwidth", "cache", "cached", "caching", "mutex", "async",
+    "await", "sync", "synced", "syncing", "config", "configs", "env", "auth",
+    "oauth", "jwt", "sso", "login", "logins", "logout", "signup", "signups",
+    "onboarding", "dashboard", "dashboards", "analytics", "telemetry", "metrics",
+    "logs", "logging", "logger", "debug", "debugged", "debugging", "debugger",
+    "refactor", "refactored", "refactoring", "codebase", "workflow", "workflows",
+    "pipeline", "pipelines", "deploy", "deployed", "deploying", "deployment",
+    "deployments", "rollback", "prod", "staging", "dev", "devs", "qa", "hotfix",
+    "bugfix", "changelog", "readme", "screenshot", "screenshots", "dropdown",
+    "modal", "navbar", "sidebar", "tooltip", "checkbox", "toggle", "worklet",
+    "subword", "subwords", "tokenizer", "quantized", "quantization", "finetune",
+    "finetuned", "finetuning", "checkpoint", "checkpoints", "inference", "logits",
+    "softmax", "lexicon", "swanada", "sarvam",
+)
 
 
 def get_en_lexicon() -> Tuple[Set[str], Set[str]]:
@@ -1812,14 +1889,7 @@ def get_en_lexicon() -> Tuple[Set[str], Set[str]]:
         for k in range(2, len(word) + 1):
             prefixes.add(word[:k])
 
-    # Common contractions
-    for contr in (
-        "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't",
-        "won't", "wouldn't", "can't", "couldn't", "shouldn't", "haven't",
-        "hasn't", "hadn't", "mustn't", "needn't", "let's", "that's", "what's",
-        "there's", "here's", "who's", "where's", "how's", "it's", "he's",
-        "she's", "o'clock",
-    ):
+    for contr in _CONVERSATIONAL_EN_WORDS:
         words.add(contr)
         for k in range(2, len(contr) + 1):
             prefixes.add(contr[:k])
@@ -1830,14 +1900,25 @@ def get_en_lexicon() -> Tuple[Set[str], Set[str]]:
 
 
 def is_en_word(word: str, words: Set[str]) -> bool:
-    """Check whether a lowercase token is an attested English word or clitic form."""
+    """Check whether a lowercase token is an attested English word, clitic, or informal form."""
     if word in words:
         return True
-    for suf in _CLITIC_SUFFIXES:
+    if word == "i'm":
+        return True
+    for suf in _CLITIC_MOD_SUFFIXES:
         if word.endswith(suf) and len(word) > len(suf):
             stem = word[: -len(suf)]
-            if stem in words:
+            if (len(stem) >= 2 or stem == "i") and stem in words:
                 return True
+    for suf in _CLITIC_PRON_SUFFIXES:
+        if word.endswith(suf) and len(word) > len(suf):
+            stem = word[: -len(suf)]
+            if stem in _PRON_CLITIC_STEMS or (len(stem) >= 3 and stem in words):
+                return True
+    if word.endswith("in'") and len(word) >= 5 and (word[:-1] + "g") in words:
+        return True
+    if word.endswith("ish") and len(word) >= 6 and word[:-3] in words:
+        return True
     return False
 
 
@@ -1849,6 +1930,10 @@ def is_en_prefix(prefix: str, prefixes: Set[str], words: Set[str]) -> bool:
     if idx > 0:
         stem = prefix[:idx]
         tail = prefix[idx:]
-        if stem in words and tail in ("'", "'s", "'d", "'l", "'ll", "'r", "'re", "'v", "'ve", "'m", "'t"):
+        if stem == "i" and tail in ("'", "'m", "'d", "'l", "'ll", "'v", "'ve"):
+            return True
+        if len(stem) >= 2 and stem in words and tail in (
+            "'", "'s", "'d", "'l", "'ll", "'r", "'re", "'v", "'ve", "'t"
+        ):
             return True
     return False

@@ -189,6 +189,36 @@ def _format_en_display(text: str) -> str:
     return out
 
 
+def _is_plausible_en_oov(word: str) -> bool:
+    """Check whether an out-of-lexicon English token is phonotactically plausible
+    (e.g. slang, proper noun, brand, code-switched word) vs stray consonant noise."""
+    n = len(word)
+    if n < 2 or "'" in word:
+        return False
+    has_vowel = False
+    run_len = 1
+    for i, ch in enumerate(word):
+        if ch in "aeiouy":
+            has_vowel = True
+        if i > 0:
+            if ch == word[i - 1]:
+                run_len += 1
+                if run_len >= 3:
+                    return False
+            else:
+                run_len = 1
+    return has_vowel
+
+
+def _score_known_en_word(clean: str) -> float:
+    """Length-scaled lexical bonus that prevents splitting one spoken word
+    into multiple short dictionary words while correcting acoustic misspellings."""
+    wlen = len(clean)
+    if wlen <= 2:
+        return 0.70
+    return min(3.05, 0.70 + 0.34 * wlen)
+
+
 def _extend_en_lexical_state(
     lm_score: float,
     cur_word: str,
@@ -206,7 +236,7 @@ def _extend_en_lexical_state(
             next_word = cur_word + lc
             if in_prefix and not is_en_prefix(next_word, prefixes, words):
                 in_prefix = False
-                lm_score -= 2.85
+                lm_score -= 2.35
             cur_word = next_word
         else:
             if near_cut_edge and ch in (".", "?", "!"):
@@ -215,12 +245,11 @@ def _extend_en_lexical_state(
                 clean = cur_word.rstrip("'")
                 if clean:
                     if is_en_word(clean, words):
-                        if near_cut_edge and ch in (".", "?", "!"):
-                            lm_score += 0.35
-                        else:
-                            lm_score += 2.55 if len(clean) >= 3 else 0.85
+                        lm_score += _score_known_en_word(clean)
+                    elif _is_plausible_en_oov(clean):
+                        lm_score += -3.40 if in_prefix else -2.75
                     else:
-                        lm_score += -4.75 if in_prefix else -1.90
+                        lm_score += -4.35 if in_prefix else -2.85
                 cur_word = ""
                 in_prefix = True
     return lm_score, cur_word, in_prefix
@@ -240,11 +269,13 @@ def _finalize_en_lexical_score(
         return lm_score
     if is_en_word(clean, words):
         if is_partial:
-            return lm_score + (0.55 if len(clean) >= 4 else 0.20)
-        return lm_score + (2.55 if len(clean) >= 3 else 0.85)
+            return lm_score + (0.65 if len(clean) >= 4 else 0.20)
+        return lm_score + _score_known_en_word(clean)
     if in_prefix:
         return lm_score
-    return lm_score - 1.90
+    if _is_plausible_en_oov(clean):
+        return lm_score - 2.75
+    return lm_score - 2.85
 
 
 def _beam_decode_ctc(
@@ -265,11 +296,11 @@ def _beam_decode_ctc(
     t_steps, num_classes = log_probs.shape
     is_en = _is_english_sentencepiece_vocab(vocab_list)
     if is_partial:
-        beam_width = 8 if is_en else 7
+        beam_width = 9 if is_en else 7
         top_k = min(num_classes - 1, 7 if is_en else 6)
     else:
-        beam_width = 14 if is_en else 12
-        top_k = min(num_classes - 1, 10 if is_en else 8)
+        beam_width = 20 if is_en else 12
+        top_k = min(num_classes - 1, 18 if is_en else 8)
 
     if is_en:
         en_words, en_prefixes = get_en_lexicon()
@@ -375,7 +406,7 @@ def _beam_decode_ctc(
                     st = kv[1]
                     if st[4]:
                         w_cur = st[3]
-                        pend = (1.55 if len(w_cur) >= 4 else 0.45) if w_cur in en_words else (0.35 if len(w_cur) >= 2 else 0.0)
+                        pend = (min(1.45, 0.28 * len(w_cur)) if w_cur in en_words else (0.35 if len(w_cur) >= 2 else 0.0))
                     else:
                         pend = 0.0
                     return _log_add_exp(st[0], st[1]) + st[2] + pend

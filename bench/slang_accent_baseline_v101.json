@@ -1,0 +1,621 @@
+{
+  "slices": {
+    "real_human_accents": {
+      "num_utterances": 60,
+      "cer": {
+        "mean": 0.203,
+        "ci_lower": 0.1706,
+        "ci_upper": 0.2347
+      },
+      "wer": {
+        "mean": 0.4483,
+        "ci_lower": 0.3866,
+        "ci_upper": 0.5151
+      }
+    },
+    "en_slang_multi_accent": {
+      "num_utterances": 36,
+      "cer": {
+        "mean": 0.2807,
+        "ci_lower": 0.2446,
+        "ci_upper": 0.3172
+      },
+      "wer": {
+        "mean": 0.748,
+        "ci_lower": 0.6464,
+        "ci_upper": 0.852
+      }
+    },
+    "indic_colloquial_loanwords": {
+      "num_utterances": 25,
+      "cer": {
+        "mean": 0.0738,
+        "ci_lower": 0.0484,
+        "ci_upper": 0.1052
+      },
+      "wer": {
+        "mean": 0.2551,
+        "ci_lower": 0.1774,
+        "ci_upper": 0.3308
+      }
+    },
+    "acoustic_accent_mic_perturbations": {
+      "num_utterances": 29,
+      "cer": {
+        "mean": 0.2042,
+        "ci_lower": 0.1629,
+        "ci_upper": 0.2517
+      },
+      "wer": {
+        "mean": 0.5054,
+        "ci_lower": 0.4127,
+        "ci_upper": 0.6024
+      }
+    }
+  },
+  "examples": [
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Rishi",
+      "ref": "Bro, I am gonna deploy the app to prod right now, okay?",
+      "hyp": "Brow I a'm gone the deploy the a to proged right now ok",
+      "cer": 0.25,
+      "wer": 0.5833
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Rishi",
+      "ref": "Yaar, let us prepone the meeting, the wifi is super sketchy.",
+      "hyp": "Year let us prep the meeting the wife is super sketching",
+      "cer": 0.1404,
+      "wer": 0.3636
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Rishi",
+      "ref": "Bhai, send me a screenshot of the backend config on github.",
+      "hyp": "Bye sen me a screen shut of the bal back back ind confidgithhub",
+      "cer": 0.4035,
+      "wer": 0.8182
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Rishi",
+      "ref": "Acha, we need around ten lakhs for the cloud gpu servers.",
+      "hyp": "Uch we need around ten lack as for the cloud gib use servers",
+      "cer": 0.1818,
+      "wer": 0.4545
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Rishi",
+      "ref": "Guru, this masala dosa and filter coffee are totally legit.",
+      "hyp": "Good sher this masallarehosa and filter coff are totally liget",
+      "cer": 0.2807,
+      "wer": 0.6
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Rishi",
+      "ref": "Are we gonna debug the webhook workflow before logout?",
+      "hyp": "Are wee gone a deb our the web book work flow before a log out",
+      "cer": 0.2264,
+      "wer": 1.3333
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Aman",
+      "ref": "Macha, lemme check the repo and revert by evening, pakka.",
+      "hyp": "Mack lei check the rep and revered by evening packa",
+      "cer": 0.1667,
+      "wer": 0.5
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Aman",
+      "ref": "Honestly the new frontend ui has really chill vibes.",
+      "hyp": "Honestly the new front and who wee had really chill wides",
+      "cer": 0.2353,
+      "wer": 0.6667
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Aman",
+      "ref": "Did you push the async auth fix to docker or nah?",
+      "hyp": "Did you push the as sink of fixed to doctor or now",
+      "cer": 0.2917,
+      "wer": 0.5455
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Aman",
+      "ref": "Let us grab biryani and chai in Bengaluru after the sync.",
+      "hyp": "Let us grab brian and chi in bengaluru after the sink",
+      "cer": 0.1071,
+      "wer": 0.2727
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Aman",
+      "ref": "I kinda wanna test the onnx model on my laptop first.",
+      "hyp": "I kin a one a test bos model on my laptop first",
+      "cer": 0.2308,
+      "wer": 0.5455
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IN",
+      "voice": "Aman",
+      "ref": "No timepass yaar, please do the needful on the api docs.",
+      "hyp": "No time pass yard please do the need ffull on the ape I docks",
+      "cer": 0.1667,
+      "wer": 0.7273
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_US",
+      "voice": "Samantha",
+      "ref": "Hey guys, wanna grab some masala dosa and chai?",
+      "hyp": "Hey guys one a grab some some miss all and dos and chi",
+      "cer": 0.4,
+      "wer": 0.8889
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_US",
+      "voice": "Samantha",
+      "ref": "I gotta admit, that livestream demo was lowkey awesome.",
+      "hyp": "I got admit that lif stream dam ole was low key ass him",
+      "cer": 0.283,
+      "wer": 1.0
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_US",
+      "voice": "Samantha",
+      "ref": "Lemme ping the devs cuz the signup page looks kinda broken.",
+      "hyp": "Lam ping the debs cast the sign that page looks kind of broken",
+      "cer": 0.2586,
+      "wer": 0.6364
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_US",
+      "voice": "Samantha",
+      "ref": "Yup, I dunno why bluetooth keeps dropping on my phone.",
+      "hyp": "You I don't know why blow too keeps dropping on my phone",
+      "cer": 0.25,
+      "wer": 0.5
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_US",
+      "voice": "Samantha",
+      "ref": "We're gonna ship the fullstack codebase update tonight.",
+      "hyp": "We are gone a shift the foul first tack cold base of date to night",
+      "cer": 0.3519,
+      "wer": 1.75
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_US",
+      "voice": "Samantha",
+      "ref": "Nah, don't worry about the yaml config, it's all good.",
+      "hyp": "Now don't worry about the yam can fig its all good",
+      "cer": 0.1176,
+      "wer": 0.5
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_GB",
+      "voice": "Daniel",
+      "ref": "Honestly I kinda dunno why the backend config failed.",
+      "hyp": "Coniously I kinded a no why the back and config falled",
+      "cer": 0.25,
+      "wer": 0.7778
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_GB",
+      "voice": "Daniel",
+      "ref": "Let's have a quick cuppa before we debug the sql query.",
+      "hyp": "Lets have a quick coup of before we dee bog the ass clue rel clary",
+      "cer": 0.3889,
+      "wer": 0.8182
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_GB",
+      "voice": "Daniel",
+      "ref": "That deployment script was proper dodgy, wasn't it mate?",
+      "hyp": "Lab deployment script was proper dodge wasn't had made",
+      "cer": 0.1481,
+      "wer": 0.4444
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_GB",
+      "voice": "Daniel",
+      "ref": "Are you gonna join the devops call this afternoon or nope?",
+      "hyp": "A how you given a join the develops col the this sued and you know know",
+      "cer": 0.5439,
+      "wer": 1.0909
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_GB",
+      "voice": "Daniel",
+      "ref": "Cheers bro, the wasm build runs super fast in the browser.",
+      "hyp": "Shas brow the wes and bill run super fast in the browser",
+      "cer": 0.2321,
+      "wer": 0.5455
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_GB",
+      "voice": "Daniel",
+      "ref": "I've gotta double check the json payload before we deploy.",
+      "hyp": "I have got to the double check the just and pay lod before wee deploy",
+      "cer": 0.2982,
+      "wer": 1.0
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_AU",
+      "voice": "Karen",
+      "ref": "No worries mate, lemme debug the repo and push a fix.",
+      "hyp": "Nag waries mad lam dybuk the re pol and push of figs",
+      "cer": 0.3333,
+      "wer": 0.8182
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_AU",
+      "voice": "Karen",
+      "ref": "Reckon we're gonna need more gpu memory for that llm.",
+      "hyp": "Rick and wee gone a need more gee pee you your memory for the hall him",
+      "cer": 0.5385,
+      "wer": 1.2
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_AU",
+      "voice": "Karen",
+      "ref": "Hey folks, the podcast audio sounds a bit iffy on mobile.",
+      "hyp": "Hay fogs the pot cast tod sound a but feel on mobile",
+      "cer": 0.2727,
+      "wer": 0.7273
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_AU",
+      "voice": "Karen",
+      "ref": "Gotta say, offline speech recognition on wifi is pretty cool.",
+      "hyp": "Go to say a flints speech beach recognition on wifes prey col",
+      "cer": 0.3051,
+      "wer": 0.9
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_AU",
+      "voice": "Karen",
+      "ref": "Wanna check if the kubernetes cluster is back online?",
+      "hyp": "One a check if the cub and neats cluster is back on line",
+      "cer": 0.25,
+      "wer": 0.7778
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_AU",
+      "voice": "Karen",
+      "ref": "Yep, just gimme five minutes to run the cli benchmark.",
+      "hyp": "I if just give give each five minutes to run the cle bench mark",
+      "cer": 0.3269,
+      "wer": 0.8
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IE",
+      "voice": "Moira",
+      "ref": "Are y'all gonna join the livestream or nah?",
+      "hyp": "Are yell and enjoy and the live stre mor na",
+      "cer": 0.381,
+      "wer": 1.0
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IE",
+      "voice": "Moira",
+      "ref": "Sure look, the app works grand once you clear the cache.",
+      "hyp": "Sure look look the apt work works grand once you clear the cash",
+      "cer": 0.2407,
+      "wer": 0.3636
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IE",
+      "voice": "Moira",
+      "ref": "I'm tryna figure out why the login webhook timed out.",
+      "hyp": "I'm trying a figure out was whie the log and wed to look look time dues",
+      "cer": 0.5192,
+      "wer": 1.2
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IE",
+      "voice": "Moira",
+      "ref": "Kinda feels like the server latency spiked again today.",
+      "hyp": "Kind of feels like the server relations he spiked to again today",
+      "cer": 0.2593,
+      "wer": 0.5556
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IE",
+      "voice": "Moira",
+      "ref": "Lemme send you the npm package link right away.",
+      "hyp": "Lam only send you the npm package link rise away",
+      "cer": 0.1957,
+      "wer": 0.3333
+    },
+    {
+      "slice": "en_slang_multi_accent",
+      "accent": "en_IE",
+      "voice": "Moira",
+      "ref": "We'd better backup the database before running that migration.",
+      "hyp": "Wet better back up the day sho base before running back back migration",
+      "cer": 0.2787,
+      "wer": 0.8889
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "hi",
+      "voice": "Lekha",
+      "ref": "यार आज ऑफिस की मीटिंग में बहुत प्रॉब्लम हो गई भाई",
+      "hyp": "यार आज ऑफ़िस की मीटिंग में बहुत प्रॉब्लम हो गई भाई",
+      "cer": 0.0,
+      "wer": 0.0
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "hi",
+      "voice": "Lekha",
+      "ref": "अरे भाई थोड़ा टाइमपास मत करो जल्दी ऑनलाइन आओ",
+      "hyp": "अरे भाई थोड़ा टाइम पास मत करो जल्द ऑनलाइन आओ",
+      "cer": 0.0465,
+      "wer": 0.3333
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "hi",
+      "voice": "Lekha",
+      "ref": "अच्छा सुनो मैं अभी मोबाइल पर मैसेज और वीडियो भेजता हूं",
+      "hyp": "अच्छा सुनों मैं अभी मोबाइल पर मैसेज और विडियो भेजता हूं",
+      "cer": 0.037,
+      "wer": 0.1818
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "hi",
+      "voice": "Lekha",
+      "ref": "आज का खाना एकदम मस्त था यार चाय भी पक्का पिएंगे",
+      "hyp": "आज का खाना एकदम मस्त था यार चाय भी पका पंगे",
+      "cer": 0.0851,
+      "wer": 0.1818
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "hi",
+      "voice": "Lekha",
+      "ref": "कल सुबह दस बजे कॉल करूंगा फिर आराम से बात करेंगे",
+      "hyp": "कल सुबह दस बजे कॉल करूंगा फिर आराम से बात करेंगे",
+      "cer": 0.0,
+      "wer": 0.0
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "kn",
+      "voice": "Soumya",
+      "ref": "ಮಚ್ಚಾ ನಾನು ಇವಾಗ ಆಫೀಸ್ ಮೀಟಿಂಗ್ ಮುಗಿಸಿ ಬರ್ತೀನಿ ಗುರು",
+      "hyp": "ಮಚ್ಚ ನಾನು ಇವಾಗ ಆಫಿಸ್ ಮೀಟಿಂಗ್ ಮುಗಿಸಿ ಬರ್ತೀನಿ ಗುರುವಾರ",
+      "cer": 0.102,
+      "wer": 0.375
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "kn",
+      "voice": "Soumya",
+      "ref": "ಯಾಕೆ ಇನ್ನೂ ಫೋನ್ ಮಾಡಿಲ್ಲ ಗೊತ್ತಿಲ್ಲ ಅಲ್ವಾ",
+      "hyp": "ಯಾಕೆ ಇನ್ನೂ ಫೋನ್ ಮಾಡಿಲ್ಲ ಗೊತ್ತಿಲ್ಲ ಅಲ್ವಾ",
+      "cer": 0.0,
+      "wer": 0.0
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "kn",
+      "voice": "Soumya",
+      "ref": "ಹೌದಾ ಈ ಹೊಸ ಆಪ್ ತುಂಬಾ ಚೆನ್ನಾಗಿದೆ ನೋಡು",
+      "hyp": "ಹೌದ ಈ ಹೊಸ ಆಕ್ ತುಂಬಾ ಚೆನ್ನಾಗಿದೆ ನೋಡು",
+      "cer": 0.0556,
+      "wer": 0.2857
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "kn",
+      "voice": "Soumya",
+      "ref": "ಬೆಳಿಗ್ಗೆ ಬ್ಯಾಂಕ್ ಕೆಲಸ ಮುಗಿಸಿ ಆಮೇಲೆ ಮನೆಗೆ ಹೋಗೋಣ",
+      "hyp": "ಬೆಳಿಗ್ಗೆ ಬ್ಯಾಂಕ್ ಕೆಲಸ ಮುಗಿಸಿ ಆಮೇಲೆ ಮನೆಗೆ ಹೋಗೋಣ",
+      "cer": 0.0,
+      "wer": 0.0
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "kn",
+      "voice": "Soumya",
+      "ref": "ಮೊಬೈಲ್ ನಲ್ಲಿ ವಿಡಿಯೋ ಕಾಲ್ ಮಾಡ್ತೀನಿ ಸ್ವಲ್ಪ ವೇಟ್ ಮಾಡು",
+      "hyp": "ಮೊಬೈಲ್ ನಲ್ಲಿ ವೀಡಿಯೋ ಕಾಲ ಮಾಡ್ತೀನಿ ಸ್ವಲ್ಪ ವೇಟ್ ಮಾಡು",
+      "cer": 0.04,
+      "wer": 0.25
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "ta",
+      "voice": "Vani",
+      "ref": "மச்சான் நான் இப்போ ஆபீஸ் மீட்டிங் முடிச்சுட்டு வர்றேன்",
+      "hyp": "மான் நான் இப்போ ஆஸ் மீட்டங் முடி சுட்டு வர்றேன்",
+      "cer": 0.1481,
+      "wer": 0.7143
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "ta",
+      "voice": "Vani",
+      "ref": "இல்லப்பா எனக்கு இன்னும் மொபைல் மெசேஜ் வரல",
+      "hyp": "இல்லப்பா எனக்கு என்னும் மொபல் மெசேஜ் வரல",
+      "cer": 0.0488,
+      "wer": 0.3333
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "ta",
+      "voice": "Vani",
+      "ref": "ரொம்ப நல்லா இருக்கு இந்த புது ஆப் கண்டிப்பா ட்ரை பண்றேன்",
+      "hyp": "ரொம்ப நல்லா இரு இந்த புது ஆ கண்டி பாட்சை பண்றேன்",
+      "cer": 0.1786,
+      "wer": 0.4444
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "ta",
+      "voice": "Vani",
+      "ref": "அப்போ நாளைக்கு காலைல பத்து மணிக்கு கால் பண்ணுங்க",
+      "hyp": "அப்போ நாளைக்கு காலை பத்து மணிக்கு கால் பண்ணுங்க",
+      "cer": 0.0208,
+      "wer": 0.1429
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "ta",
+      "voice": "Vani",
+      "ref": "ஏன் இன்னும் வீடியோ ஆன்லைன்ல அப்லோட் பண்ணல",
+      "hyp": "ஏன் என் உம் வீடியோ ஆன்லைன்ல அப்லோட பண்ணல",
+      "cer": 0.0976,
+      "wer": 0.5
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "te",
+      "voice": "Geeta",
+      "ref": "బ్రో నేను ఇప్పుడే ఆఫీస్ మీటింగ్ ముగించి వస్తున్నా",
+      "hyp": "బ్ర నేను ఇప్పుడే ఆఫీస్ మీటింగ్ ముగించి వస్తున్న",
+      "cer": 0.0408,
+      "wer": 0.2857
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "te",
+      "voice": "Geeta",
+      "ref": "అవునా ఈ కొత్త మొబైల్ యాప్ చాలా బాగుంది రా",
+      "hyp": "అవున ఈ కొత్త మొబైల్ యాప్ చాలా బాగుందిరా",
+      "cer": 0.0488,
+      "wer": 0.375
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "te",
+      "voice": "Geeta",
+      "ref": "ఏంటి ఇంకా ఫోన్ చేయలేదు నాకు అసలు తెలియదు",
+      "hyp": "ఏంటి ఇంకా ఫోన్ చేయలేదు నాకు అసలు తెలియదు",
+      "cer": 0.0,
+      "wer": 0.0
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "te",
+      "voice": "Geeta",
+      "ref": "రేపు ఉదయం పది గంటలకు వీడియో కాల్ చేద్దాం",
+      "hyp": "రేపు ఉదయం పది గంటలకు వీడియో కల్ చేద్దాం",
+      "cer": 0.025,
+      "wer": 0.1429
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "te",
+      "voice": "Geeta",
+      "ref": "ఆన్లైన్ పేమెంట్ కొంచెం ప్రాబ్లం అయింది భయ్యా",
+      "hyp": "ఆన్లైన్ పేమెంట్ కొంచెం ప్రాబ్లం అయింది భయ",
+      "cer": 0.0682,
+      "wer": 0.1667
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "bn",
+      "voice": "Piya",
+      "ref": "ভাই আজ অফিসের মিটিংয়ে অনেক প্রবলেম হয়েছে",
+      "hyp": "ভাই আজ অফিসের মৃত্যু চেয়ে অনেক প্রবলেম হয়েছে",
+      "cer": 0.1905,
+      "wer": 0.2857
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "bn",
+      "voice": "Piya",
+      "ref": "আরে দাদা মোবাইলে একটা মেসেজ আর ভিডিও পাঠিয়েছি দেখো",
+      "hyp": "আরে দাদা মোবাইলে এক মেশে যার ভিডিও পাখি যেছি দেখো",
+      "cer": 0.1765,
+      "wer": 0.5556
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "bn",
+      "voice": "Piya",
+      "ref": "এখন একদম টাইম নেই পরে কল করছি তোমায়",
+      "hyp": "এখন একদম টাইম নেই পরে কল করছি তোম",
+      "cer": 0.0833,
+      "wer": 0.125
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "bn",
+      "voice": "Piya",
+      "ref": "অনলাইনে নতুন অ্যাপটা কিন্তু দারুণ কাজ করছে",
+      "hyp": "অনলাইনে নতুন অকটা কিন্তু দারুণ কাজ করছে",
+      "cer": 0.0952,
+      "wer": 0.1429
+    },
+    {
+      "slice": "indic_colloquial_loanwords",
+      "lang": "bn",
+      "voice": "Piya",
+      "ref": "চলো আজ বিকেলে একটু চা আর আড্ডা হয়ে যাক",
+      "hyp": "চলো আজ বিকেলে একটু চাও রা হজে যা",
+      "cer": 0.2564,
+      "wer": 0.5556
+    }
+  ],
+  "overall": {
+    "num_utterances": 150,
+    "elapsed_sec": 16.67,
+    "cer": {
+      "mean": 0.2004,
+      "ci_lower": 0.1791,
+      "ci_upper": 0.2234
+    },
+    "wer": {
+      "mean": 0.499,
+      "ci_lower": 0.4487,
+      "ci_upper": 0.5505
+    }
+  }
+}

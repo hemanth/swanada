@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swanada"
-version = "1.0.1"
+version = "1.0.2"
 description = "Swanada (स्वनद): In-browser, Node.js, and Python 16 kHz Multilingual Speech-to-Text for Classical Sanskrit, Indian English & 10 Indic languages via ONNX/WASM."
 readme = "README.md"
 license = "MIT"

@@ -69,32 +69,19 @@ cat stream.wav | swanada -l ta --stream
 - `--stream`: Simulate chunk-by-chunk streaming transcription (320 ms quanta).
 - `--iast`: Transliterate Classical Sanskrit output to Roman IAST with Vedic accents.
 - `-h, --help`: Show help and usage summary.
-- `-v, --version`: Show version (`swanada 1.0.0`).
+- `-v, --version`: Show version (`swanada 1.0.2`).
 
-## Architecture & Pipeline
+## Benchmarks
 
-```
-[ Audio Input (PCM 16 kHz Mono) ]
-               │
-               ▼
-   [ Audio Frontend: preprocessor.onnx ]
-   (80-channel Log-Mel Filterbank, 25ms window, 10ms hop)
-               │
-               ▼
-   [ Acoustic Encoder: Conformer Backbone ]
-   (17 layers, d_model=512, 8 heads, conv_kernel=31, 4x subsampling)
-               │
-               ▼
-   [ Multilingual Sliced CTC Acoustic Head ]
-   (257-token language-specific linear projection: 512 -> 257)
-               │
-               ▼
-   [ Linear-Time CTC Greedy Decoder ]
-   (Argmax -> Dedup consecutive tokens -> Drop blank 0 -> NFC normalization)
-               │
-               ▼
-   [ Transcription: Native Script / Classical Sanskrit IAST ]
-```
+Evaluated across 480 held-out 16 kHz utterances (40 per language, `B = 1,000` bootstrap 95% CIs), 1,200 unseen `google/fleurs` + wild test clips, 150 real-world multi-accent / conversational slang utterances (`MushanW/GLOBE`, `AMI`, regional accents, Indic loanwords), and 72 streaming sessions (100 ms chunks):
+
+- **Overall 12-Language Held-Out CER**: `5.43% [4.85%, 6.01%]` (WER `25.88%`, `0.00%` committed streaming churn)
+- **Conversational Slang & Multi-Accent Suite (`n = 150`)**: `17.44% [15.35%, 19.64%]` CER / `41.88% [37.49%, 46.67%]` WER (`-2.60 pp` CER / `-8.02 pp` WER vs `v1.0.1`)
+
+## Live Playground
+
+- h3manth.com AI Experiments Studio: [https://h3manth.com/ai/swanada/](https://h3manth.com/ai/swanada/)
+- GitHub Pages Web Studio: [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
 
 ## Model Weights & Hugging Face Hub
 
