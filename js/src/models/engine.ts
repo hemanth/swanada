@@ -124,7 +124,8 @@ export class AcousticEngine {
     engine.allocatedThreads = threads;
 
     // Load vocabulary for requested language
-    await engine.loadVocabulary(config.vocabPath || config.modelPath);
+    const baseModelRef = config.modelPath || config.modelDir;
+    await engine.loadVocabulary(config.vocabPath || baseModelRef);
 
     // Determine execution provider
     engine.executionProvider = config.executionProvider || 'wasm';
@@ -136,7 +137,7 @@ export class AcousticEngine {
     }
 
     // Initialize session if model path provided or discover local default
-    let effectiveModelPath = config.modelPath;
+    let effectiveModelPath = baseModelRef;
     if (effectiveModelPath && typeof process !== 'undefined' && process.versions?.node) {
       try {
         const fs = await import('node:fs');
@@ -392,7 +393,7 @@ export class AcousticEngine {
   /**
    * Transcribes a 16 kHz Float32Array PCM buffer.
    */
-  async transcribe(pcm: Float32Array): Promise<TranscriptionResult> {
+  async transcribe(pcm: Float32Array, options?: { isPartial?: boolean }): Promise<TranscriptionResult> {
     const durationMs = (pcm.length / 16000) * 1000;
     const startTotal = performance.now();
 
@@ -485,11 +486,12 @@ export class AcousticEngine {
     // 2. Acoustic inference
     const acousticRes = await this.runAcousticInference(features, numFrames);
 
-    // 3. CTC greedy decode
+    // 3. CTC decode
     const decodeRes = decodeCTC(
       acousticRes.logits,
       [acousticRes.timeSteps, acousticRes.numClasses],
-      this.vocab
+      this.vocab,
+      options?.isPartial ? { isPartial: true } : undefined
     );
 
     const totalInferenceMs = performance.now() - startTotal;

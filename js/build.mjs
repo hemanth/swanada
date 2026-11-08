@@ -45,7 +45,12 @@ const captureSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'audio', 'audio-
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
 
+const indicLexiconSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'indic_lexicon.ts'), 'utf8'))
+  .replace(/import type .*?;/g, '')
+  .replace(/^export /gm, '');
+
 const normalizerSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'normalizer.ts'), 'utf8'))
+  .replace(/import .*? from '\.\/indic_lexicon\.ts';/g, '')
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
 
@@ -55,6 +60,7 @@ const enLexiconSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'en
 
 const ctcSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'ctc.ts'), 'utf8'))
   .replace(/import .*? from '\.\/en_lexicon\.ts';/g, '')
+  .replace(/import .*? from '\.\/indic_lexicon\.ts';/g, '')
   .replace(/import .*? from '\.\/normalizer\.ts';/g, '')
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
@@ -187,6 +193,7 @@ ${resampleSrc}
 ${frontendSrc}
 ${denoiseSrc}
 ${captureSrc}
+${indicLexiconSrc}
 ${normalizerSrc}
 ${enLexiconSrc}
 ${ctcSrc}
@@ -235,6 +242,7 @@ ${resampleSrc}
 ${frontendSrc}
 ${denoiseSrc}
 ${captureSrc}
+${indicLexiconSrc}
 ${normalizerSrc}
 ${enLexiconSrc}
 ${ctcSrc}

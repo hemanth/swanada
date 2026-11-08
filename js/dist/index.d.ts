@@ -12,6 +12,7 @@ export type ExecutionProvider = 'wasm' | 'webgpu';
 export interface SwanadaConfig {
   language?: SupportedLanguage;
   modelPath?: string;
+  modelDir?: string;
   preprocessorPath?: string;
   preprocessorMode?: 'analytical' | 'onnx';
   executionProvider?: ExecutionProvider;
@@ -110,6 +111,7 @@ export declare class Swanada {
   transcribe(audio: Float32Array | ArrayBuffer | Uint8Array | string): Promise<TranscriptionResult>;
   warmup(): Promise<void>;
   createStream(options?: StreamSessionOptions): SwanadaStream;
+  stream(options?: StreamSessionOptions): SwanadaStream;
   release(): Promise<void>;
 }
 

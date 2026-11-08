@@ -3,72 +3,84 @@
     "reference": "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति",
     "batch_text": "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति",
     "stream_text": "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति",
-    "parity": true
+    "parity": true,
+    "exact_match": true
   },
   "en": {
-    "reference": "the king was troubled with jealousy.",
-    "batch_text": "the king was troubled with jealousy.",
-    "stream_text": "the king was troubled with jealousy.",
-    "parity": true
+    "reference": "The king was troubled with jealousy.",
+    "batch_text": "The king was troubled with jealousy.",
+    "stream_text": "The king was troubled with jealousy.",
+    "parity": true,
+    "exact_match": true
   },
   "hi": {
     "reference": "अपने हेडमास्टर साहब ही को देखो",
-    "batch_text": "अपने हेडमास्टर साहबी को देखो",
-    "stream_text": "अपने हेडमास्टर साहबी को देखो",
-    "parity": true
+    "batch_text": "अपने हेडमास्टर साहब ही को देखो",
+    "stream_text": "अपने हेडमास्टर साहब ही को देखो",
+    "parity": true,
+    "exact_match": true
   },
   "kn": {
     "reference": "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ",
-    "batch_text": "ಹಾಗಾಗಿ ಬ್ಯಾಂಕಿದ್ನ ಸ್ಥಗಿತಗೊಳಿಸಿದೆ",
-    "stream_text": "ಹಾಗಾಗಿ ಬ್ಯಾಂಕಿದ್ನ ಸ್ಥಗಿತಗೊಳಿಸಿದೆ",
-    "parity": true
+    "batch_text": "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ",
+    "stream_text": "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ",
+    "parity": true,
+    "exact_match": true
   },
   "mr": {
-    "reference": "हो. आणखीही काही आहे.",
+    "reference": "हो आणखीही काही आहे",
     "batch_text": "हो आणखीही काही आहे",
     "stream_text": "हो आणखीही काही आहे",
-    "parity": true
+    "parity": true,
+    "exact_match": true
   },
   "bn": {
-    "reference": "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে।",
-    "batch_text": "সেই জন্য যেন আবার দাদার উপরঅভিমান করে বসিনে",
-    "stream_text": "সেই জন্য যেন আবার দাদার উপরঅভিমান করে বসিনে",
-    "parity": true
+    "reference": "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে",
+    "batch_text": "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে",
+    "stream_text": "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে",
+    "parity": true,
+    "exact_match": true
   },
   "ta": {
     "reference": "அதோ கலங்கரை விளக்கமும் தெரிகிறது",
-    "batch_text": "அதோ கலங்கரி விளக்கமும் தெரிகிறது",
-    "stream_text": "அதோ கலங்கரி விளக்கமும் தெரிகிறது",
-    "parity": true
+    "batch_text": "அதோ கலங்கரை விளக்கமும் தெரிகிறது",
+    "stream_text": "அதோ கலங்கரை விளக்கமும் தெரிகிறது",
+    "parity": true,
+    "exact_match": true
   },
   "te": {
-    "reference": "నాకు కూడా ప్రయాణం చేయటం, చదవటం ఇష్టం",
-    "batch_text": "నాకు కూడా ప్రయాణం చేయడం చదవటం ఇష్టం",
-    "stream_text": "నాకు కూడా ప్రయాణం చేయడం చదవటం ఇష్టం",
-    "parity": true
+    "reference": "నాకు కూడా ప్రయాణం చేయటం చదవటం ఇష్టం",
+    "batch_text": "నాకు కూడా ప్రయాణం చేయటం చదవటం ఇష్టం",
+    "stream_text": "నాకు కూడా ప్రయాణం చేయటం చదవటం ఇష్టం",
+    "parity": true,
+    "exact_match": true
   },
   "ml": {
     "reference": "ഉമ്മായ്ക്കതിൽ പരിപൂർണവിശ്വാസമുണ്ട്",
-    "batch_text": "ഉമാതിൽ പരിപൂർണ്ണ വിശ്വാസമുണ്ട്",
-    "stream_text": "ഉമാതിൽ പരിപൂർണ്ണ വിശ്വാസമുണ്ട്",
-    "parity": true
+    "batch_text": "ഉമ്മായ്ക്കതിൽ പരിപൂർണവിശ്വാസമുണ്ട്",
+    "stream_text": "ഉമ്മായ്ക്കതിൽ പരിപൂർണവിശ്വാസമുണ്ട്",
+    "parity": true,
+    "exact_match": true
   },
   "gu": {
-    "reference": "જો એવું હોય તો હું બસથી જઈશ.",
+    "reference": "જો એવું હોય તો હું બસથી જઈશ",
     "batch_text": "જો એવું હોય તો હું બસથી જઈશ",
     "stream_text": "જો એવું હોય તો હું બસથી જઈશ",
-    "parity": true
+    "parity": true,
+    "exact_match": true
   },
   "pa": {
     "reference": "ਉਦਯੋਗਨਗਰੀ ਐਕਸਪ੍ਰੈਸ",
-    "batch_text": "ਉਦੋਗ ਨਗਰੀ ਐਕਸਪ੍ਰੇਸ",
-    "stream_text": "ਉਦੋਗ ਨਗਰੀ ਐਕਸਪ੍ਰੇਸ",
-    "parity": true
+    "batch_text": "ਉਦਯੋਗਨਗਰੀ ਐਕਸਪ੍ਰੈਸ",
+    "stream_text": "ਉਦਯੋਗਨਗਰੀ ਐਕਸਪ੍ਰੈਸ",
+    "parity": true,
+    "exact_match": true
   },
   "or": {
     "reference": "ସନ୍ଧ୍ୟାଙ୍କୁ ଇମେଲ କରି ଏହା ଲେଖ",
-    "batch_text": "ସନ୍ଧ୍ୟାଙ୍କୁ ଇମେଲ୍ କରି ଏହା ଲେଖ",
-    "stream_text": "ସନ୍ଧ୍ୟାଙ୍କୁ ଇମେଲ୍ କରି ଏହା ଲେଖ",
-    "parity": true
+    "batch_text": "ସନ୍ଧ୍ୟାଙ୍କୁ ଇମେଲ କରି ଏହା ଲେଖ",
+    "stream_text": "ସନ୍ଧ୍ୟାଙ୍କୁ ଇମେଲ କରି ଏହା ଲେଖ",
+    "parity": true,
+    "exact_match": true
   }
 }

@@ -326,8 +326,8 @@ async function setupLanguage(
     const engineAdapter: any = {
       config: { language: lang },
       getVocab: () => activeVocab,
-      transcribe: async (pcm: Float32Array) => {
-        return runAcousticInference(pcm);
+      transcribe: async (pcm: Float32Array, opts?: { isPartial?: boolean }) => {
+        return runAcousticInference(pcm, opts);
       },
     };
     streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
@@ -466,8 +466,8 @@ async function setupLanguage(
   const engineAdapter: any = {
     config: { language: lang },
     getVocab: () => activeVocab,
-    transcribe: async (pcm: Float32Array) => {
-      return runAcousticInference(pcm);
+    transcribe: async (pcm: Float32Array, opts?: { isPartial?: boolean }) => {
+      return runAcousticInference(pcm, opts);
     },
   };
   streamingSession = new StreamingAcousticEngine(engineAdapter, activeVocab, {
@@ -491,7 +491,8 @@ async function setupLanguage(
  * Runs feature extraction, acoustic inference, and CTC decoding on audio.
  */
 async function runAcousticInference(
-  pcm: Float32Array
+  pcm: Float32Array,
+  decodeOpts?: { isPartial?: boolean }
 ): Promise<TranscriptionResult & { iast?: string }> {
   if (!activeSession) {
     throw new Error('Inference session is not ready.');
@@ -576,7 +577,12 @@ async function runAcousticInference(
   }
 
   // 3. CTC Decoding
-  const decoded = decodeCTC(logits, [timeSteps, numClasses], activeVocab);
+  const decoded = decodeCTC(
+    logits,
+    [timeSteps, numClasses],
+    activeVocab,
+    decodeOpts?.isPartial ? { isPartial: true } : undefined
+  );
   const elapsedMs = performance.now() - startMs;
   const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
   const iastText = currentLanguage === 'sa' ? devanagariToIast(decoded.text) : undefined;

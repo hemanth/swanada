@@ -97,6 +97,13 @@ export class Swanada {
   }
 
   /**
+   * Creates a streaming audio transcription session (alias for createStream).
+   */
+  stream(options?: StreamSessionOptions): SwanadaStream {
+    return this.createStream(options);
+  }
+
+  /**
    * Creates a streaming audio transcription session.
    */
   createStream(options?: StreamSessionOptions): SwanadaStream {

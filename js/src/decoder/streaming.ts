@@ -27,6 +27,27 @@ export interface StreamingDecoderOptions extends NormalizeOptions {
   highStabilityThreshold?: number; // Consecutive chunk matches to lock without boundary (Default: 4)
 }
 
+function isEnVocab(vocab: string[] | Record<number, string>): boolean {
+  if (!Array.isArray(vocab) || vocab.length < 200) return false;
+  const end = Math.min(vocab.length, 12);
+  for (let idx = 2; idx < end; idx++) {
+    const tok = vocab[idx] || '';
+    for (let k = 0; k < tok.length; k++) {
+      const code = tok.charCodeAt(k);
+      if (code >= 97 && code <= 122) return true;
+    }
+  }
+  return false;
+}
+
+function formatEnDisplay(text: string): string {
+  if (!text) return text;
+  let out = text.replace(/^[a-z]/, (ch) => ch.toUpperCase());
+  out = out.replace(/([.?!]\s+)([a-z])/g, (_, sep: string, ch: string) => sep + ch.toUpperCase());
+  out = out.replace(/\bi(?=(?:['’](?:m|ve|ll|d))?\b)/g, 'I');
+  return out;
+}
+
 export class StreamingCTCDecoder {
   private vocab: string[] | Record<number, string>;
   private options: StreamingDecoderOptions;
@@ -35,6 +56,7 @@ export class StreamingCTCDecoder {
   private trailTokens: number;
   private requireStabilityOnWordBoundary: boolean;
   private highStabilityThreshold: number;
+  private isEnglish: boolean;
 
   private committedTokens: string[] = [];
   private committedText: string = '';
@@ -52,6 +74,7 @@ export class StreamingCTCDecoder {
     this.trailTokens = this.options.trailTokens ?? 3;
     this.requireStabilityOnWordBoundary = this.options.requireStabilityOnWordBoundary ?? false;
     this.highStabilityThreshold = this.options.highStabilityThreshold ?? 4;
+    this.isEnglish = isEnVocab(vocab);
   }
 
   reset(): void {
@@ -91,7 +114,8 @@ export class StreamingCTCDecoder {
       } else {
         allTokens = this.committedTokens.length > 0 ? [...this.committedTokens] : [...rawTokens];
       }
-      const fullText = normalizeIndicText(allTokens.join(''), this.options);
+      const normText = normalizeIndicText(allTokens.join(''), this.options);
+      const fullText = this.isEnglish ? formatEnDisplay(normText) : normText;
       this.reset();
       const rtf = durationMs > 0 ? inferenceMs / durationMs : 0;
       return {
@@ -184,6 +208,26 @@ export class StreamingCTCDecoder {
       }
     }
 
+    // Guard: never advance commitIdx to leave only whitespace in volatileTokens,
+    // violate strict prefix monotonicity on committedText, or split mid-sandhi.
+    const prevRawComm = alreadyCommitted > 0
+      ? normalizeIndicText(this.committedTokens.join(''), this.options)
+      : '';
+    const fullNormCheck = normalizeIndicText(rawTokens.join(''), this.options);
+    while (commitIdx > alreadyCommitted) {
+      const candPrefix = normalizeIndicText(rawTokens.slice(0, commitIdx).join(''), this.options);
+      if (
+        normalizeIndicText(rawTokens.slice(commitIdx).join(''), this.options) === '' ||
+        !fullNormCheck.startsWith(candPrefix) ||
+        (prevRawComm && !candPrefix.startsWith(prevRawComm)) ||
+        (candPrefix.endsWith('\u0c21\u0c02') && rawTokens.length - commitIdx < 7)
+      ) {
+        commitIdx--;
+      } else {
+        break;
+      }
+    }
+
     // 3. Commit confirmed tokens
     for (let i = alreadyCommitted; i < commitIdx; i++) {
       this.committedTokens.push(rawTokens[i]);
@@ -191,13 +235,25 @@ export class StreamingCTCDecoder {
 
     this.lastHypTokens = [...rawTokens];
 
-    const committedStr = normalizeIndicText(this.committedTokens.join(''), this.options);
+    const rawCommittedStr = normalizeIndicText(this.committedTokens.join(''), this.options);
+    const committedStr = this.isEnglish ? formatEnDisplay(rawCommittedStr) : rawCommittedStr;
     this.committedText = committedStr;
 
     const volatileTokens = rawTokens.slice(this.committedTokens.length);
-    const volatileStr = normalizeIndicText(volatileTokens.join(''), this.options);
+    let volatileStr = normalizeIndicText(volatileTokens.join(''), this.options);
+    if (this.isEnglish && volatileStr) {
+      if (!committedStr) {
+        volatileStr = formatEnDisplay(volatileStr);
+      } else {
+        volatileStr = volatileStr.replace(/\bi(?=(?:['’](?:m|ve|ll|d))?\b)/g, 'I');
+        if (/[.?!]\s*$/.test(committedStr)) {
+          volatileStr = volatileStr.replace(/^[a-z]/, (ch) => ch.toUpperCase());
+        }
+      }
+    }
 
-    const fullText = joinSubwords(committedStr, volatileStr, volatileTokens, this.options);
+    const rawFullText = joinSubwords(committedStr, volatileStr, volatileTokens, this.options);
+    const fullText = this.isEnglish ? formatEnDisplay(rawFullText) : rawFullText;
 
     const rtf = durationMs > 0 ? inferenceMs / durationMs : 0;
 

@@ -1,6 +1,6 @@
 {
   "name": "swanada",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "In-browser and Node.js 16 kHz multilingual speech to text for Classical Sanskrit, Indian English, and 10 Indic languages via ONNX/WASM with zero server dependencies.",
   "type": "module",
   "main": "dist/index.cjs",

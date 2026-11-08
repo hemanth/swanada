@@ -103,7 +103,7 @@ class Swanada:
     def stream(
         self,
         chunk_size_samples: int = 5120,
-        left_context_samples: int = 30720,
+        left_context_samples: int = 25600,
         max_buffer_samples: int = 61440,
     ) -> "SwanadaStream":
         """Creates a streaming audio transcription pipeline."""

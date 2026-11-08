@@ -90,25 +90,25 @@ Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is 
 | System Tier | Runtime / Provider | Active Footprint | Mean RTF (CPU) | Mean RTF (WASM) | TTFT p50 (ms) | CER (%) [95% CI] | WER (%) [95% CI] |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | IndicConformer Full (FP32) | PyTorch (MPS/CUDA/CPU) | 481.4 MB × 12 | 0.082x | — | > 200 ms | `17.68%` | — |
-| **Swanada INT8 (Shared + 515 KB Head)** | **ONNX Runtime Web / CPU** | **178.4 MB + 515 KB** | **0.0436x** | **0.1937x** | **43.1 ms** | **`6.57% [5.94, 7.22]`** | **`30.06% [27.66, 32.44]`** |
+| **Swanada INT8 (Shared + 515 KB Head)** | **ONNX Runtime Web / CPU** | **178.4 MB + 515 KB** | **0.0436x** | **0.1937x** | **43.1 ms** | **`5.53% [4.94, 6.11]`** | **`26.15% [23.77, 28.53]`** |
 | Zero-Dep VAD Gate (Tier 2) | Audio Energy RMS < 1e-4 | 0.0 MB | < 0.001x | < 0.001x | < 1 ms | 0.00 (silence) | 0.00 (silence) |
 
 ### Per-Language Held-Out Accuracy
 
 | Language | Script | Swanada INT8 CER (%) | Swanada INT8 WER (%) | Baseline FP32 CER (%) |
 | :--- | :--- | :---: | :---: | :---: |
-| Sanskrit (`sa`) | Devanagari | `5.24% [3.47, 7.28]` | `27.77% [19.28, 37.17]` | `8.20%` |
-| Indian English (`en`) | Latin | `5.70% [4.41, 7.00]` | `16.94% [13.53, 20.36]` | `15.80%` |
-| Hindi (`hi`) | Devanagari | `3.44% [2.34, 4.53]` | `12.64% [8.94, 16.45]` | `9.80%` |
-| Kannada (`kn`) | Kannada | `6.03% [4.65, 7.58]` | `35.70% [28.60, 42.42]` | `14.50%` |
-| Marathi (`mr`) | Devanagari | `7.31% [4.30, 10.50]` | `27.52% [19.05, 37.06]` | `24.10%` |
-| Bengali (`bn`) | Bengali | `7.76% [6.07, 9.54]` | `40.66% [33.77, 46.95]` | `24.50%` |
-| Tamil (`ta`) | Tamil | `8.01% [6.28, 9.86]` | `38.46% [32.24, 44.98]` | `20.20%` |
-| Telugu (`te`) | Telugu | `5.54% [4.01, 7.16]` | `30.62% [23.70, 38.22]` | `20.80%` |
-| Malayalam (`ml`) | Malayalam | `7.78% [5.58, 10.13]` | `40.27% [29.77, 50.66]` | `18.20%` |
-| Gujarati (`gu`) | Gujarati | `5.32% [3.42, 7.73]` | `23.17% [15.31, 32.05]` | `16.10%` |
-| Punjabi (`pa`) | Gurmukhi | `7.71% [4.69, 11.34]` | `29.47% [19.25, 41.46]` | `18.40%` |
-| Odia (`or`) | Odia | `8.94% [6.25, 12.46]` | `37.55% [29.34, 46.61]` | `21.50%` |
+| Sanskrit (`sa`) | Devanagari | `4.27% [2.69, 6.10]` | `22.99% [15.41, 32.21]` | `8.20%` |
+| Indian English (`en`) | Latin | `6.23% [4.67, 7.92]` | `17.07% [13.85, 20.47]` | `15.80%` |
+| Hindi (`hi`) | Devanagari | `2.20% [1.45, 3.03]` | `8.18% [5.49, 10.98]` | `9.80%` |
+| Kannada (`kn`) | Kannada | `5.21% [3.88, 6.88]` | `31.67% [24.62, 39.64]` | `14.50%` |
+| Marathi (`mr`) | Devanagari | `5.72% [3.19, 8.34]` | `22.52% [13.86, 31.50]` | `24.10%` |
+| Bengali (`bn`) | Bengali | `5.95% [4.37, 7.59]` | `31.14% [24.66, 37.64]` | `24.50%` |
+| Tamil (`ta`) | Tamil | `7.56% [6.01, 9.11]` | `38.24% [31.42, 45.24]` | `20.20%` |
+| Telugu (`te`) | Telugu | `4.95% [3.62, 6.49]` | `29.83% [22.28, 38.12]` | `20.80%` |
+| Malayalam (`ml`) | Malayalam | `6.16% [4.10, 8.27]` | `34.03% [23.73, 44.19]` | `18.20%` |
+| Gujarati (`gu`) | Gujarati | `4.79% [2.97, 6.98]` | `19.28% [13.26, 25.98]` | `16.10%` |
+| Punjabi (`pa`) | Gurmukhi | `6.35% [3.52, 9.78]` | `23.38% [14.27, 33.11]` | `18.40%` |
+| Odia (`or`) | Odia | `6.93% [4.91, 9.41]` | `35.50% [24.81, 48.97]` | `21.50%` |
 
 ## Quickstart: JavaScript & Python Usage
 

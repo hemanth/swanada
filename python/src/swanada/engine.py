@@ -28,6 +28,8 @@ class TranscriptionResult:
 class AcousticEngine:
     """Core ONNX Runtime acoustic engine for multi-runtime execution."""
 
+    _supports_is_partial = True
+
     def __init__(
         self,
         model_path: Optional[Union[str, Path]] = None,
@@ -102,6 +104,7 @@ class AcousticEngine:
         self,
         audio: Union[str, Path, bytes, np.ndarray],
         sample_rate: int = 16000,
+        is_partial: bool = False,
     ) -> TranscriptionResult:
         pcm = load_audio(audio, target_sr=sample_rate)
         duration_ms = (len(pcm) / sample_rate) * 1000.0
@@ -181,8 +184,8 @@ class AcousticEngine:
         )
         logits = ctc_out[0]  # [1, time_steps, num_classes]
 
-        # 3. CTC greedy decode
-        decode_res: CTCDecodeResult = decode_ctc(logits, vocab=self.vocab)
+        # 3. CTC decode
+        decode_res: CTCDecodeResult = decode_ctc(logits, vocab=self.vocab, is_partial=is_partial)
 
         total_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
         rtf = total_elapsed_ms / duration_ms if duration_ms > 0 else 0.0

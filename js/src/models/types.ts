@@ -11,6 +11,7 @@ export type ExecutionProvider = 'wasm' | 'webgpu';
 export interface SwanadaEngineConfig {
   language?: SupportedLanguage; // Default: 'sa'
   modelPath?: string;
+  modelDir?: string;
   preprocessorPath?: string;
   preprocessorMode?: 'analytical' | 'onnx'; // Default: 'analytical'
   executionProvider?: ExecutionProvider;    // Default: 'wasm'

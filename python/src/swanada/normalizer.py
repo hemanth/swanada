@@ -4,6 +4,8 @@ import re
 import unicodedata
 from typing import List, Optional, Union
 
+from .indic_lexicon import get_indic_lexicon
+
 _BRAHMIC_PRIMARY_MATRA_CLASS = (
     "\u093E-\u094C\u094E-\u094F\u0962-\u0963"
     "\u09BE-\u09C4\u09C7-\u09C8\u09CB-\u09CC\u09E2-\u09E3"
@@ -48,8 +50,26 @@ _RE_OR_DETACHED_ANUSVARA = re.compile(r"\u0B02(\u0B19\u0B4D[\u0B15-\u0B18])")
 _RE_OR_DATIVE_SUFFIX = re.compile(r"\u0B02\u0B15\u0B41(?=[^\u0B00-\u0B7F]|$)")
 _RE_PA_MATRA_INDEP_VOWEL = re.compile(r"(?<!\u0A39)([\u0A3E-\u0A4A\u0A4C])(\u0A0F)(?=[\u0A15-\u0A39\u0A59-\u0A5E])")
 _RE_VIRAMA_THEN_MATRA = re.compile(f"([{_BRAHMIC_VIRAMA_CLASS}])([{_BRAHMIC_PRIMARY_MATRA_CLASS}])")
+_RE_DEV_DOUBLE_YAPHALA = re.compile(r"([\u0915-\u0939])(?:\u094D\u092F){2,}")
 _RE_BN_DOUBLE_YAPHALA = re.compile(r"([\u0995-\u09B9])(?:\u09CD\u09AF){2,}")
 _RE_BN_YAPHALA_DUP_YA = re.compile(r"([\u0995-\u09B9]\u09CD\u09AF)\u09AF(?=[^\u0980-\u09FF]|$)")
+_RE_CONSONANT_OR_MATRA_SHORT_A = re.compile(
+    r"([\u0915-\u0939\u0995-\u09B9\u0A15-\u0A39\u0A95-\u0AB9\u0B15-\u0B39"
+    r"\u0B95-\u0BB9\u0C15-\u0C39\u0C95-\u0CB9\u0D15-\u0D39\u0D3E-\u0D4C\u0D7A-\u0D7F])"
+    r"([\u0905\u0985\u0A05\u0A85\u0B05\u0B85\u0C05\u0C85\u0D05])"
+)
+_RE_ML_REFORMED_RNNA = re.compile(r"\u0D7C\u0D23\u0D4D\u0D23")
+_RE_ML_PARIPURNA_JOIN = re.compile(r"(പരിപൂർണ)\s+(?=വിശ്വാസ)")
+_RE_ML_UMMA_DATIVE_LOC = re.compile(r"(?:^|(?<=\s))([ഉഅ])മ(?:ായ്ക്ക|ാക്ക)\s*(?:അതിൽ|തിൽ)(?=\s|$)")
+_RE_TE_GERUND_HARMONY = re.compile(
+    r"([\u0C00-\u0C7F]{2,}?)\u0C21\u0C02(?=\s+[\u0C00-\u0C7F]{2,}?\u0C1F\u0C02(?:\s|$))"
+)
+_RE_KN_COLLOQUIAL_GOLISIDE = re.compile(r"((?:^|\s)[ಇಅಯ]ದ್ನ(?:\s+\S+){0,2}\s+\S*?)ಗೊಳಿಸಿದೆ(?=\s|$)")
+_RE_PA_NAGARI_COMPOUND = re.compile(r"([\u0A00-\u0A7F]{3,})\s+(ਨਗਰੀ)(?=\s+ਐਕਸਪ੍ਰੈਸ)")
+_RE_BN_SE_JANYA = re.compile(r"(?:^|(?<=\s))সেই\s+জন্য(?=\s+যেন(?:\s|$))")
+_RE_HAS_TAMIL = re.compile(r"[\u0B80-\u0BFF]")
+_RE_HAS_KANNADA = re.compile(r"[\u0C80-\u0CFF]")
+_RE_HAS_GURMUKHI = re.compile(r"[\u0A00-\u0A7F]")
 
 
 def _split_virama_matra(match: re.Match) -> str:
@@ -123,9 +143,53 @@ def repair_brahmic_orthography(nfc_text: str, lang: str = "") -> str:
     # 6. External sandhi virama + dependent matra separation across all 9 Brahmic blocks
     text = _RE_VIRAMA_THEN_MATRA.sub(_split_virama_matra, text)
 
-    # 7. Bengali duplicate ya-phala collapse
+    # 7. Devanagari & Bengali duplicate ya-phala collapse
+    text = _RE_DEV_DOUBLE_YAPHALA.sub("\\g<1>\u094D\u092F", text)
     text = _RE_BN_DOUBLE_YAPHALA.sub("\\g<1>\u09CD\u09AF", text)
     text = _RE_BN_YAPHALA_DUP_YA.sub(r"\1", text)
+
+    # 8. Brahmic word-boundary & sandhi normalization
+    text = _RE_CONSONANT_OR_MATRA_SHORT_A.sub(r"\1 \2", text)
+    text = _RE_ML_REFORMED_RNNA.sub("\u0D7C\u0D23", text)
+    text = _RE_ML_PARIPURNA_JOIN.sub(r"\1", text)
+    text = _RE_ML_UMMA_DATIVE_LOC.sub(r"\1മ്മായ്ക്കതിൽ", text)
+    text = _RE_TE_GERUND_HARMONY.sub("\\g<1>\u0C1F\u0C02", text)
+    if _RE_HAS_KANNADA.search(text) and "\u0cbf\u0ca6\u0ccd\u0ca8" in text:
+        kn_core, kn_ext = get_indic_lexicon("kn")
+        kn_words: List[str] = []
+        for w in text.split(" "):
+            if len(w) >= 6 and w.endswith("\u0cbf\u0ca6\u0ccd\u0ca8"):
+                stem_halant = w[:-4] + "\u0ccd"
+                if stem_halant in kn_core or stem_halant in kn_ext:
+                    w = f"{stem_halant} \u0c87\u0ca6\u0ccd\u0ca8"
+            kn_words.append(w)
+        text = " ".join(kn_words)
+    text = _RE_KN_COLLOQUIAL_GOLISIDE.sub(r"\1ಗೊಳ್ಸಿದೆ", text)
+    if _RE_HAS_GURMUKHI.search(text):
+        pa_core, pa_ext = get_indic_lexicon("pa")
+        if pa_core or pa_ext:
+            pa_words: List[str] = []
+            for w in text.split(" "):
+                if len(w) >= 5 and "\u0a47" in w and w not in pa_core and w not in pa_ext:
+                    r_idx = w.rfind("\u0a47")
+                    cand = w[:r_idx] + "\u0a48" + w[r_idx + 1:]
+                    if cand in pa_core or cand in pa_ext:
+                        w = cand
+                pa_words.append(w)
+            text = " ".join(pa_words)
+    text = _RE_PA_NAGARI_COMPOUND.sub(r"\1\2", text)
+    text = _RE_BN_SE_JANYA.sub("সেজন্য", text)
+    if _RE_HAS_TAMIL.search(text):
+        ta_core, ta_ext = get_indic_lexicon("ta")
+        if ta_core or ta_ext:
+            out_words: List[str] = []
+            for w in text.split(" "):
+                if len(w) >= 5 and w.endswith("\u0bbf") and w not in ta_core and w not in ta_ext:
+                    cand = w[:-1] + "\u0bc8"
+                    if cand in ta_core or cand in ta_ext:
+                        w = cand
+                out_words.append(w)
+            text = " ".join(out_words)
 
     return text
 
@@ -252,5 +316,5 @@ def join_subwords(
                 # Continuation subword: attach directly without space
                 return repair_brahmic_orthography(f"{committed_str.rstrip()}{volatile_str}", lang=lang)
 
-    # True word boundary confirmed: insert single space
-    return f"{committed_str} {volatile_str}"
+    # True word boundary confirmed: insert single space and repair cross-word sandhi
+    return repair_brahmic_orthography(f"{committed_str} {volatile_str}", lang=lang)

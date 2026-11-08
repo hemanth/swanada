@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.5.1' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.5.3' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -544,7 +544,7 @@ function buildStreamingEngineForActiveLanguage(lang, vocab) {
   const engineAdapter = {
     config: { language: lang },
     getVocab: () => vocab,
-    transcribe: async (pcm) => runAcousticInference(pcm),
+    transcribe: async (pcm, opts) => runAcousticInference(pcm, opts),
   };
   return new StreamingAcousticEngine(engineAdapter, vocab, {
     leftContextSamples: 30720,
@@ -764,7 +764,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
 /**
  * Runs feature extraction, acoustic inference, and CTC decoding on audio.
  */
-async function runAcousticInference(pcm) {
+async function runAcousticInference(pcm, decodeOpts) {
   if (!activeSession) {
     throw new Error('Inference session is not ready.');
   }
@@ -856,7 +856,12 @@ async function runAcousticInference(pcm) {
   }
 
   // 3. CTC Decoding
-  const decoded = decodeCTC(logits, [timeSteps, numClasses], activeVocab);
+  const decoded = decodeCTC(
+    logits,
+    [timeSteps, numClasses],
+    activeVocab,
+    decodeOpts?.isPartial ? { isPartial: true } : undefined
+  );
   const elapsedMs = performance.now() - startMs;
   const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
   const iastText = currentLanguage === 'sa' ? devanagariToIast(decoded.text) : undefined;

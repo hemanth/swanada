@@ -21,17 +21,19 @@ export class StreamingAcousticEngine {
   private engine: AcousticEngine;
   private decoder: StreamingCTCDecoder;
   private audioBuffer: Float32Array = new Float32Array(0);
+  private pendingChunk: Float32Array = new Float32Array(0);
   private leftContextSamples: number;
   private maxBufferSamples: number;
   private vadSilenceThreshold: number;
   private totalAudioSamples: number = 0;
   private consecutiveSilentSamples: number = 0;
-  private pauseThresholdSamples: number = 16000; // 1,000 ms @ 16 kHz (true turn boundary, never mid-clause breath)
+  private pauseThresholdSamples: number = 8000; // 500 ms @ 16 kHz turn-segmentation threshold
   private baseCommittedTokens: string[] = [];
   private isFinished: boolean = false;
   private isWindowSliding: boolean = false;
-  private slidingChunkCount: number = 0;
-  private stride: number = 2;
+  private samplesSinceLastInference: number = 0;
+  private hasUntranscribedTail: boolean = false;
+  private pendingTurnFlush: boolean = false;
   private lastPartialTranscript: StreamingTranscript | null = null;
 
   get audioBuffer(): Float32Array {
@@ -60,10 +62,10 @@ export class StreamingAcousticEngine {
   ) {
     this.engine = engine;
     this.decoder = new StreamingCTCDecoder(vocab, {
-      trailTokens: 5,
+      trailTokens: 3,
       requireStabilityOnWordBoundary: true,
     });
-    this.leftContextSamples = options?.leftContextSamples ?? 30720; // 1,920 ms overlap guarantees committed tail stays in window
+    this.leftContextSamples = options?.leftContextSamples ?? 25600; // 1,600 ms overlap guarantees committed tail stays in window
     this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms window cap
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
   }
@@ -89,62 +91,107 @@ export class StreamingAcousticEngine {
     return this;
   }
 
+  private promotePendingTurn(): void {
+    const lastHyp: string[] = (this.decoder as any).lastHypTokens || [];
+    const comm = this.decoder.getCommittedTokens();
+    if (
+      lastHyp.length > comm.length &&
+      comm.every((tok: string, idx: number) => tok === lastHyp[idx])
+    ) {
+      const prevCommStr = this.decoder.getCommittedText();
+      const candRaw = normalizeIndicText(
+        lastHyp.join(''),
+        (this.decoder as any).options
+      );
+      const candStr = (this.decoder as any).isEnglish ? formatEnDisplay(candRaw) : candRaw;
+      if (!prevCommStr || candStr.startsWith(prevCommStr)) {
+        (this.decoder as any).committedTokens = [...lastHyp];
+        (this.decoder as any).committedText = candStr;
+      }
+    }
+    this.baseCommittedTokens = this.decoder.getCommittedTokens();
+    this.pendingTurnFlush = false;
+  }
+
+  private async segmentTurnOnPause(durationMs: number): Promise<void> {
+    if (this.audioBuffer.length >= 4800) {
+      if (this.hasUntranscribedTail || !(this.decoder as any).lastHypTokens?.length) {
+        try {
+          const evalBuf = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
+            ? this.audioBuffer.slice(-this.maxBufferSamples)
+            : this.audioBuffer;
+          const tailRes = await (this.engine as any).transcribe(evalBuf);
+          if (tailRes?.tokens?.length > 0) {
+            if (this.pendingTurnFlush) {
+              this.promotePendingTurn();
+            }
+            const committed = this.decoder.getCommittedTokens();
+            const globalTokens = !this.isWindowSliding
+              ? this.alignGrowingWindow(
+                  committed,
+                  [...this.baseCommittedTokens, ...tailRes.tokens],
+                  this.baseCommittedTokens.length
+                )
+              : (() => {
+                  const [bo, br] = this.findWindowAlignment(committed, tailRes.tokens);
+                  return [...committed.slice(0, bo), ...tailRes.tokens.slice(br)];
+                })();
+            this.lastPartialTranscript = this.decoder.update(globalTokens, false, durationMs, 0, false);
+          }
+        } catch (err: any) {
+          this.emitError(err);
+        }
+      }
+      this.pendingTurnFlush = true;
+      this.audioBuffer = new Float32Array(0);
+      this.isWindowSliding = false;
+      this.samplesSinceLastInference = 0;
+      this.hasUntranscribedTail = false;
+    }
+  }
+
+  private hasSpeechEnergy(buf: Float32Array): boolean {
+    if (buf.length === 0) return false;
+    let sumSq = 0;
+    for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
+    if (Math.sqrt(sumSq / buf.length) >= this.vadSilenceThreshold) return true;
+    const step = 400;
+    for (let off = 0; off + step <= buf.length; off += step) {
+      let sSq = 0;
+      for (let k = off; k < off + step; k++) sSq += buf[k] * buf[k];
+      if (Math.sqrt(sSq / step) >= this.vadSilenceThreshold) return true;
+    }
+    return false;
+  }
+
   async push(chunk: Float32Array): Promise<StreamingTranscript | void> {
     if (this.isFinished || chunk.length === 0) return;
     this.totalAudioSamples += chunk.length;
-
-    // Non-destructive silence check & pause utterance segmentation
-    let sumSq = 0;
-    for (let i = 0; i < chunk.length; i++) sumSq += chunk[i] * chunk[i];
-    const rms = Math.sqrt(sumSq / chunk.length);
-
-    if (rms < this.vadSilenceThreshold) {
-      this.consecutiveSilentSamples += chunk.length;
-      if (this.consecutiveSilentSamples >= this.pauseThresholdSamples) {
-        if (this.audioBuffer.length >= 24000) {
-          // Flush unconfirmed tokens on natural speech pause (turn completion)
-          const lastHyp = (this.decoder as any).lastHypTokens || [];
-          const comm = this.decoder.getCommittedTokens();
-          if (
-            lastHyp.length > comm.length &&
-            comm.every((tok: string, idx: number) => tok === lastHyp[idx])
-          ) {
-            (this.decoder as any).committedTokens = [...lastHyp];
-            (this.decoder as any).committedText = normalizeIndicText(
-              lastHyp.join(''),
-              (this.decoder as any).options
-            );
-          }
-          this.baseCommittedTokens = this.decoder.getCommittedTokens();
-          this.audioBuffer = new Float32Array(0);
-          this.isWindowSliding = false;
-          this.slidingChunkCount = 0;
-          this.lastPartialTranscript = null;
-        }
-        return;
-      }
-    } else {
-      this.consecutiveSilentSamples = 0;
-    }
-
-    // Concatenate into audioBuffer
-    const nextBuf = new Float32Array(this.audioBuffer.length + chunk.length);
-    nextBuf.set(this.audioBuffer, 0);
-    nextBuf.set(chunk, this.audioBuffer.length);
-    this.audioBuffer = nextBuf;
-
-    // Allow initial chunk emission starting at 100ms (1600 samples)
-    if (this.audioBuffer.length < 1600) {
-      return;
-    }
-
     const durationMs = (this.totalAudioSamples / 16000) * 1000;
 
-    // Stride-2 inference scheduling during continuous window sliding
-    if (this.isWindowSliding) {
-      this.slidingChunkCount++;
-      if (this.slidingChunkCount % this.stride !== 0) {
-        if (this.lastPartialTranscript) {
+    // Coalesce sub-200ms (< 3200 sample) micro-chunks BEFORE VAD so 20ms-80ms plosive
+    // stop consonant closures are never dropped from inside spoken words.
+    if (chunk.length < 3200 || this.pendingChunk.length > 0) {
+      const merged = new Float32Array(this.pendingChunk.length + chunk.length);
+      merged.set(this.pendingChunk, 0);
+      merged.set(chunk, this.pendingChunk.length);
+      this.pendingChunk = merged;
+
+      let pSumSq = 0;
+      for (let i = 0; i < this.pendingChunk.length; i++) {
+        pSumSq += this.pendingChunk[i] * this.pendingChunk[i];
+      }
+      const pRms = Math.sqrt(pSumSq / this.pendingChunk.length);
+
+      if (this.lastPartialTranscript === null) {
+        if (this.pendingChunk.length < 1600) {
+          return;
+        }
+        if (this.pendingChunk.length < 3200 && pRms < this.vadSilenceThreshold) {
+          return;
+        }
+      } else if (this.pendingChunk.length < 3200) {
+        if (!this.pendingTurnFlush && pRms >= this.vadSilenceThreshold) {
           const st: StreamingTranscript = {
             ...this.lastPartialTranscript,
             durationMs,
@@ -160,6 +207,72 @@ export class StreamingAcousticEngine {
         }
         return;
       }
+
+      chunk = this.pendingChunk;
+      this.pendingChunk = new Float32Array(0);
+    }
+
+    // Non-destructive silence check & sub-frame pause utterance segmentation
+    let sumSq = 0;
+    for (let i = 0; i < chunk.length; i++) sumSq += chunk[i] * chunk[i];
+    const rms = Math.sqrt(sumSq / chunk.length);
+
+    if (rms < this.vadSilenceThreshold) {
+      this.consecutiveSilentSamples += chunk.length;
+      if (this.consecutiveSilentSamples >= this.pauseThresholdSamples) {
+        await this.segmentTurnOnPause(durationMs);
+        return;
+      }
+      return;
+    }
+
+    // Measure leading and trailing 25ms (400-sample) silent sub-frames on straddling chunks
+    let leadSilent = 0;
+    const step = 400;
+    while (leadSilent + step <= chunk.length) {
+      let sSq = 0;
+      for (let k = leadSilent; k < leadSilent + step; k++) sSq += chunk[k] * chunk[k];
+      if (Math.sqrt(sSq / step) < this.vadSilenceThreshold) {
+        leadSilent += step;
+      } else {
+        break;
+      }
+    }
+
+    let trailSilent = 0;
+    while (trailSilent + step <= chunk.length - leadSilent) {
+      let sSq = 0;
+      const startIdx = chunk.length - trailSilent - step;
+      for (let k = startIdx; k < startIdx + step; k++) sSq += chunk[k] * chunk[k];
+      if (Math.sqrt(sSq / step) < this.vadSilenceThreshold) {
+        trailSilent += step;
+      } else {
+        break;
+      }
+    }
+
+    let activeChunk = chunk;
+    if (leadSilent > 0 && this.consecutiveSilentSamples + leadSilent >= this.pauseThresholdSamples) {
+      await this.segmentTurnOnPause(durationMs);
+      activeChunk = chunk.subarray(leadSilent);
+      if (activeChunk.length === 0) {
+        this.consecutiveSilentSamples = trailSilent;
+        return;
+      }
+    }
+    this.consecutiveSilentSamples = trailSilent;
+    chunk = activeChunk;
+
+    // Concatenate into audioBuffer
+    const nextBuf = new Float32Array(this.audioBuffer.length + chunk.length);
+    nextBuf.set(this.audioBuffer, 0);
+    nextBuf.set(chunk, this.audioBuffer.length);
+    this.audioBuffer = nextBuf;
+
+    // Allow initial chunk emission starting at 100ms (1600 samples)
+    if (this.audioBuffer.length < 1600) {
+      this.hasUntranscribedTail = true;
+      return;
     }
 
     try {
@@ -168,14 +281,22 @@ export class StreamingAcousticEngine {
         : this.audioBuffer;
 
       const startInference = performance.now();
-      // Acoustic model inference over active buffer window
-      const res = await this.engine.transcribe(evalBuffer);
+      const res = await (this.engine as any).transcribe(evalBuffer, { isPartial: true });
       const inferenceMs = performance.now() - startInference;
+      this.samplesSinceLastInference = 0;
+      this.hasUntranscribedTail = false;
 
-      // Track window offset with base committed tokens across segmented pauses
+      if (this.pendingTurnFlush && res.tokens.length > 0) {
+        this.promotePendingTurn();
+      }
+
       const committed = this.decoder.getCommittedTokens();
       let globalTokens: string[];
-      if (!this.isWindowSliding) {
+
+      if (this.pendingTurnFlush && res.tokens.length === 0) {
+        const lastHyp: string[] = (this.decoder as any).lastHypTokens || [];
+        globalTokens = lastHyp.length > committed.length ? [...lastHyp] : [...committed];
+      } else if (!this.isWindowSliding) {
         const windowTokens = [...this.baseCommittedTokens, ...res.tokens];
         globalTokens = this.alignGrowingWindow(committed, windowTokens, this.baseCommittedTokens.length);
       } else {
@@ -183,15 +304,23 @@ export class StreamingAcousticEngine {
         globalTokens = [...committed.slice(0, bestOffset), ...res.tokens.slice(bestRawStart)];
       }
 
-      // Hold irreversible prefix commits during the first <1800ms of an utterance segment
-      // while still emitting live volatile partial transcripts from 100ms onward.
-      const allowCommit = this.isWindowSliding || this.audioBuffer.length >= 28800;
+      // Preserve active volatile tokens across momentary mid-utterance breath frames
+      const prevHyp: string[] = (this.decoder as any).lastHypTokens || [];
+      if (
+        prevHyp.length > committed.length &&
+        (globalTokens.length <= committed.length ||
+          normalizeIndicText(globalTokens.slice(committed.length).join('')) === '')
+      ) {
+        globalTokens = [...committed, ...prevHyp.slice(committed.length)];
+      }
 
-      // Update streaming decoder with aligned global tokens
+      const commitMinSamples = (this.decoder as any).isEnglish ? 28800 : 34000;
+      const allowCommit =
+        !this.pendingTurnFlush && (this.isWindowSliding || this.audioBuffer.length >= commitMinSamples);
+
       const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);
       this.lastPartialTranscript = st;
 
-      // Emit new tokens if any
       if (this.listeners.token.length > 0 && res.tokens.length > 0) {
         const lastTok = res.tokens[res.tokens.length - 1];
         for (const tcb of this.listeners.token) {
@@ -224,26 +353,38 @@ export class StreamingAcousticEngine {
     const durationMs = (this.totalAudioSamples / 16000) * 1000;
     const startInference = performance.now();
 
-    // Process pending audio tail if needed (< 1600 samples or odd stride skip)
-    const hasUnEvaluatedSamples =
-      (this.isWindowSliding && this.slidingChunkCount % this.stride !== 0) ||
-      (this.audioBuffer.length >= 400 && (this.audioBuffer.length < 1600 || !(this.decoder as any).lastHypTokens?.length));
+    if (this.pendingChunk.length > 0) {
+      if ((this.audioBuffer.length > 0 && !this.pendingTurnFlush) || this.hasSpeechEnergy(this.pendingChunk)) {
+        const merged = new Float32Array(this.audioBuffer.length + this.pendingChunk.length);
+        merged.set(this.audioBuffer, 0);
+        merged.set(this.pendingChunk, this.audioBuffer.length);
+        this.audioBuffer = merged;
+        this.hasUntranscribedTail = true;
+      }
+      this.pendingChunk = new Float32Array(0);
+    }
 
-    if (this.audioBuffer.length >= 400 && hasUnEvaluatedSamples) {
+    // Run final full-utterance closure decode when active audio buffer has speech
+    if (this.audioBuffer.length >= 400) {
       const evalBuffer = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
         ? this.audioBuffer.slice(-this.maxBufferSamples)
         : this.audioBuffer;
-      const tailRes = await this.engine.transcribe(evalBuffer);
-      const committed = this.decoder.getCommittedTokens();
-      let globalTokens: string[];
-      if (!this.isWindowSliding) {
-        const windowTokens = [...this.baseCommittedTokens, ...tailRes.tokens];
-        globalTokens = this.alignGrowingWindow(committed, windowTokens, this.baseCommittedTokens.length);
-      } else {
-        const [bestOffset, bestRawStart] = this.findWindowAlignment(committed, tailRes.tokens);
-        globalTokens = [...committed.slice(0, bestOffset), ...tailRes.tokens.slice(bestRawStart)];
+      const tailRes = await (this.engine as any).transcribe(evalBuffer);
+      if (tailRes?.tokens?.length > 0 || !(this.decoder as any).lastHypTokens?.length) {
+        if (this.pendingTurnFlush && tailRes?.tokens?.length > 0) {
+          this.promotePendingTurn();
+        }
+        const committed = this.decoder.getCommittedTokens();
+        let globalTokens: string[];
+        if (!this.isWindowSliding) {
+          const windowTokens = [...this.baseCommittedTokens, ...tailRes.tokens];
+          globalTokens = this.alignGrowingWindow(committed, windowTokens, this.baseCommittedTokens.length);
+        } else {
+          const [bestOffset, bestRawStart] = this.findWindowAlignment(committed, tailRes.tokens);
+          globalTokens = [...committed.slice(0, bestOffset), ...tailRes.tokens.slice(bestRawStart)];
+        }
+        this.decoder.update(globalTokens, false, durationMs, 0, true);
       }
-      this.decoder.update(globalTokens, false, durationMs, 0, true);
     }
 
     const streamingTokens = (this.decoder as any).lastHypTokens?.length
@@ -254,11 +395,14 @@ export class StreamingAcousticEngine {
     const finalSt = this.decoder.update(streamingTokens, true, durationMs, inferenceMs);
 
     this.audioBuffer = new Float32Array(0);
+    this.pendingChunk = new Float32Array(0);
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];
     this.isWindowSliding = false;
-    this.slidingChunkCount = 0;
+    this.samplesSinceLastInference = 0;
+    this.hasUntranscribedTail = false;
+    this.pendingTurnFlush = false;
     this.lastPartialTranscript = null;
 
     const result: TranscriptionResult = {
@@ -361,13 +505,16 @@ export class StreamingAcousticEngine {
       return [committedTokens.length, 0];
     }
 
-    const searchLimit = Math.max(0, committedTokens.length - 30);
+    const searchLimit = Math.max(this.baseCommittedTokens.length, committedTokens.length - 30);
+    const activeCommLen = committedTokens.length - this.baseCommittedTokens.length;
+    const minReqMatch = activeCommLen >= 2 ? 2 : 1;
+
     let bestOffset = committedTokens.length;
     let bestRawStart = 0;
     let bestMatchLen = 0;
 
     for (let rStart = 0; rStart < rawTokens.length; rStart++) {
-      for (let j = committedTokens.length - 1; j >= searchLimit; j--) {
+      for (let j = searchLimit; j < committedTokens.length; j++) {
         let matchLen = 0;
         while (
           j + matchLen < committedTokens.length &&
@@ -376,23 +523,25 @@ export class StreamingAcousticEngine {
         ) {
           matchLen++;
         }
-        if (j + matchLen === committedTokens.length && matchLen > bestMatchLen) {
+        if (
+          j + matchLen === committedTokens.length &&
+          matchLen >= minReqMatch &&
+          matchLen > bestMatchLen
+        ) {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
-          if (matchLen >= 2) break;
         }
       }
-      if (bestMatchLen >= 2) break;
     }
 
     if (bestMatchLen > 0) {
       return [bestOffset, bestRawStart];
     }
 
-    // Near-suffix match (within 1 token of end)
+    // Near-suffix match (within 1 token of end when boundary token revised)
     for (let rStart = 0; rStart < rawTokens.length; rStart++) {
-      for (let j = committedTokens.length - 1; j >= searchLimit; j--) {
+      for (let j = searchLimit; j < committedTokens.length; j++) {
         let matchLen = 0;
         while (
           j + matchLen < committedTokens.length &&
@@ -401,14 +550,16 @@ export class StreamingAcousticEngine {
         ) {
           matchLen++;
         }
-        if (j + matchLen >= committedTokens.length - 1 && matchLen > bestMatchLen) {
+        if (
+          j + matchLen >= committedTokens.length - 1 &&
+          matchLen >= 2 &&
+          matchLen > bestMatchLen
+        ) {
           bestMatchLen = matchLen;
           bestOffset = j;
           bestRawStart = rStart;
-          if (matchLen >= 2) break;
         }
       }
-      if (bestMatchLen >= 2) break;
     }
 
     if (bestMatchLen >= 2) {
@@ -433,12 +584,15 @@ export class StreamingAcousticEngine {
 
   reset(): void {
     this.audioBuffer = new Float32Array(0);
+    this.pendingChunk = new Float32Array(0);
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];
     this.isFinished = false;
     this.isWindowSliding = false;
-    this.slidingChunkCount = 0;
+    this.samplesSinceLastInference = 0;
+    this.hasUntranscribedTail = false;
+    this.pendingTurnFlush = false;
     this.lastPartialTranscript = null;
     this.decoder.reset();
   }

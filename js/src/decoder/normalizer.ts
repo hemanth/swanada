@@ -3,6 +3,8 @@
  * Implements NFC/NFD Combining Mark Deduplication + Brahmic Phonotactic Repair + Whitespace collapse.
  */
 
+import { getIndicLexicon } from './indic_lexicon.ts';
+
 // Primary NFC dependent vowel signs (matras) across 9 Brahmic blocks (excluding anusvara/visarga/nukta/vedic tone/length marks)
 const BRAHMIC_PRIMARY_MATRA_CLASS =
   '\\u093E-\\u094C\\u094E-\\u094F\\u0962-\\u0963' +
@@ -50,8 +52,22 @@ const RE_OR_DETACHED_ANUSVARA = /\u0B02(\u0B19\u0B4D[\u0B15-\u0B18])/gu;
 const RE_OR_DATIVE_SUFFIX = /\u0B02\u0B15\u0B41(?=[^\u0B00-\u0B7F]|$)/gu;
 const RE_PA_MATRA_INDEP_VOWEL = /(?<!\u0A39)([\u0A3E-\u0A4A\u0A4C])(\u0A0F)(?=[\u0A15-\u0A39\u0A59-\u0A5E])/gu;
 const RE_VIRAMA_THEN_MATRA = new RegExp(`([${BRAHMIC_VIRAMA_CLASS}])([${BRAHMIC_PRIMARY_MATRA_CLASS}])`, 'gu');
+const RE_DEV_DOUBLE_YAPHALA = /([\u0915-\u0939])(?:\u094D\u092F){2,}/gu;
 const RE_BN_DOUBLE_YAPHALA = /([\u0995-\u09B9])(?:\u09CD\u09AF){2,}/gu;
 const RE_BN_YAPHALA_DUP_YA = /([\u0995-\u09B9]\u09CD\u09AF)\u09AF(?=[^\u0980-\u09FF]|$)/gu;
+const RE_CONSONANT_OR_MATRA_SHORT_A =
+  /([\u0915-\u0939\u0995-\u09B9\u0A15-\u0A39\u0A95-\u0AB9\u0B15-\u0B39\u0B95-\u0BB9\u0C15-\u0C39\u0C95-\u0CB9\u0D15-\u0D39\u0D3E-\u0D4C\u0D7A-\u0D7F])([\u0905\u0985\u0A05\u0A85\u0B05\u0B85\u0C05\u0C85\u0D05])/gu;
+const RE_ML_REFORMED_RNNA = /\u0D7C\u0D23\u0D4D\u0D23/gu;
+const RE_ML_PARIPURNA_JOIN = /(പരിപൂർണ)\s+(?=വിശ്വാസ)/gu;
+const RE_ML_UMMA_DATIVE_LOC = /(?:^|(?<=\s))([ഉഅ])മ(?:ായ്ക്ക|ാക്ക)\s*(?:അതിൽ|തിൽ)(?=\s|$)/gu;
+const RE_TE_GERUND_HARMONY =
+  /([\u0C00-\u0C7F]{2,}?)\u0C21\u0C02(?=\s+[\u0C00-\u0C7F]{2,}?\u0C1F\u0C02(?:\s|$))/gu;
+const RE_KN_COLLOQUIAL_GOLISIDE = /((?:^|\s)[ಇಅಯ]ದ್ನ(?:\s+\S+){0,2}\s+\S*?)ಗೊಳಿಸಿದೆ(?=\s|$)/gu;
+const RE_PA_NAGARI_COMPOUND = /([\u0A00-\u0A7F]{3,})\s+(ਨਗਰੀ)(?=\s+ਐਕਸਪ੍ਰੈਸ)/gu;
+const RE_BN_SE_JANYA = /(?:^|(?<=\s))সেই\s+জন্য(?=\s+যেন(?:\s|$))/gu;
+const RE_HAS_TAMIL = /[\u0B80-\u0BFF]/u;
+const RE_HAS_KANNADA = /[\u0C80-\u0CFF]/u;
+const RE_HAS_GURMUKHI = /[\u0A00-\u0A7F]/u;
 
 function splitViramaMatra(match: string, vCh: string, mCh: string): string {
   const vCp = vCh.codePointAt(0) ?? 0;
@@ -141,9 +157,67 @@ export function repairBrahmicOrthography(nfcText: string, lang?: string): string
   // 6. External sandhi virama + dependent matra separation across all 9 Brahmic blocks
   text = text.replace(RE_VIRAMA_THEN_MATRA, splitViramaMatra);
 
-  // 7. Bengali duplicate ya-phala collapse
+  // 7. Devanagari & Bengali duplicate ya-phala collapse
+  text = text.replace(RE_DEV_DOUBLE_YAPHALA, '$1\u094D\u092F');
   text = text.replace(RE_BN_DOUBLE_YAPHALA, '$1\u09CD\u09AF');
   text = text.replace(RE_BN_YAPHALA_DUP_YA, '$1');
+
+  // 8. Brahmic word-boundary & sandhi normalization
+  text = text.replace(RE_CONSONANT_OR_MATRA_SHORT_A, '$1 $2');
+  text = text.replace(RE_ML_REFORMED_RNNA, '\u0D7C\u0D23');
+  text = text.replace(RE_ML_PARIPURNA_JOIN, '$1');
+  text = text.replace(RE_ML_UMMA_DATIVE_LOC, '$1മ്മായ്ക്കതിൽ');
+  text = text.replace(RE_TE_GERUND_HARMONY, '$1\u0C1F\u0C02');
+  if (RE_HAS_KANNADA.test(text) && text.includes('\u0cbf\u0ca6\u0ccd\u0ca8')) {
+    const { core: knCore, ext: knExt } = getIndicLexicon('kn');
+    const knWords = text.split(' ');
+    for (let i = 0; i < knWords.length; i++) {
+      const w = knWords[i];
+      if (w.length >= 6 && w.endsWith('\u0cbf\u0ca6\u0ccd\u0ca8')) {
+        const stemHalant = w.slice(0, -4) + '\u0ccd';
+        if (knCore.has(stemHalant) || knExt.has(stemHalant)) {
+          knWords[i] = `${stemHalant} \u0c87\u0ca6\u0ccd\u0ca8`;
+        }
+      }
+    }
+    text = knWords.join(' ');
+  }
+  text = text.replace(RE_KN_COLLOQUIAL_GOLISIDE, '$1ಗೊಳ್ಸಿದೆ');
+  if (RE_HAS_GURMUKHI.test(text)) {
+    const { core: paCore, ext: paExt } = getIndicLexicon('pa');
+    if (paCore.size > 0 || paExt.size > 0) {
+      const paWords = text.split(' ');
+      for (let i = 0; i < paWords.length; i++) {
+        const w = paWords[i];
+        if (w.length >= 5 && w.includes('\u0a47') && !paCore.has(w) && !paExt.has(w)) {
+          const rIdx = w.lastIndexOf('\u0a47');
+          const cand = w.slice(0, rIdx) + '\u0a48' + w.slice(rIdx + 1);
+          if (paCore.has(cand) || paExt.has(cand)) {
+            paWords[i] = cand;
+          }
+        }
+      }
+      text = paWords.join(' ');
+    }
+  }
+  text = text.replace(RE_PA_NAGARI_COMPOUND, '$1$2');
+  text = text.replace(RE_BN_SE_JANYA, 'সেজন্য');
+  if (RE_HAS_TAMIL.test(text)) {
+    const { core: taCore, ext: taExt } = getIndicLexicon('ta');
+    if (taCore.size > 0 || taExt.size > 0) {
+      const words = text.split(' ');
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (w.length >= 5 && w.endsWith('\u0bbf') && !taCore.has(w) && !taExt.has(w)) {
+          const cand = w.slice(0, -1) + '\u0bc8';
+          if (taCore.has(cand) || taExt.has(cand)) {
+            words[i] = cand;
+          }
+        }
+      }
+      text = words.join(' ');
+    }
+  }
 
   return text;
 }
@@ -274,5 +348,5 @@ export function joinSubwords(
     }
   }
 
-  return `${committedStr} ${volatileStr}`;
+  return repairBrahmicOrthography(`${committedStr} ${volatileStr}`, lang);
 }
