@@ -9496,13 +9496,137 @@ async function loadModelAsset(
                                                  
                     
                     
+            
                           
                       
                     
 
                                                                       
                      
+                    
  
+
+const LAYER_NORM_84_VALUE_INFO = new Uint8Array([
+  0x0a, 0x0d, 0x6c, 0x61, 0x79, 0x65, 0x72, 0x5f, 0x6e, 0x6f, 0x72, 0x6d, 0x5f, 0x38, 0x34,
+  0x12, 0x20, 0x0a, 0x1e, 0x08, 0x01, 0x12, 0x1a, 0x0a, 0x07, 0x12, 0x05, 0x62, 0x61, 0x74,
+  0x63, 0x68, 0x0a, 0x0a, 0x12, 0x08, 0x74, 0x69, 0x6d, 0x65, 0x5f, 0x73, 0x75, 0x62, 0x0a,
+  0x03, 0x08, 0x80, 0x04,
+]);
+
+function readPbVarint(buf            , pos        )                   {
+  let val = 0;
+  let shift = 0;
+  while (pos < buf.length) {
+    const b = buf[pos++];
+    val += (b & 0x7f) * Math.pow(2, shift);
+    if ((b & 0x80) === 0) return [val, pos];
+    shift += 7;
+  }
+  throw new Error('Truncated ONNX protobuf varint');
+}
+
+function encodePbVarint(n        )             {
+  const out           = [];
+  let rem = n;
+  while (rem >= 128) {
+    out.push((rem % 128) | 0x80);
+    rem = Math.floor(rem / 128);
+  }
+  out.push(rem);
+  return Uint8Array.from(out);
+}
+
+function exposeEncoderHiddenOutput(src            )             {
+  const graphAppend = new Uint8Array(2 + LAYER_NORM_84_VALUE_INFO.length);
+  graphAppend[0] = 0x62;
+  graphAppend[1] = LAYER_NORM_84_VALUE_INFO.length;
+  graphAppend.set(LAYER_NORM_84_VALUE_INFO, 2);
+
+  let pos = 0;
+  while (pos < src.length) {
+    const tagStart = pos;
+    const [tag, afterTag] = readPbVarint(src, pos);
+    const fieldNo = Math.floor(tag / 8);
+    const wireType = tag & 7;
+    if (wireType === 0) {
+      [, pos] = readPbVarint(src, afterTag);
+    } else if (wireType === 2) {
+      const [len, dataStart] = readPbVarint(src, afterTag);
+      const dataEnd = dataStart + len;
+      if (fieldNo === 7) {
+        const tagBytes = src.subarray(tagStart, afterTag);
+        const newLenBytes = encodePbVarint(len + graphAppend.length);
+        const out = new Uint8Array(
+          tagStart + tagBytes.length + newLenBytes.length + len + graphAppend.length + (src.length - dataEnd)
+        );
+        let w = 0;
+        out.set(src.subarray(0, tagStart), w); w += tagStart;
+        out.set(tagBytes, w); w += tagBytes.length;
+        out.set(newLenBytes, w); w += newLenBytes.length;
+        out.set(src.subarray(dataStart, dataEnd), w); w += len;
+        out.set(graphAppend, w); w += graphAppend.length;
+        out.set(src.subarray(dataEnd), w);
+        return out;
+      }
+      pos = dataEnd;
+    } else if (wireType === 5) {
+      pos = afterTag + 4;
+    } else if (wireType === 1) {
+      pos = afterTag + 8;
+    } else {
+      return src;
+    }
+  }
+  return src;
+}
+
+function projectLinearHead(hidden              , timeSteps        , weight              , bias              )               {
+  const numClasses = 257;
+  const dim = 512;
+  const out = new Float32Array(timeSteps * numClasses);
+  for (let t = 0; t < timeSteps; t++) {
+    const hOff = t * dim;
+    const oOff = t * numClasses;
+    for (let c = 0; c < numClasses; c++) {
+      const wOff = c * dim;
+      let acc = bias[c];
+      for (let d = 0; d < dim; d += 4) {
+        acc +=
+          hidden[hOff + d] * weight[wOff + d] +
+          hidden[hOff + d + 1] * weight[wOff + d + 1] +
+          hidden[hOff + d + 2] * weight[wOff + d + 2] +
+          hidden[hOff + d + 3] * weight[wOff + d + 3];
+      }
+      out[oOff + c] = acc;
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolves effective model tier ('mobile' vs 'studio') from user config & device capabilities.
+ * - Explicit 'mobile' or 'studio' always wins.
+ * - 'auto' (or omitted): selects 'mobile' (<30 MB Conformer-Small) on mobile/constrained browsers
+ *   (Android, iOS, or deviceMemory <= 4 GB) and 'studio' (177 MiB Conformer-Large) on desktop & Node.js.
+ */
+function resolveEffectiveModelTier(tier            )                      {
+  if (tier === 'mobile' || tier === 'studio') {
+    return tier;
+  }
+  const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
+  if (isNode) {
+    return 'studio';
+  }
+  const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
+  const platform = typeof navigator !== 'undefined' ? (navigator       )?.platform || '' : '';
+  const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
+  const devMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory || 8 : 8;
+  const isMobile =
+    /Android|iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|Mobile/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1) ||
+    devMem <= 4;
+  return isMobile ? 'mobile' : 'studio';
+}
 
 /**
  * Dynamically resolves onnxruntime-web or onnxruntime-node.
@@ -9588,8 +9712,10 @@ class AcousticEngine {
           config                     ;
           acousticSession      = null;
           preprocessorSession      = null;
+          linearHead                                                      = null;
           vocab           = [];
           executionProvider                    = 'wasm';
+          modelTier                      = 'studio';
           allocatedThreads         = 1;
           decoder                  ;
           isWarmed          = false;
@@ -9600,12 +9726,17 @@ class AcousticEngine {
     this.decoder = new CTCGreedyDecoder([]);
   }
 
+  getModelTier()                      {
+    return this.modelTier;
+  }
+
   static async create(config                      = {})                          {
     const ort = await getOrt();
     const threads = configureWasmEnvironment(ort, config.numThreads, config.wasmPaths);
 
     const engine = new AcousticEngine(ort, config);
     engine.allocatedThreads = threads;
+    engine.modelTier = resolveEffectiveModelTier(config.modelTier);
 
     // Load vocabulary for requested language
     const baseModelRef = config.modelPath || config.modelDir;
@@ -9620,6 +9751,19 @@ class AcousticEngine {
       }
     }
 
+    const lang = config.language || 'sa';
+    const isMobileTier = engine.modelTier === 'mobile';
+    const onnxSubfolder = isMobileTier ? 'onnx_mobile' : 'onnx';
+    const modelNames = isMobileTier
+      ? [
+          `swanada_mobile_${lang}_ctc_int8.onnx`,
+          ...(lang === 'sa' ? ['swanada_mobile_ctc_int8.onnx'] : []),
+        ]
+      : [
+          `swanada_${lang}_ctc_int8.onnx`,
+          ...(lang === 'sa' ? ['sushrota_sanskrit_ctc_int8.onnx'] : []),
+        ];
+
     // Initialize session if model path provided or discover local default
     let effectiveModelPath = baseModelRef;
     if (effectiveModelPath && typeof process !== 'undefined' && process.versions?.node) {
@@ -9628,14 +9772,41 @@ class AcousticEngine {
         const path = await import('node:path');
         const resolved = path.resolve(effectiveModelPath);
         if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
-          const lang = config.language || 'sa';
-          const modelNames = [`swanada_${lang}_ctc_int8.onnx`];
-          if (lang === 'sa') modelNames.push('sushrota_sanskrit_ctc_int8.onnx');
+          let foundInDir = false;
           for (const mn of modelNames) {
-            const c1 = path.join(resolved, 'onnx', mn);
+            const c1 = path.join(resolved, onnxSubfolder, mn);
             const c2 = path.join(resolved, mn);
-            if (fs.existsSync(c1)) { effectiveModelPath = c1; break; }
-            if (fs.existsSync(c2)) { effectiveModelPath = c2; break; }
+            if (fs.existsSync(c1)) { effectiveModelPath = c1; foundInDir = true; break; }
+            if (fs.existsSync(c2)) { effectiveModelPath = c2; foundInDir = true; break; }
+          }
+          if (!foundInDir) {
+            const sharedName = isMobileTier ? 'swanada_mobile_ctc_int8.onnx' : 'sushrota_sanskrit_ctc_int8.onnx';
+            const headsFolder = isMobileTier ? 'heads_mobile' : 'heads';
+            const scEnc = fs.existsSync(path.join(resolved, onnxSubfolder, sharedName))
+              ? path.join(resolved, onnxSubfolder, sharedName)
+              : path.join(resolved, sharedName);
+            if (fs.existsSync(scEnc)) {
+              effectiveModelPath = scEnc;
+              if (lang !== 'sa') {
+                const headCands = [
+                  path.join(resolved, headsFolder, `${lang}.bin`),
+                  path.join(resolved, '..', 'docs', headsFolder, `${lang}.bin`),
+                ];
+                for (const hc of headCands) {
+                  if (fs.existsSync(hc)) {
+                    const buf = fs.readFileSync(hc);
+                    const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+                    const floats = new Float32Array(ab);
+                    const wc = 257 * 512;
+                    engine.linearHead = {
+                      weight: floats.subarray(0, wc),
+                      bias: floats.subarray(wc, wc + 257),
+                    };
+                    break;
+                  }
+                }
+              }
+            }
           }
         }
       } catch {}
@@ -9645,9 +9816,6 @@ class AcousticEngine {
         const fs = await import('node:fs');
         const path = await import('node:path');
         const { fileURLToPath } = await import('node:url');
-        const lang = config.language || 'sa';
-        const modelNames = [`swanada_${lang}_ctc_int8.onnx`];
-        if (lang === 'sa') modelNames.push('sushrota_sanskrit_ctc_int8.onnx');
 
         const candidates           = [];
 
@@ -9655,21 +9823,66 @@ class AcousticEngine {
         if (typeof import.meta !== 'undefined' && import.meta.url) {
           try {
             for (const mn of modelNames) {
-              candidates.push(fileURLToPath(new URL(`../../../models/onnx/${mn}`, import.meta.url)));
-              candidates.push(fileURLToPath(new URL(`../../models/onnx/${mn}`, import.meta.url)));
+              candidates.push(fileURLToPath(new URL(`../../../models/${onnxSubfolder}/${mn}`, import.meta.url)));
+              candidates.push(fileURLToPath(new URL(`../../models/${onnxSubfolder}/${mn}`, import.meta.url)));
             }
           } catch {}
         }
 
         // 2. Resolve relative to process.cwd()
         for (const mn of modelNames) {
-          candidates.push(path.resolve(process.cwd(), 'models/onnx', mn));
+          candidates.push(path.resolve(process.cwd(), `models/${onnxSubfolder}`, mn));
         }
 
         for (const cand of candidates) {
           if (fs.existsSync(cand)) {
             effectiveModelPath = cand;
             break;
+          }
+        }
+
+        // Shared-encoder + 515 KB `.bin` head fallback when monolithic per-language ONNX isn't materialized
+        if (!effectiveModelPath) {
+          const sharedName = isMobileTier ? 'swanada_mobile_ctc_int8.onnx' : 'sushrota_sanskrit_ctc_int8.onnx';
+          const headsFolder = isMobileTier ? 'heads_mobile' : 'heads';
+          const sharedCandidates                                       = [];
+          if (typeof import.meta !== 'undefined' && import.meta.url) {
+            try {
+              sharedCandidates.push({
+                enc: fileURLToPath(new URL(`../../../models/${onnxSubfolder}/${sharedName}`, import.meta.url)),
+                head: fileURLToPath(new URL(`../../../docs/${headsFolder}/${lang}.bin`, import.meta.url)),
+              });
+              sharedCandidates.push({
+                enc: fileURLToPath(new URL(`../../models/${onnxSubfolder}/${sharedName}`, import.meta.url)),
+                head: fileURLToPath(new URL(`../../docs/${headsFolder}/${lang}.bin`, import.meta.url)),
+              });
+            } catch {}
+          }
+          sharedCandidates.push(
+            {
+              enc: path.resolve(process.cwd(), `models/${onnxSubfolder}`, sharedName),
+              head: path.resolve(process.cwd(), `docs/${headsFolder}`, `${lang}.bin`),
+            },
+            {
+              enc: path.resolve(process.cwd(), `models/${onnxSubfolder}`, sharedName),
+              head: path.resolve(process.cwd(), `models/${headsFolder}`, `${lang}.bin`),
+            }
+          );
+          for (const sc of sharedCandidates) {
+            if (fs.existsSync(sc.enc)) {
+              effectiveModelPath = sc.enc;
+              if (lang !== 'sa' && fs.existsSync(sc.head)) {
+                const buf = fs.readFileSync(sc.head);
+                const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+                const floats = new Float32Array(ab);
+                const wc = 257 * 512;
+                engine.linearHead = {
+                  weight: floats.subarray(0, wc),
+                  bias: floats.subarray(wc, wc + 257),
+                };
+              }
+              break;
+            }
           }
         }
       } catch {}
@@ -9797,7 +10010,10 @@ class AcousticEngine {
   }
 
   async loadAcousticModel(modelPathOrUrl        )                {
-    const modelBytes = await loadModelAsset(modelPathOrUrl, this.config.cacheStorageName);
+    let modelBytes = await loadModelAsset(modelPathOrUrl, this.config.cacheStorageName);
+    if (this.linearHead) {
+      modelBytes = exposeEncoderHiddenOutput(modelBytes);
+    }
     const options      = {
       executionProviders: [this.executionProvider],
       graphOptimizationLevel: 'all',
@@ -9847,6 +10063,25 @@ class AcousticEngine {
         audio_signal: featsTensor,
         length: lenTensor,
       });
+
+      if (this.linearHead && outputs.layer_norm_84) {
+        const hidTensor = outputs.layer_norm_84;
+        const hDims = hidTensor.dims; // [1, timeSteps, 512]
+        const timeSteps = hDims.length === 3 ? hDims[1] : hDims[0];
+        const logits = projectLinearHead(
+          hidTensor.data                ,
+          timeSteps,
+          this.linearHead.weight,
+          this.linearHead.bias
+        );
+        const inferenceMs = performance.now() - startMs;
+        return {
+          logits,
+          timeSteps,
+          numClasses: 257,
+          inferenceMs,
+        };
+      }
 
       const logitsTensor = outputs.logits || Object.values(outputs)[0];
       const dims = logitsTensor.dims; // [1, timeSteps, numClasses] or [timeSteps, numClasses]
@@ -10869,11 +11104,12 @@ function transliterateIast(text        )         {
  * and zero-copy Transferable ArrayBuffer dispatching.
  */
 
-                                                                                                    
+                                                                                                               
 
                                       
                            
                                
+                        
                     
                    
                     
@@ -11088,6 +11324,7 @@ class SwanadaWorkerClient {
     this.worker.postMessage({
       type: 'INIT',
       language: targetLang,
+      modelTier: config.modelTier,
       modelUrl: config.modelUrl,
       headUrl: config.headUrl,
       vocabUrl: config.vocabUrl,
@@ -11265,7 +11502,7 @@ class SwanadaWorkerClient {
 
 
 
-                                                                                                        
+                                                                                                                                        
 
 // Worker global scope declaration
                         
@@ -11290,6 +11527,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
                               
                
                                
+                        
                     
                     
                                         
@@ -11298,6 +11536,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
                      
             
                                  
+                          
                       
                       
                                           
@@ -11351,6 +11590,7 @@ let activeSession      = null;
 let activeVocab           = [];
 let ctcDecoder                          = null;
 let executionProvider                    = 'wasm';
+let activeModelTier                      = 'studio';
 let cacheStorageName         = CACHE_STORAGE_NAME;
 let denoiseEnabled          = true;
 let lastEstimatedSnrDb         = 0;
@@ -11570,10 +11810,11 @@ async function setupLanguage(
   const myEpoch = ++latestSetupEpoch;
   workerState = 'INITIALIZING';
 
-  if (sessionCache.has(lang)) {
+  const cacheKey = `${activeModelTier}:${lang}`;
+  if (sessionCache.has(cacheKey)) {
     if (myEpoch !== latestSetupEpoch) return;
     currentLanguage = lang;
-    const cached = sessionCache.get(lang) ;
+    const cached = sessionCache.get(cacheKey) ;
     activeSession = cached.session;
     activeVocab = cached.vocab;
     ctcDecoder = new CTCGreedyDecoder(activeVocab);
@@ -11603,8 +11844,13 @@ async function setupLanguage(
   const ortInstance = await resolveOrt();
   const activeThreads = configureWasm(ortInstance, userThreads, wasmPaths);
 
-  // 1. Resolve URLs
-  const effectiveModelUrl = modelUrl || `./models/onnx/swanada_${lang}_ctc_int8.onnx`;
+  // 1. Resolve URLs (capability-routed 'mobile' <30MB vs 'studio' 177MiB)
+  const isMobileTier = activeModelTier === 'mobile';
+  const effectiveModelUrl =
+    modelUrl ||
+    (isMobileTier
+      ? `./models/onnx_mobile/swanada_mobile_${lang}_ctc_int8.onnx`
+      : `./models/onnx/swanada_${lang}_ctc_int8.onnx`);
   const effectiveVocabUrl = vocabUrl || `./models/vocabularies/${lang}_vocab.json`;
 
   // 2. Load Vocabulary
@@ -11637,8 +11883,9 @@ async function setupLanguage(
   } catch (err) {
     const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
     if (!isNodeEnv && !isOffline && !effectiveModelUrl.startsWith('https://huggingface.co/')) {
-      const hfFile = lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`;
-      const hfFallbackUrl = `https://huggingface.co/gnumanth/swanada/resolve/main/onnx/${hfFile}`;
+      const hfFallbackUrl = isMobileTier
+        ? `https://huggingface.co/gnumanth/swanada/resolve/main/onnx_mobile/${lang === 'sa' ? 'swanada_mobile_ctc_int8.onnx' : `swanada_mobile_${lang}_ctc_int8.onnx`}`
+        : `https://huggingface.co/gnumanth/swanada/resolve/main/onnx/${lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`}`;
       modelBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
     } else {
       throw err;
@@ -11715,7 +11962,7 @@ async function setupLanguage(
 
   // Save to LRU cache
   currentLanguage = lang;
-  sessionCache.set(lang, { session: activeSession, vocab: activeVocab });
+  sessionCache.set(cacheKey, { session: activeSession, vocab: activeVocab });
 
   const engineAdapter      = {
     config: { language: lang },
@@ -11863,6 +12110,14 @@ async function handleIncomingMessage(msg                )                {
       case 'INIT': {
         const config = msg.config || {};
         const lang = msg.language || config.language || 'sa';
+        const reqTier = msg.modelTier || config.modelTier;
+        const isNodeEnv = typeof process !== 'undefined' && Boolean(process.versions?.node);
+        activeModelTier =
+          reqTier === 'mobile' || reqTier === 'studio'
+            ? reqTier
+            : reqTier === 'auto' && !isNodeEnv && detectWorkerMobileRuntime().isMobile
+              ? 'mobile'
+              : 'studio';
         executionProvider = msg.executionProvider || config.executionProvider || 'wasm';
         if (msg.cacheName || config.cacheName) {
           cacheStorageName = msg.cacheName || config.cacheName || CACHE_STORAGE_NAME;
@@ -12292,6 +12547,7 @@ export {
   loadModelAsset,
   getOrt,
   configureWasmEnvironment,
+  resolveEffectiveModelTier,
   AcousticEngine,
   LANGUAGE_REGISTRY,
   TokenRegistry,

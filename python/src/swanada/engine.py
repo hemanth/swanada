@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 import numpy as np
 import onnxruntime as ort
 
@@ -12,6 +12,72 @@ from .audio import load_audio
 from .decoder import CTCDecodeResult, decode_ctc
 from .denoise import enhance_speech_with_telemetry
 from .frontend import extract_log_mel_features, extract_log_mel_onnx
+
+_LAYER_NORM_84_VALUE_INFO = bytes(
+    [
+        0x0A, 0x0D, 0x6C, 0x61, 0x79, 0x65, 0x72, 0x5F, 0x6E, 0x6F, 0x72, 0x6D, 0x5F, 0x38, 0x34,
+        0x12, 0x20, 0x0A, 0x1E, 0x08, 0x01, 0x12, 0x1A, 0x0A, 0x07, 0x12, 0x05, 0x62, 0x61, 0x74,
+        0x63, 0x68, 0x0A, 0x0A, 0x12, 0x08, 0x74, 0x69, 0x6D, 0x65, 0x5F, 0x73, 0x75, 0x62, 0x0A,
+        0x03, 0x08, 0x80, 0x04,
+    ]
+)
+
+
+def _read_pb_varint(buf: bytes, pos: int) -> Tuple[int, int]:
+    val = 0
+    shift = 0
+    n = len(buf)
+    while pos < n:
+        b = buf[pos]
+        pos += 1
+        val |= (b & 0x7F) << shift
+        if (b & 0x80) == 0:
+            return val, pos
+        shift += 7
+    raise ValueError("Truncated ONNX protobuf varint")
+
+
+def _encode_pb_varint(n: int) -> bytes:
+    out = bytearray()
+    rem = n
+    while rem >= 128:
+        out.append((rem & 0x7F) | 0x80)
+        rem >>= 7
+    out.append(rem)
+    return bytes(out)
+
+
+def _expose_encoder_hidden_output(src: bytes) -> bytes:
+    """Zero-dependency ONNX ModelProto splitter exposing `layer_norm_84` ([batch, time_sub, 512])."""
+    graph_append = bytes([0x62, len(_LAYER_NORM_84_VALUE_INFO)]) + _LAYER_NORM_84_VALUE_INFO
+    pos = 0
+    n = len(src)
+    while pos < n:
+        tag_start = pos
+        tag, after_tag = _read_pb_varint(src, pos)
+        field_no = tag >> 3
+        wire_type = tag & 7
+        if wire_type == 0:
+            _, pos = _read_pb_varint(src, after_tag)
+        elif wire_type == 2:
+            length, data_start = _read_pb_varint(src, after_tag)
+            data_end = data_start + length
+            if field_no == 7:
+                return (
+                    src[:after_tag]
+                    + _encode_pb_varint(length + len(graph_append))
+                    + src[data_start:data_end]
+                    + graph_append
+                    + src[data_end:]
+                )
+            pos = data_end
+        elif wire_type == 5:
+            pos = after_tag + 4
+        elif wire_type == 1:
+            pos = after_tag + 8
+        else:
+            return src
+    return src
 
 
 @dataclass
@@ -39,13 +105,18 @@ class AcousticEngine:
         num_threads: int = 4,
         preprocessor_mode: str = "analytical",
         denoise: bool = True,
+        tier: str = "studio",
+        head_path: Optional[Union[str, Path]] = None,
     ):
         self.language = language
         self.num_threads = num_threads
         self.preprocessor_mode = preprocessor_mode
         self.denoise = denoise
+        norm_tier = (tier or "studio").lower().strip()
+        self.tier = "mobile" if norm_tier == "mobile" else "studio"
         self.acoustic_session: Optional[ort.InferenceSession] = None
         self.preprocessor_session: Optional[ort.InferenceSession] = None
+        self._linear_head: Optional[Tuple[np.ndarray, np.ndarray]] = None
         self.vocab: List[str] = []
 
         # Configure session options
@@ -56,10 +127,11 @@ class AcousticEngine:
         self.sess_opts.enable_mem_pattern = True
         self.sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
+        repo_root = Path(__file__).resolve().parents[3]
+
         # Load vocabulary
         if vocab_path is None:
-            # Try language-specific vocab first, then fallback
-            repo_models = Path(__file__).resolve().parents[3] / "models" / "vocabularies"
+            repo_models = repo_root / "models" / "vocabularies"
             candidate = repo_models / f"{language}_vocab.json"
             if not candidate.exists() and language == "sa":
                 candidate = repo_models / "sanskrit_vocab.json"
@@ -69,18 +141,48 @@ class AcousticEngine:
             with open(vocab_path, "r", encoding="utf-8") as f:
                 self.vocab = json.load(f)
 
-        # Load acoustic model if provided
+        # Load acoustic model (monolithic OR shared encoder + 515 KB `.bin` head)
+        resolved_head: Optional[Path] = Path(head_path) if head_path else None
         if model_path is None:
-            repo_onnx = Path(__file__).resolve().parents[3] / "models" / "onnx"
-            candidate = repo_onnx / f"swanada_{language}_ctc_int8.onnx"
-            if not candidate.exists() and language == "sa":
-                candidate = repo_onnx / "sushrota_sanskrit_ctc_int8.onnx"
-            if candidate.exists():
-                model_path = candidate
+            if self.tier == "mobile":
+                repo_mob = repo_root / "models" / "onnx_mobile"
+                mono = repo_mob / f"swanada_mobile_{language}_ctc_int8.onnx"
+                shared = repo_mob / "swanada_mobile_ctc_int8.onnx"
+                h_bin = repo_root / "docs" / "heads_mobile" / f"{language}.bin"
+                if mono.exists():
+                    model_path = mono
+                elif shared.exists():
+                    model_path = shared
+                    if language != "sa" and h_bin.exists():
+                        resolved_head = h_bin
+            else:
+                repo_onnx = repo_root / "models" / "onnx"
+                candidate = repo_onnx / f"swanada_{language}_ctc_int8.onnx"
+                shared = repo_onnx / "sushrota_sanskrit_ctc_int8.onnx"
+                h_bin = repo_root / "docs" / "heads" / f"{language}.bin"
+                if candidate.exists():
+                    model_path = candidate
+                elif shared.exists():
+                    model_path = shared
+                    if language != "sa" and h_bin.exists():
+                        resolved_head = h_bin
+
+        if resolved_head and resolved_head.exists():
+            raw = resolved_head.read_bytes()
+            w = np.frombuffer(raw[: 257 * 512 * 4], dtype="<f4").reshape(257, 512).copy()
+            b = np.frombuffer(raw[257 * 512 * 4 : (257 * 512 + 257) * 4], dtype="<f4").copy()
+            self._linear_head = (w, b)
+
         if model_path and Path(model_path).exists():
-            self.acoustic_session = ort.InferenceSession(
-                str(model_path), sess_options=self.sess_opts, providers=["CPUExecutionProvider"]
-            )
+            if self._linear_head is not None:
+                patched = _expose_encoder_hidden_output(Path(model_path).read_bytes())
+                self.acoustic_session = ort.InferenceSession(
+                    patched, sess_options=self.sess_opts, providers=["CPUExecutionProvider"]
+                )
+            else:
+                self.acoustic_session = ort.InferenceSession(
+                    str(model_path), sess_options=self.sess_opts, providers=["CPUExecutionProvider"]
+                )
             # Warm up session graph kernels and pattern memory allocations
             try:
                 dummy_feats = np.zeros((1, 80, 16), dtype=np.float32)
@@ -178,11 +280,19 @@ class AcousticEngine:
         feats_input = np.ascontiguousarray(features, dtype=np.float32)
         lens_input = np.array([features.shape[2]], dtype=np.int64)
 
-        ctc_out = self.acoustic_session.run(
-            None,
-            {"audio_signal": feats_input, "length": lens_input},
-        )
-        logits = ctc_out[0]  # [1, time_steps, num_classes]
+        if self._linear_head is not None:
+            hidden = self.acoustic_session.run(
+                ["layer_norm_84"],
+                {"audio_signal": feats_input, "length": lens_input},
+            )[0]  # [1, time_steps, 512]
+            w_h, b_h = self._linear_head
+            logits = hidden @ w_h.T + b_h
+        else:
+            ctc_out = self.acoustic_session.run(
+                None,
+                {"audio_signal": feats_input, "length": lens_input},
+            )
+            logits = ctc_out[0]  # [1, time_steps, num_classes]
 
         # 3. CTC decode
         decode_res: CTCDecodeResult = decode_ctc(logits, vocab=self.vocab, is_partial=is_partial)

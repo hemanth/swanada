@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.5.4' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.6.0' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -49,10 +49,12 @@ let activeHead = null; // { weight: Float32Array(257*512), bias: Float32Array(25
 let activeVocab = [];
 let ctcDecoder = null;
 let executionProvider = 'wasm';
+let activeModelTier = 'studio';
 let cacheStorageName = CACHE_STORAGE_NAME;
 
-// Shared 187 MB Conformer encoder singleton (compiled ONCE across all 12 languages)
+// Shared Conformer encoder singleton (177 MiB Studio OR 25 MiB Mobile, compiled ONCE across all 12 languages)
 let sharedEncoderSession = null;
+let sharedEncoderUrl = null;
 let sharedEncoderPromise = null;
 let sharedEncoderThreads = 1;
 
@@ -347,8 +349,9 @@ async function loadVocab(vocabUrlOrPath) {
 }
 
 async function loadLinearHead(lang, headUrlOrPath) {
-  if (headCache.has(lang)) {
-    return headCache.get(lang);
+  const headCacheKey = `${lang}::${headUrlOrPath}`;
+  if (headCache.has(headCacheKey)) {
+    return headCache.get(headCacheKey);
   }
 
   let arrayBuf = null;
@@ -410,7 +413,7 @@ async function loadLinearHead(lang, headUrlOrPath) {
     weight: floats.subarray(0, weightCount),
     bias: floats.subarray(weightCount, weightCount + 257),
   };
-  headCache.set(lang, head);
+  headCache.set(headCacheKey, head);
   return head;
 }
 
@@ -425,8 +428,14 @@ function postWorkerMessage(message, transfer) {
 }
 
 async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
-  if (sharedEncoderSession) {
+  if (sharedEncoderSession && (!sharedEncoderUrl || sharedEncoderUrl === encoderUrl)) {
     return { session: sharedEncoderSession, threads: sharedEncoderThreads, fromCache: true };
+  }
+  if (sharedEncoderSession && sharedEncoderUrl && sharedEncoderUrl !== encoderUrl) {
+    try { await sharedEncoderSession.release?.(); } catch {}
+    sharedEncoderSession = null;
+    sharedEncoderUrl = null;
+    sharedEncoderPromise = null;
   }
   if (sharedEncoderPromise) {
     return sharedEncoderPromise;
@@ -466,7 +475,10 @@ async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
       } catch (err) {
         const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
         if (!isNodeEnv && !isOffline && !encoderUrl.startsWith('https://huggingface.co/')) {
-          const hfFallbackUrl = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0';
+          const wantsMobile = encoderUrl.includes('mobile') || activeModelTier === 'mobile';
+          const hfFallbackUrl = wantsMobile
+            ? 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx_mobile/swanada_mobile_ctc_int8.onnx?v=1.6.0'
+            : 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0';
           rawBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
         } else {
           throw err;
@@ -530,6 +542,7 @@ async function ensureSharedEncoderSession(encoderUrl, userThreads, wasmPaths) {
       }
 
       sharedEncoderSession = sess;
+      sharedEncoderUrl = encoderUrl;
       return { session: sess, threads: activeThreads, fromCache: wasCacheHit };
     } catch (err) {
       sharedEncoderPromise = null;
@@ -557,7 +570,9 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
   const myEpoch = ++latestSetupEpoch;
   workerState = 'INITIALIZING';
 
-  const prevUrls = languageUrlHistory.get(lang);
+  const isMobileTier = activeModelTier === 'mobile';
+  const tierLangKey = `${activeModelTier}:${lang}`;
+  const prevUrls = languageUrlHistory.get(tierLangKey);
   const resolvedModelUrl = modelUrl || prevUrls?.modelUrl;
   const resolvedVocabUrl =
     vocabUrl ||
@@ -565,10 +580,11 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     (sharedEncoderSession
       ? `./vocabularies/${lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`}`
       : undefined);
+  const defaultSharedHead = isMobileTier ? `./heads_mobile/${lang}.bin` : `./heads/${lang}.bin`;
   const resolvedHeadUrl =
-    headUrl || prevUrls?.headUrl || (sharedEncoderSession ? `./heads/${lang}.bin` : undefined);
+    headUrl || prevUrls?.headUrl || (sharedEncoderSession ? defaultSharedHead : undefined);
   if (resolvedModelUrl || resolvedVocabUrl || resolvedHeadUrl) {
-    languageUrlHistory.set(lang, {
+    languageUrlHistory.set(tierLangKey, {
       modelUrl: resolvedModelUrl,
       vocabUrl: resolvedVocabUrl,
       headUrl: resolvedHeadUrl,
@@ -579,10 +595,13 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     resolvedVocabUrl ||
     `./models/vocabularies/${lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`}`;
 
-  // Fast path: Shared Encoder + 515 KB per-language linear CTC head (all 12 languages in Studio)
+  // Fast path: Shared Encoder (25 MiB Mobile OR 177 MiB Studio) + 515 KB per-language linear CTC head
   if (resolvedHeadUrl) {
     const effectiveEncoderUrl =
-      resolvedModelUrl || './models/onnx/sushrota_sanskrit_ctc_int8.onnx';
+      resolvedModelUrl ||
+      (isMobileTier
+        ? './models/onnx_mobile/swanada_mobile_ctc_int8.onnx'
+        : './models/onnx/sushrota_sanskrit_ctc_int8.onnx');
     const [encInfo, vocab, head] = await Promise.all([
       ensureSharedEncoderSession(effectiveEncoderUrl, userThreads, wasmPaths),
       loadVocab(effectiveVocabUrl),
@@ -605,6 +624,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     postWorkerMessage({
       type: 'READY',
       language: lang,
+      modelTier: activeModelTier,
       executionProvider,
       numThreads: encInfo.threads,
       fromCache: encInfo.fromCache,
@@ -613,9 +633,9 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
   }
 
   // Fallback path: Monolithic per-language ONNX model (used by standalone SDK / custom modelUrl tests)
-  if (sessionCache.has(lang)) {
+  if (sessionCache.has(tierLangKey)) {
     if (myEpoch !== latestSetupEpoch) return;
-    const cached = sessionCache.get(lang);
+    const cached = sessionCache.get(tierLangKey);
     currentLanguage = lang;
     activeSession = cached.session;
     activeHead = null;
@@ -626,6 +646,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     postWorkerMessage({
       type: 'READY',
       language: lang,
+      modelTier: activeModelTier,
       executionProvider,
       numThreads: ort?.env?.wasm?.numThreads || 1,
       fromCache: true,
@@ -637,7 +658,11 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
   if (typeof self !== 'undefined') self.ort = ortInstance;
   const activeThreads = configureWasm(ortInstance, userThreads, wasmPaths);
 
-  const effectiveModelUrl = modelUrl || `./models/onnx/${lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`}`;
+  const effectiveModelUrl =
+    modelUrl ||
+    (isMobileTier
+      ? `./models/onnx_mobile/swanada_mobile_${lang}_ctc_int8.onnx`
+      : `./models/onnx/${lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`}`);
   const vocab = await loadVocab(effectiveVocabUrl);
 
   postWorkerMessage({
@@ -666,8 +691,9 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
   } catch (err) {
     const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
     if (!isNodeEnv && !isOffline && !effectiveModelUrl.startsWith('https://huggingface.co/')) {
-      const hfFile = lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`;
-      const hfFallbackUrl = `https://huggingface.co/gnumanth/swanada/resolve/main/onnx/${hfFile}`;
+      const hfFallbackUrl = isMobileTier
+        ? `https://huggingface.co/gnumanth/swanada/resolve/main/onnx_mobile/${lang === 'sa' ? 'swanada_mobile_ctc_int8.onnx' : `swanada_mobile_${lang}_ctc_int8.onnx`}`
+        : `https://huggingface.co/gnumanth/swanada/resolve/main/onnx/${lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`}`;
       modelBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
     } else {
       throw err;
@@ -743,7 +769,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     return;
   }
 
-  sessionCache.set(lang, { session: sess, vocab });
+  sessionCache.set(tierLangKey, { session: sess, vocab });
   currentLanguage = lang;
   activeSession = sess;
   activeHead = null;
@@ -888,6 +914,19 @@ export async function handleIncomingMessage(msg) {
       case 'INIT': {
         const config = msg.config || {};
         const lang = msg.language || config.language || 'sa';
+        const reqTier = msg.modelTier || config.modelTier;
+        const mUrl = msg.modelUrl || config.modelUrl || '';
+        const hUrl = msg.headUrl || config.headUrl || '';
+        const isNodeEnv = typeof process !== 'undefined' && Boolean(process.versions?.node);
+        if (reqTier === 'mobile' || reqTier === 'studio') {
+          activeModelTier = reqTier;
+        } else if (mUrl.includes('onnx_mobile') || hUrl.includes('heads_mobile')) {
+          activeModelTier = 'mobile';
+        } else if (reqTier === 'auto' && !isNodeEnv && detectMobileRuntime().isMobile) {
+          activeModelTier = 'mobile';
+        } else {
+          activeModelTier = 'studio';
+        }
         executionProvider = msg.executionProvider || config.executionProvider || 'wasm';
         if (msg.cacheName || config.cacheName) {
           cacheStorageName = msg.cacheName || config.cacheName || CACHE_STORAGE_NAME;

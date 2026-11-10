@@ -1,6 +1,6 @@
 # swanada (स्वनद)
 
-In-browser, Node.js, and Python 16,000 Hz multilingual speech-to-text (STT) for Classical Sanskrit (`sa`), Indian English (`en`), and ten Indic languages (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) powered by 17-layer Conformer-CTC INT8 models running 100% client-side via ONNX/WASM with zero cloud or server dependencies.
+In-browser, Node.js, and Python 16,000 Hz multilingual speech-to-text (STT) for Classical Sanskrit (`sa`), Indian English (`en`), and ten Indic languages (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) powered by **capability-routed dual-tier Conformer-CTC INT8 models** (`25.35 MiB` Mobile Conformer-Small for phones/tablets + `177.4 MiB` Studio Conformer-Large for desktop/servers) running 100% client-side via ONNX/WASM with zero cloud or server dependencies.
 
 ```bash
 npm install swanada
@@ -15,9 +15,10 @@ pip install swanada
 ```typescript
 import { Swanada } from 'swanada';
 
-// Initialize transcriber for Classical Sanskrit
+// Initialize transcriber (`modelTier: 'auto'` picks `25.4 MiB` mobile on phones & `177.4 MiB` studio on desktop)
 const transcriber = await Swanada.create({
   language: 'sa',
+  modelTier: 'auto', // 'auto' | 'mobile' | 'studio'
   executionProvider: 'wasm',
   numThreads: 4,
 });
@@ -39,7 +40,7 @@ await transcriber.release();
 ```python
 from swanada import Swanada
 
-stt = Swanada.create(language="kn")  # Kannada
+stt = Swanada.create(language="kn", tier="studio")  # or tier="mobile" (25.35 MiB)
 result = stt.transcribe("speech_16k.wav")
 
 print("Transcript:", result.text)
@@ -68,8 +69,16 @@ cat stream.wav | swanada -l ta --stream
 - `--json`: Emit structured JSON with text, durationMs, inferenceMs, rtf, and tokens.
 - `--stream`: Simulate chunk-by-chunk streaming transcription (320 ms quanta).
 - `--iast`: Transliterate Classical Sanskrit output to Roman IAST with Vedic accents.
+- `--tier <studio|mobile|auto>`: Select `177.4 MiB` `studio` tier or `< 30 MB` (`25.35 MiB`) `mobile` tier (default: `studio`).
 - `-h, --help`: Show help and usage summary.
-- `-v, --version`: Show version (`swanada 1.0.2`).
+- `-v, --version`: Show version (`swanada 1.1.0`).
+
+## Capability-Routed Dual-Tier Footprint (`v1.1.0`)
+
+| Model Tier | Architecture | Shared INT8 Encoder | Per-Lang Head | First-Load Size | 4T CPU RTF | Offline Cache |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **Mobile (`< 30 MB`)** | 14-layer Conformer-Small (`d=256`, `23.56M`) | `25.35 MiB` (`26.58 MB`) | `515 KB` | **`25.85 MiB`** | **`0.0097x`** (`103×` RT) | iOS Safari & Android Chrome `CacheStorage` |
+| **Studio (Desktop)** | 17-layer Conformer-Large (`d=512`, `115.2M`) | `177.4 MiB` (`186.0 MB`) | `515 KB` | **`177.9 MiB`** | **`0.0264x`** (`38×` RT) | Desktop Chrome / Edge / Firefox / Node / Python |
 
 ## Benchmarks
 
@@ -101,7 +110,32 @@ Evaluated across 480 held-out 16 kHz utterances (40 per language, `B = 1,000` bo
 | Tempo / Vocal-Tract & Reverberant Mobile-Mic Perturbations | 29 | `20.42%` / `50.54%` | `17.76% [13.85%, 22.07%]` | `41.00% [32.55%, 49.11%]` |
 | **Overall (`n = 150`)** | **150** | **`20.04%` / `49.90%`** | **`17.44% [15.35%, 19.64%]`** | **`41.88% [37.49%, 46.67%]`** |
 
-Shared 178 MB INT8 Conformer encoder + 515 KB per-language CTC projection heads run at `0.0325x` CPU RTF, `~8-11 ms` streaming chunk latency, and `0.00%` committed prefix churn.
+Shared INT8 Conformer encoders (`25.35 MiB` Mobile / `177.4 MiB` Studio) + `515 KB` per-language CTC projection heads run at `0.0097x`–`0.0264x` CPU RTF, `~8-11 ms` streaming chunk latency, and `0.00%` committed prefix churn.
+
+### Open Public Benchmarks in the Wild (`n = 1,280` Unseen Official `test` Clips, `B = 1,000` Bootstrap)
+
+Reproducible via [`python bench/eval_open_benchmarks.py`](bench/eval_open_benchmarks.py) across 16 official Hugging Face `test` splits with zero training overlap:
+
+| Open Public Benchmark (`test` split) | Lang | Clips | Studio (`177.4 MiB`) CER [95% CI] | Mobile (`25.35 MiB`) CER [95% CI] | Mobile 4T RTF |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `openslr/librispeech_asr` (`test-clean`) | `en` | 80 | `10.53% [8.58%, 12.47%]` | `16.91% [14.60%, 19.24%]` | `0.009x` |
+| `openslr/librispeech_asr` (`test-other`) | `en` | 80 | `19.21% [16.71%, 22.00%]` | `28.04% [25.78%, 30.36%]` | `0.009x` |
+| `MushanW/GLOBE` (`default/test`, global accents) | `en` | 80 | `15.29% [12.98%, 17.82%]` | `22.26% [20.00%, 24.84%]` | `0.011x` |
+| `edinburghcstr/ami` (`ihm/test`, meeting speech) | `en` | 80 | `41.50% [36.90%, 46.24%]` | `51.63% [47.36%, 56.33%]` | `0.012x` |
+| `sushrota-sanskrit-asr` (`in_the_wild_test`) | `sa` | 80 | `18.92% [9.94%, 30.36%]` | `40.15% [29.73%, 52.95%]` | `0.007x` |
+| `google/fleurs` (`en_us/test`) | `en` | 80 | `17.23% [15.37%, 19.21%]` | `25.97% [23.74%, 28.22%]` | `0.012x` |
+| `google/fleurs` (`hi_in/test`) | `hi` | 80 | `5.13% [3.86%, 6.61%]` | `14.04% [12.17%, 16.22%]` | `0.009x` |
+| `google/fleurs` (`kn_in/test`) | `kn` | 80 | `4.49% [3.48%, 5.69%]` | `9.60% [8.14%, 11.15%]` | `0.009x` |
+| `google/fleurs` (`mr_in/test`) | `mr` | 80 | `7.85% [6.48%, 9.46%]` | `21.44% [18.86%, 23.95%]` | `0.008x` |
+| `google/fleurs` (`bn_in/test`) | `bn` | 80 | `5.44% [4.61%, 6.34%]` | `13.88% [12.37%, 15.41%]` | `0.009x` |
+| `google/fleurs` (`ta_in/test`) | `ta` | 80 | `10.32% [8.90%, 11.84%]` | `18.58% [16.86%, 20.40%]` | `0.011x` |
+| `google/fleurs` (`te_in/test`) | `te` | 80 | `8.14% [6.24%, 10.05%]` | `16.04% [13.99%, 18.16%]` | `0.010x` |
+| `google/fleurs` (`ml_in/test`) | `ml` | 80 | `6.36% [4.98%, 7.90%]` | `14.89% [13.60%, 16.21%]` | `0.011x` |
+| `google/fleurs` (`gu_in/test`) | `gu` | 80 | `5.97% [4.68%, 7.53%]` | `16.80% [14.74%, 18.89%]` | `0.009x` |
+| `google/fleurs` (`pa_in/test`) | `pa` | 80 | `8.84% [7.44%, 10.50%]` | `20.56% [18.01%, 23.30%]` | `0.010x` |
+| `google/fleurs` (`or_in/test`) | `or` | 80 | `7.69% [6.37%, 9.03%]` | `18.87% [16.61%, 21.18%]` | `0.008x` |
+| **12-Lang Open `FLEURS` + Wild (`n = 960`)** | — | **960** | **`8.87% [7.94%, 10.02%]`** | **`19.23% [18.11%, 20.64%]`** | **`0.009x`** |
+| **All 16 Open Public Suites (`n = 1,280`)** | — | **1,280** | **`12.06% [11.09%, 12.97%]`** | **`21.85% [20.79%, 22.87%]`** | **`0.0097x`** |
 
 ## Live Playground
 

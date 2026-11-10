@@ -24,7 +24,10 @@ Thumbs.db
 # Large ONNX binary model weights (>100 MB limit, published to Hugging Face Hub)
 models/onnx/*.onnx
 !models/onnx/heads/
+models/onnx_mobile/*.onnx
+!models/onnx_mobile/heads/
 models/heads/
+models/heads_mobile/
 
 # Temporary / Scratch audio files & benchmark cache
 *.wav

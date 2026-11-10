@@ -82,10 +82,17 @@ def parse_cli_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Transliterate Classical Sanskrit output to Roman IAST with Vedic accents",
     )
     parser.add_argument(
+        "--tier",
+        choices=["studio", "mobile", "auto"],
+        default="studio",
+        dest="tier",
+        help="Model tier: studio (177 MiB Conformer-Large) | mobile (25 MiB Conformer-Small) | auto (default: studio)",
+    )
+    parser.add_argument(
         "-v",
         "--version",
         action="version",
-        version="swanada 1.0.2",
+        version="swanada 1.1.0",
         help="Display version information and exit",
     )
     return parser.parse_args(argv)
@@ -143,7 +150,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Initialize Engine
     try:
         model_dir = Path(args.model_dir) if args.model_dir else None
-        stt = Swanada.create(language=lang, model_dir=model_dir, num_threads=args.threads)
+        stt = Swanada.create(language=lang, model_dir=model_dir, num_threads=args.threads, tier=args.tier)
     except Exception as e:
         sys.stderr.write(f"Error initializing Swanada engine: {e}\n")
         return 2

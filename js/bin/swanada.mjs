@@ -31,6 +31,7 @@ Options:
   --json                   Emit structured JSON with text, durationMs, inferenceMs, rtf, and tokens
   --stream                 Simulate chunk-by-chunk streaming transcription (320ms / 5120 samples)
   --iast                   Transliterate Classical Sanskrit output to Roman IAST with Vedic accents
+  --tier <tier>            Model tier: studio (177 MiB) | mobile (25 MiB) | auto (default: studio)
   --threads <n>            Number of inference execution threads (default: 4)
   -h, --help               Display this help text and exit
   -v, --version            Display version information and exit
@@ -50,7 +51,7 @@ async function main() {
   }
 
   if (args.includes('-v') || args.includes('--version')) {
-    console.log('swanada 1.0.2');
+    console.log('swanada 1.1.0');
     process.exit(0);
   }
 
@@ -60,6 +61,7 @@ async function main() {
   let jsonOutput = false;
   let streamMode = false;
   let iastMode = false;
+  let modelTier = 'studio';
   let threads = 4;
   let inputPath = null;
 
@@ -71,6 +73,8 @@ async function main() {
       modelDir = args[++i];
     } else if (a === '-o' || a === '--output' || a === '--out') {
       outputPath = args[++i];
+    } else if (a === '--tier' && args[i + 1]) {
+      modelTier = (args[++i] || 'studio').toLowerCase().trim();
     } else if (a === '--threads' && args[i + 1]) {
       threads = parseInt(args[++i], 10) || 4;
     } else if (a === '--json') {
@@ -142,18 +146,26 @@ async function main() {
     process.exit(2);
   }
 
+  if (!['studio', 'mobile', 'auto'].includes(modelTier)) {
+    console.error(`Error: Unsupported --tier '${modelTier}'. Expected: studio, mobile, or auto.`);
+    process.exit(1);
+  }
+
   // Initialize Swanada
   let transcriber;
   try {
-    const config = { language, numThreads: threads };
+    const config = { language, numThreads: threads, modelTier };
     if (modelDir) {
       const resolvedDir = path.resolve(modelDir);
       if (fs.existsSync(resolvedDir) && fs.statSync(resolvedDir).isDirectory()) {
-        const modelNames = [`swanada_${language}_ctc_int8.onnx`];
-        if (language === 'sa') modelNames.push('sushrota_sanskrit_ctc_int8.onnx');
+        const isMob = modelTier === 'mobile';
+        const sub = isMob ? 'onnx_mobile' : 'onnx';
+        const modelNames = isMob
+          ? [`swanada_mobile_${language}_ctc_int8.onnx`, ...(language === 'sa' ? ['swanada_mobile_ctc_int8.onnx'] : [])]
+          : [`swanada_${language}_ctc_int8.onnx`, ...(language === 'sa' ? ['sushrota_sanskrit_ctc_int8.onnx'] : [])];
         let foundModel = null;
         for (const mn of modelNames) {
-          const c1 = path.join(resolvedDir, 'onnx', mn);
+          const c1 = path.join(resolvedDir, sub, mn);
           const c2 = path.join(resolvedDir, mn);
           if (fs.existsSync(c1)) { foundModel = c1; break; }
           if (fs.existsSync(c2)) { foundModel = c2; break; }

@@ -11,7 +11,7 @@ import { decodeCTC, CTCGreedyDecoder } from '../decoder/ctc.ts';
 import { devanagariToIast } from '../tokenizers/iast.ts';
 import { loadModelAsset, CACHE_STORAGE_NAME } from '../models/cache.ts';
 import { StreamingAcousticEngine } from '../models/streaming.ts';
-import type { SupportedLanguage, ExecutionProvider, AcousticInferenceResult } from '../models/types.ts';
+import type { SupportedLanguage, ExecutionProvider, ModelTier, AcousticInferenceResult, TranscriptionResult } from '../models/types.ts';
 
 // Worker global scope declaration
 declare const self: any;
@@ -36,6 +36,7 @@ export type WorkerState = 'UNINITIALIZED' | 'INITIALIZING' | 'READY' | 'STREAMIN
 export interface InitMessage {
   type: 'INIT';
   language?: SupportedLanguage;
+  modelTier?: ModelTier;
   modelUrl?: string;
   vocabUrl?: string;
   executionProvider?: ExecutionProvider;
@@ -44,6 +45,7 @@ export interface InitMessage {
   cacheName?: string;
   config?: {
     language?: SupportedLanguage;
+    modelTier?: ModelTier;
     modelUrl?: string;
     vocabUrl?: string;
     executionProvider?: ExecutionProvider;
@@ -97,6 +99,7 @@ let activeSession: any = null;
 let activeVocab: string[] = [];
 let ctcDecoder: CTCGreedyDecoder | null = null;
 let executionProvider: ExecutionProvider = 'wasm';
+let activeModelTier: 'mobile' | 'studio' = 'studio';
 let cacheStorageName: string = CACHE_STORAGE_NAME;
 let denoiseEnabled: boolean = true;
 let lastEstimatedSnrDb: number = 0;
@@ -316,10 +319,11 @@ async function setupLanguage(
   const myEpoch = ++latestSetupEpoch;
   workerState = 'INITIALIZING';
 
-  if (sessionCache.has(lang)) {
+  const cacheKey = `${activeModelTier}:${lang}`;
+  if (sessionCache.has(cacheKey)) {
     if (myEpoch !== latestSetupEpoch) return;
     currentLanguage = lang;
-    const cached = sessionCache.get(lang)!;
+    const cached = sessionCache.get(cacheKey)!;
     activeSession = cached.session;
     activeVocab = cached.vocab;
     ctcDecoder = new CTCGreedyDecoder(activeVocab);
@@ -349,8 +353,13 @@ async function setupLanguage(
   const ortInstance = await resolveOrt();
   const activeThreads = configureWasm(ortInstance, userThreads, wasmPaths);
 
-  // 1. Resolve URLs
-  const effectiveModelUrl = modelUrl || `./models/onnx/swanada_${lang}_ctc_int8.onnx`;
+  // 1. Resolve URLs (capability-routed 'mobile' <30MB vs 'studio' 177MiB)
+  const isMobileTier = activeModelTier === 'mobile';
+  const effectiveModelUrl =
+    modelUrl ||
+    (isMobileTier
+      ? `./models/onnx_mobile/swanada_mobile_${lang}_ctc_int8.onnx`
+      : `./models/onnx/swanada_${lang}_ctc_int8.onnx`);
   const effectiveVocabUrl = vocabUrl || `./models/vocabularies/${lang}_vocab.json`;
 
   // 2. Load Vocabulary
@@ -383,8 +392,9 @@ async function setupLanguage(
   } catch (err) {
     const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
     if (!isNodeEnv && !isOffline && !effectiveModelUrl.startsWith('https://huggingface.co/')) {
-      const hfFile = lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`;
-      const hfFallbackUrl = `https://huggingface.co/gnumanth/swanada/resolve/main/onnx/${hfFile}`;
+      const hfFallbackUrl = isMobileTier
+        ? `https://huggingface.co/gnumanth/swanada/resolve/main/onnx_mobile/${lang === 'sa' ? 'swanada_mobile_ctc_int8.onnx' : `swanada_mobile_${lang}_ctc_int8.onnx`}`
+        : `https://huggingface.co/gnumanth/swanada/resolve/main/onnx/${lang === 'sa' ? 'sushrota_sanskrit_ctc_int8.onnx' : `swanada_${lang}_ctc_int8.onnx`}`;
       modelBytes = await loadModelAsset(hfFallbackUrl, cacheStorageName, progressHandler);
     } else {
       throw err;
@@ -461,7 +471,7 @@ async function setupLanguage(
 
   // Save to LRU cache
   currentLanguage = lang;
-  sessionCache.set(lang, { session: activeSession, vocab: activeVocab });
+  sessionCache.set(cacheKey, { session: activeSession, vocab: activeVocab });
 
   const engineAdapter: any = {
     config: { language: lang },
@@ -609,6 +619,14 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
       case 'INIT': {
         const config = msg.config || {};
         const lang = msg.language || config.language || 'sa';
+        const reqTier = msg.modelTier || config.modelTier;
+        const isNodeEnv = typeof process !== 'undefined' && Boolean(process.versions?.node);
+        activeModelTier =
+          reqTier === 'mobile' || reqTier === 'studio'
+            ? reqTier
+            : reqTier === 'auto' && !isNodeEnv && detectWorkerMobileRuntime().isMobile
+              ? 'mobile'
+              : 'studio';
         executionProvider = msg.executionProvider || config.executionProvider || 'wasm';
         if (msg.cacheName || config.cacheName) {
           cacheStorageName = msg.cacheName || config.cacheName || CACHE_STORAGE_NAME;

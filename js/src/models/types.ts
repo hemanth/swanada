@@ -8,8 +8,12 @@ export type SupportedLanguage =
 
 export type ExecutionProvider = 'wasm' | 'webgpu';
 
+export type ModelTier = 'auto' | 'mobile' | 'studio';
+
 export interface SwanadaEngineConfig {
   language?: SupportedLanguage; // Default: 'sa'
+  /** Capability-routed model tier: 'studio' (177 MiB Conformer-Large), 'mobile' (25 MiB Conformer-Small), or 'auto' */
+  modelTier?: ModelTier;
   modelPath?: string;
   modelDir?: string;
   preprocessorPath?: string;

@@ -1,6 +1,6 @@
 # swanada (स्वनद)
 
-In-browser, Node.js, and Python 16,000 Hz multilingual speech-to-text (STT) for Classical Sanskrit (`sa`), Indian English (`en`), and ten Indic languages (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) powered by 17-layer Conformer-CTC INT8 models running 100% client-side via ONNX/WASM with zero cloud or server dependencies.
+In-browser, Node.js, and Python 16,000 Hz multilingual speech-to-text (STT) for Classical Sanskrit (`sa`), Indian English (`en`), and ten Indic languages (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) powered by **capability-routed dual-tier Conformer-CTC INT8 models** (`25.35 MiB` Mobile Conformer-Small + `177.4 MiB` Studio Conformer-Large) running 100% client-side via ONNX/WASM with zero cloud or server dependencies.
 
 ```bash
 npm install swanada
@@ -68,15 +68,17 @@ cat stream.wav | swanada -l ta --stream
 - `--json`: Emit structured JSON with text, durationMs, inferenceMs, rtf, and tokens.
 - `--stream`: Simulate chunk-by-chunk streaming transcription (320 ms quanta).
 - `--iast`: Transliterate Classical Sanskrit output to Roman IAST with Vedic accents.
+- `--tier <studio|mobile|auto>`: Select `177.4 MiB` `studio` tier or `25.35 MiB` (`< 30 MB`) `mobile` tier (default: `studio`).
 - `-h, --help`: Show help and usage summary.
-- `-v, --version`: Show version (`swanada 1.0.2`).
+- `-v, --version`: Show version (`swanada 1.1.0`).
 
-## Benchmarks
+## Benchmarks (`v1.1.0`)
 
-Evaluated across 480 held-out 16 kHz utterances (40 per language, `B = 1,000` bootstrap 95% CIs), 1,200 unseen `google/fleurs` + wild test clips, 150 real-world multi-accent / conversational slang utterances (`MushanW/GLOBE`, `AMI`, regional accents, Indic loanwords), and 72 streaming sessions (100 ms chunks):
+Evaluated across 16 open public `test` suites (`n = 1,280` unseen clips: `LibriSpeech test-clean` & `test-other`, `MushanW/GLOBE`, `AMI`, `Sushrota Sanskrit`, and 11 `google/fleurs` languages), 480 held-out studio utterances, and 150 multi-accent / conversational slang utterances (`B = 1,000` bootstrap 95% CIs):
 
-- **Overall 12-Language Held-Out CER**: `5.43% [4.85%, 6.01%]` (WER `25.88%`, `0.00%` committed streaming churn)
-- **Conversational Slang & Multi-Accent Suite (`n = 150`)**: `17.44% [15.35%, 19.64%]` CER / `41.88% [37.49%, 46.67%]` WER (`-2.60 pp` CER / `-8.02 pp` WER vs `v1.0.1`)
+- **Studio Tier (`177.4 MiB` shared + `515 KB` heads)**: `5.43% [4.85%, 6.01%]` held-out CER | `8.87% [7.94%, 10.02%]` 12-lang open `FLEURS`+Wild CER | `10.53%` `LibriSpeech test-clean` CER | `0.0264x` 4T RTF
+- **Mobile Tier (`25.35 MiB` / `26.58 MB` shared + `515 KB` heads, `7.0×` smaller)**: `18.56% [17.46%, 19.75%]` held-out CER | `19.23% [18.11%, 20.64%]` 12-lang open `FLEURS`+Wild CER (`kn` `9.60%`, `bn` `13.88%`, `hi` `14.04%`, `ml` `14.89%`, `te` `16.04%`, `librispeech_test_clean` `16.91%`) | `0.0097x` 4T RTF (`103×` faster than real-time; full iOS Safari & Android Chrome offline `CacheStorage`)
+- **Conversational Slang & Multi-Accent Suite (`n = 150`)**: `17.44% [15.35%, 19.64%]` CER / `41.88%` WER (`0.00%` committed streaming churn)
 
 ## Live Playground
 

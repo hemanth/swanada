@@ -1,6 +1,6 @@
 {
   "generator": "swanada/tools/publish_to_hf.py",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "files": {
     "config.json": {
       "size_bytes": 2666,
@@ -12,7 +12,7 @@
     },
     "heads/en.bin": {
       "size_bytes": 527364,
-      "sha256": "cde8c11ba837e8e31113d67c6eea4c96eaf7ce5028f03426f183e7a5a0ffc80a"
+      "sha256": "58953c7236567995405097c3c557e7c1ec8ddc78c43a0a195ca439c88ead1a5e"
     },
     "heads/gu.bin": {
       "size_bytes": 527364,
@@ -54,6 +54,54 @@
       "size_bytes": 527364,
       "sha256": "c2858c64f60b82320609ac058331e5b85dd0cfc2ecd12f495bd3cce575a452cc"
     },
+    "heads_mobile/bn.bin": {
+      "size_bytes": 527364,
+      "sha256": "87c9d64e9d80943b0206aff8308901d198e288c6db871c1465e178b3ebd9e41a"
+    },
+    "heads_mobile/en.bin": {
+      "size_bytes": 527364,
+      "sha256": "f685d952f6c67ab352dc526ee2c019e58c5d21f91ef382efbf0b94d6b072ef4e"
+    },
+    "heads_mobile/gu.bin": {
+      "size_bytes": 527364,
+      "sha256": "aa1fca364e02151573d6381a9f117080e103b222a011ebe0c13eacd6e661225f"
+    },
+    "heads_mobile/hi.bin": {
+      "size_bytes": 527364,
+      "sha256": "4cb7f25ad62fea8a918a606b1bacf0df5d901bf7a0d2eaf00caf1501f36e3378"
+    },
+    "heads_mobile/kn.bin": {
+      "size_bytes": 527364,
+      "sha256": "89ea7658e1333834a153a1f82090a5aa99b6395eda5f6664ef411613f1ad7df0"
+    },
+    "heads_mobile/ml.bin": {
+      "size_bytes": 527364,
+      "sha256": "e79abab7ecb8d40ada9ad73aff9374e389a49a223ce409888b0e68f5411f4727"
+    },
+    "heads_mobile/mr.bin": {
+      "size_bytes": 527364,
+      "sha256": "b6241400baeac6291d672c58612cbda1f3f95a76ba91e472e4ca9bdbe7956620"
+    },
+    "heads_mobile/or.bin": {
+      "size_bytes": 527364,
+      "sha256": "43fdf10977cdee9ede38ee31a12388b9285b04e950b764b775bddfd850334c29"
+    },
+    "heads_mobile/pa.bin": {
+      "size_bytes": 527364,
+      "sha256": "f6d2e6a711f6d48ca811f52d9a47db836a6f91a14f4d268b980a7f96eb8163e4"
+    },
+    "heads_mobile/sa.bin": {
+      "size_bytes": 527364,
+      "sha256": "8ec5f9d19e7396b28c83d7b4597738032262ebfb43a03fcec062094e1a7fcc35"
+    },
+    "heads_mobile/ta.bin": {
+      "size_bytes": 527364,
+      "sha256": "a327853a1244431023ee766f178fc622b00b993573a1e10e82d7455ed9130ed0"
+    },
+    "heads_mobile/te.bin": {
+      "size_bytes": 527364,
+      "sha256": "a0929e8ce540cb623faf465ecc98b8a00b496cc9c67cc8294f34415338eab091"
+    },
     "onnx/heads/head_bn.onnx": {
       "size_bytes": 527780,
       "sha256": "6c81e0b554ee68d6641787e6c2730882f988bf87595dad708f1830b955e13425"
@@ -64,7 +112,7 @@
     },
     "onnx/heads/head_en.onnx": {
       "size_bytes": 527780,
-      "sha256": "9fe66816e8589634b2c0e0af2922aba80b044c634885859c8c6b9c896c10e94c"
+      "sha256": "8b3ee6931bb30662c68633f0fae7a766e5e453691f6a61c1aee2f5f381df1f95"
     },
     "onnx/heads/head_en.onnx.data": {
       "size_bytes": 527364,
@@ -160,7 +208,7 @@
     },
     "onnx/swanada_en_ctc_int8.onnx": {
       "size_bytes": 185992342,
-      "sha256": "300b112c74f567d46edfd3d7318943f7959eb4653a04d56292d5c09280cef180"
+      "sha256": "4cbe07099e348eec08358efb676f4e64b17b8e693a7704a8171957f32bd55f15"
     },
     "onnx/swanada_gu_ctc_int8.onnx": {
       "size_bytes": 185992342,
@@ -201,6 +249,106 @@
     "onnx/swanada_te_ctc_int8.onnx": {
       "size_bytes": 185992342,
       "sha256": "9dc393eb8579f720dbcebc80b33116f69d76acedba5aa7ef46c93b83f2dffa6d"
+    },
+    "onnx_mobile/heads/head_bn.onnx": {
+      "size_bytes": 527780,
+      "sha256": "e9a9bf4e07a5ea2e2d5bfa39b786ec1caf23e8441d3a6c018ad27533fe8accf7"
+    },
+    "onnx_mobile/heads/head_en.onnx": {
+      "size_bytes": 527780,
+      "sha256": "1921ec24b16f056e4b0930dacc8cd7759f3f6bddd16a8cee0f072e8a4d1091b9"
+    },
+    "onnx_mobile/heads/head_gu.onnx": {
+      "size_bytes": 527780,
+      "sha256": "a5e39745f7d9abb93a4911d41a9d1f73206f52cbc332b85f3dee921d15e96a35"
+    },
+    "onnx_mobile/heads/head_hi.onnx": {
+      "size_bytes": 527780,
+      "sha256": "ca4dd483281694a7ad8ae449319344697a4a53b8877e0cb4ca6bea87779ec617"
+    },
+    "onnx_mobile/heads/head_kn.onnx": {
+      "size_bytes": 527780,
+      "sha256": "c63f5c90874d598f79ccc6d515b7726613c655e9b97795a6967581d9cb919542"
+    },
+    "onnx_mobile/heads/head_ml.onnx": {
+      "size_bytes": 527780,
+      "sha256": "7f7b36e4bcaccdcb7fd720f486f518492a393ac8eeeb7d3fb882650d40b216a1"
+    },
+    "onnx_mobile/heads/head_mr.onnx": {
+      "size_bytes": 527780,
+      "sha256": "95711b5c2dc747436258eadc8dff97e8f5c1af5e5b3de846154e0e494fa74955"
+    },
+    "onnx_mobile/heads/head_or.onnx": {
+      "size_bytes": 527780,
+      "sha256": "5a7dcef11c909a1e6ef57805ee8286ad9501ba0e6990336e6d2ee404ae7a9503"
+    },
+    "onnx_mobile/heads/head_pa.onnx": {
+      "size_bytes": 527780,
+      "sha256": "71e18015ab3fe413aecc98afce9536dbbfd9e88b7ecee5f7af0161f05a3b48c2"
+    },
+    "onnx_mobile/heads/head_sa.onnx": {
+      "size_bytes": 527780,
+      "sha256": "972a6c529ed53d1f7d43eb42d56570ed1a9eaec7b58ddba8f15a8de9fbebc678"
+    },
+    "onnx_mobile/heads/head_ta.onnx": {
+      "size_bytes": 527780,
+      "sha256": "5896085af9d657c3ee9cbc64cf58346c7881bd17b6159ba3168d9fd8a30d10ac"
+    },
+    "onnx_mobile/heads/head_te.onnx": {
+      "size_bytes": 527780,
+      "sha256": "94bc9c0fd576cb8da9961175e57ce0bac41eb948468a70e268c5c9c771f8bc2f"
+    },
+    "onnx_mobile/swanada_mobile_bn_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "03a7770280ec39f79028ebde0bffc789922d143fb8e1a39828172a057bd809cf"
+    },
+    "onnx_mobile/swanada_mobile_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "0b9933844775dbf90d53157174f8075466cc378999acba53dc6b3ea504914ca6"
+    },
+    "onnx_mobile/swanada_mobile_en_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "cab03f66a59ab30c78ec6699f7d2394540a4b34adb825a7878976a3c2648d140"
+    },
+    "onnx_mobile/swanada_mobile_gu_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "79dc92b792b6c0bf287b95968bf9cbd5a4b9fa9093af5368f1c7e74ee2d037b1"
+    },
+    "onnx_mobile/swanada_mobile_hi_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "687fadb20c070842ba5fda17c0d826d398e1edaeb764f4aa4b35ac5301d5233c"
+    },
+    "onnx_mobile/swanada_mobile_kn_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "86fb41a3414807f7ff937f228e03fd9574f7d506932a93f7e5fa29059396ce5f"
+    },
+    "onnx_mobile/swanada_mobile_ml_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "f9debcecfb71eee8cd18edfe6c5f1db6c2dc0f1bfad220af60ede56e6de8d9f7"
+    },
+    "onnx_mobile/swanada_mobile_mr_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "811f94a5a47d13790e301e682094e791623bb54ca8a0c3fc2f08055121c16742"
+    },
+    "onnx_mobile/swanada_mobile_or_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "ea0a2a781de66960f19e36e1be52431aa566038ea0c0837b269d87df36f99aef"
+    },
+    "onnx_mobile/swanada_mobile_pa_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "4d72e4754cb558ab3b4902c2868ec80405218e071ce90b221718d10e70f58b30"
+    },
+    "onnx_mobile/swanada_mobile_sa_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "0b9933844775dbf90d53157174f8075466cc378999acba53dc6b3ea504914ca6"
+    },
+    "onnx_mobile/swanada_mobile_ta_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "854aba3c0aba2c90f529d91cd6145e42cb62aec634d65a17bc1cf829af4944ec"
+    },
+    "onnx_mobile/swanada_mobile_te_ctc_int8.onnx": {
+      "size_bytes": 26577061,
+      "sha256": "261e5a3eb10d20875bfc82fb4dd89bfaae283474ab2bc0676a247a6b30dc2834"
     },
     "preprocessor.onnx": {
       "size_bytes": 152338,

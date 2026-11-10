@@ -190,13 +190,21 @@ metrics:
   - cer
 ---
 
-# Swanada (स्वनद) v1.0.0 — In-Browser & Multi-Runtime Indic Speech-to-Text
+# Swanada (स्वनद) v1.1.0 — Dual-Tier (`25.4 MiB` Mobile + `177.4 MiB` Studio) In-Browser & Multi-Runtime Indic Speech-to-Text
 
-Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is a **16 kHz In-Browser, Node.js, and Python Multilingual Speech-to-Text** suite (**~178 MB active INT8 ONNX per language, < 0.12x browser WASM RTF, < 0.04x native CPU RTF**) providing client-side speech recognition across **Classical Sanskrit (`sa`)**, **Indian English (`en`)**, and **10 Indic languages** (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) with **zero cloud or server dependencies**.
+Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is a **16 kHz In-Browser, Node.js, and Python Multilingual Speech-to-Text** suite with **Capability-Routed Dual-Tier INT8 ONNX models** (`25.35 MiB` Conformer-Small Mobile tier + `515 KB` heads for phones/tablets; `177.4 MiB` Conformer-Large Studio tier + `515 KB` heads for desktop/workstations) providing client-side speech recognition across **Classical Sanskrit (`sa`)**, **Indian English (`en`)**, and **10 Indic languages** (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) with **zero cloud or server dependencies**.
 
-- **Interactive In-Browser Tactile Playground**: [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
+- **h3manth.com AI Studio**: [https://h3manth.com/ai/swanada/](https://h3manth.com/ai/swanada/)
+- **GitHub Pages Playground**: [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
 - **GitHub Repository & Multi-Runtime SDKs**: [https://github.com/hemanth/swanada](https://github.com/hemanth/swanada)
 - **Hugging Face Model Repository**: [https://huggingface.co/{repo_id}](https://huggingface.co/{repo_id})
+
+## Capability-Routed Dual-Tier Architecture (`v1.1.0`)
+
+| Model Tier | Shared INT8 Encoder | Per-Language Head | Active Footprint | Native 4T RTF | Target Runtime |
+| :--- | :--- | :--- | :---: | :---: | :--- |
+| **Mobile (`< 30 MB`)** | `onnx_mobile/swanada_mobile_ctc_int8.onnx` (14L, `d=256`, `23.56M` params) | `heads_mobile/<lang>.bin` (`515 KB`) | **`25.35 MiB` + `515 KB`** | **`0.009x`** | iOS Safari, Android Chrome (`CacheStorage` offline), `--tier mobile` |
+| **Studio (Max Accuracy)** | `onnx/sushrota_sanskrit_ctc_int8.onnx` (17L, `d=512`, `115.2M` params) | `heads/<lang>.bin` (`515 KB`) | **`177.4 MiB` + `515 KB`** | **`0.025x`** | Desktop browsers, Node.js, Python (`--tier studio`, default) |
 
 ## Architecture & Offline Inference Pipeline
 
@@ -288,7 +296,7 @@ def build_manifest(models_dir: Path) -> Dict[str, Any]:
     """Scan models directory and construct manifest.json with hashes and metadata."""
     manifest: Dict[str, Any] = {
         "generator": "swanada/tools/publish_to_hf.py",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "files": {},
     }
 
@@ -298,7 +306,10 @@ def build_manifest(models_dir: Path) -> Dict[str, Any]:
     ]
     scan_targets.extend((models_dir / "onnx").glob("*.onnx") if (models_dir / "onnx").exists() else [])
     scan_targets.extend((models_dir / "onnx" / "heads").glob("*") if (models_dir / "onnx" / "heads").exists() else [])
+    scan_targets.extend((models_dir / "onnx_mobile").glob("*.onnx") if (models_dir / "onnx_mobile").exists() else [])
+    scan_targets.extend((models_dir / "onnx_mobile" / "heads").glob("*") if (models_dir / "onnx_mobile" / "heads").exists() else [])
     scan_targets.extend((models_dir / "heads").glob("*.bin") if (models_dir / "heads").exists() else [])
+    scan_targets.extend((models_dir / "heads_mobile").glob("*.bin") if (models_dir / "heads_mobile").exists() else [])
     scan_targets.extend((models_dir / "vocabularies").glob("*.json") if (models_dir / "vocabularies").exists() else [])
 
     for p in sorted(scan_targets):
@@ -379,7 +390,7 @@ def main() -> None:
     parser.add_argument("--repo-id", default="gnumanth/swanada", help="Target Hugging Face repository ID")
     parser.add_argument("--models-dir", type=Path, default=Path("models"), help="Path to models directory")
     parser.add_argument("--bench-json", type=Path, default=Path("bench/results.json"), help="Path to benchmark results.json")
-    parser.add_argument("--commit-message", default="Release Swanada v1.0.0: 16 kHz Multilingual Indic Conformer-CTC INT8 Models", help="Commit message")
+    parser.add_argument("--commit-message", default="Release Swanada v1.1.0: Dual-Tier <30MB Mobile Conformer-Small + Studio Conformer-Large INT8 Models", help="Commit message")
     parser.add_argument("--token", help="Hugging Face API token (overrides HF_TOKEN env)")
     parser.add_argument("--private", action="store_true", help="Create repository as private")
     parser.add_argument("--dry-run", action="store_true", help="Validate assets and generate README without uploading")

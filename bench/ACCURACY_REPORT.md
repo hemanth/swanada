@@ -26,7 +26,15 @@
 | Odia | `or` | 40 | 151.9 | 6.93% | [4.91%, 9.41%] | 35.50% | [24.81%, 48.97%] | 0.117x |
 
 ## Key Findings
-1. All 12 languages achieve Real-Time Factor (RTF) << 1.0 on 4-thread CPU execution.
+1. All 12 languages achieve Real-Time Factor (RTF) << 1.0 on 4-thread CPU execution (`0.0264x` Studio / `0.0097x` Mobile).
 2. Sanskrit (`sa`) achieves accurate transcription on classical metric and subhashita speech.
 3. Indic languages (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) demonstrate non-empty character and word recognition across held-out native speakers.
-4. Indian English (`en`) calibrated on IndicTTS-English achieves low error rates on held-out literature and conversational utterances.
+4. Indian English (`en`) calibrated on IndicTTS-English + GLOBE + AMI achieves low error rates on held-out literature, multi-accent, and conversational utterances.
+
+## Mobile Tier (`< 30 MB` — `25.35 MiB` / `26.58 MB` Shared Conformer-Small + `515 KB` Heads)
+
+- **Shared Encoder**: `models/onnx_mobile/swanada_mobile_ctc_int8.onnx` (`26,577,061` bytes = `25.35 MiB`, `23.56M` params, `7.0x` smaller than Studio)
+- **Held-Out 480-Clip Suite (`B = 1,000` Bootstrap)**: Mean CER `18.56%` (`95% CI: [17.46%, 19.75%]`), Mean 1-Thread RTF `0.0363x`, Mean 4-Thread RTF `0.0097x` (`103x` faster than real-time)
+- **Open Public Benchmarks (`n = 1,280` Official Hugging Face `test` Clips, `B = 1,000` Bootstrap)**:
+  - **Studio Tier (`177.4 MiB`)**: `8.87% [7.94%, 10.02%]` 12-lang open `FLEURS`+Wild CER | `12.06% [11.09%, 12.97%]` overall 16-suite CER (`librispeech_test_clean` `10.53%`, `librispeech_test_other` `19.21%`, `globe_multi_accent` `15.29%`)
+  - **Mobile Tier (`25.35 MiB`)**: `19.23% [18.11%, 20.64%]` 12-lang open `FLEURS`+Wild CER (`fleurs_kn` `9.60%`, `fleurs_bn` `13.88%`, `fleurs_hi` `14.04%`, `fleurs_ml` `14.89%`, `fleurs_te` `16.04%`, `fleurs_gu` `16.80%`) | `21.85% [20.79%, 22.87%]` overall 16-suite CER (`librispeech_test_clean` `16.91%`, `globe_multi_accent` `22.26%`) at `0.0097x` RTF.

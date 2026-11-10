@@ -45,16 +45,44 @@ class Swanada:
         model_dir: Optional[Union[str, Path]] = None,
         num_threads: int = 4,
         preprocessor_mode: str = "analytical",
+        tier: str = "studio",
     ):
         self.language = language
+        norm_tier = (tier or "studio").lower().strip()
+        self.tier = "mobile" if norm_tier == "mobile" else "studio"
 
         meta = REGISTRY.get(language)
-        model_name = meta.model_filename if meta else f"swanada_{language}_ctc_int8.onnx"
         vocab_name = meta.vocab_filename if meta else f"{language}_vocab.json"
 
-        model_path = _find_model_asset(model_name, model_dir, "onnx")
-        if model_path is None and language == "sa":
-            model_path = _find_model_asset("sushrota_sanskrit_ctc_int8.onnx", model_dir, "onnx")
+        head_path: Optional[Path] = None
+        if self.tier == "mobile":
+            mob_name = f"swanada_mobile_{language}_ctc_int8.onnx"
+            model_path = _find_model_asset(mob_name, model_dir, "onnx_mobile")
+            if model_path is None:
+                shared_mob = _find_model_asset("swanada_mobile_ctc_int8.onnx", model_dir, "onnx_mobile")
+                if shared_mob is not None:
+                    model_path = shared_mob
+                    if language != "sa":
+                        head_cand = _find_model_asset(f"{language}.bin", model_dir, "heads_mobile")
+                        repo_head = Path(__file__).resolve().parents[3] / "docs" / "heads_mobile" / f"{language}.bin"
+                        if head_cand is not None:
+                            head_path = head_cand
+                        elif repo_head.exists():
+                            head_path = repo_head
+        else:
+            model_name = meta.model_filename if meta else f"swanada_{language}_ctc_int8.onnx"
+            model_path = _find_model_asset(model_name, model_dir, "onnx")
+            if model_path is None:
+                shared_studio = _find_model_asset("sushrota_sanskrit_ctc_int8.onnx", model_dir, "onnx")
+                if shared_studio is not None:
+                    model_path = shared_studio
+                    if language != "sa":
+                        head_cand = _find_model_asset(f"{language}.bin", model_dir, "heads")
+                        repo_head = Path(__file__).resolve().parents[3] / "docs" / "heads" / f"{language}.bin"
+                        if head_cand is not None:
+                            head_path = head_cand
+                        elif repo_head.exists():
+                            head_path = repo_head
 
         vocab_path = _find_model_asset(vocab_name, model_dir, "vocabularies")
         if vocab_path is None and language == "sa":
@@ -69,6 +97,8 @@ class Swanada:
             language=language,
             num_threads=num_threads,
             preprocessor_mode=preprocessor_mode,
+            tier=self.tier,
+            head_path=head_path,
         )
 
     @staticmethod
@@ -83,6 +113,7 @@ class Swanada:
         model_dir: Optional[Union[str, Path]] = None,
         num_threads: int = 4,
         preprocessor_mode: str = "analytical",
+        tier: str = "studio",
     ) -> "Swanada":
         """Factory constructor matching TypeScript API."""
         return cls(
@@ -90,6 +121,7 @@ class Swanada:
             model_dir=model_dir,
             num_threads=num_threads,
             preprocessor_mode=preprocessor_mode,
+            tier=tier,
         )
 
     def transcribe(

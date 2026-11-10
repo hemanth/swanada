@@ -4,11 +4,12 @@
  * and zero-copy Transferable ArrayBuffer dispatching.
  */
 
-import type { SupportedLanguage, ExecutionProvider, TranscriptionResult } from '../models/types.ts';
+import type { SupportedLanguage, ExecutionProvider, ModelTier, TranscriptionResult } from '../models/types.ts';
 
 export interface SwanadaWorkerConfig {
   workerUrl?: string | URL;
   language?: SupportedLanguage;
+  modelTier?: ModelTier;
   modelUrl?: string;
   headUrl?: string;
   vocabUrl?: string;
@@ -223,6 +224,7 @@ export class SwanadaWorkerClient {
     this.worker.postMessage({
       type: 'INIT',
       language: targetLang,
+      modelTier: config.modelTier,
       modelUrl: config.modelUrl,
       headUrl: config.headUrl,
       vocabUrl: config.vocabUrl,

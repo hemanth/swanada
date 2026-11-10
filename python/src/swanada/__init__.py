@@ -1,6 +1,6 @@
 """Swanada: In-browser & multi-runtime 16 kHz Multilingual Speech-to-Text."""
 
-__version__ = "1.0.2"
+__version__ = "1.1.0"
 
 from .audio import (
     load_audio,

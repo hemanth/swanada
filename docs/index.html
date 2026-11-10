@@ -905,7 +905,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.5.4';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.6.0';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -925,6 +925,17 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       /Android|Mobile/i.test(uaString) ||
       (typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 4);
 
+    // Capability-routed model tier (Ninada pattern):
+    // - Mobile browsers auto-route to the 25 MiB (<30 MB) Shared Conformer-Small tier (`?tier=mobile`)
+    // - Desktop browsers auto-route to the 177 MiB Studio Conformer-Large tier (`?tier=studio`)
+    const urlParams = new URLSearchParams(location.search);
+    const requestedTier = (urlParams.get('tier') || '').toLowerCase();
+    const useMobileTier =
+      requestedTier === 'mobile' ? true :
+      requestedTier === 'studio' ? false :
+      isMobileDevice;
+    window.__swanadaModelTier = useMobileTier ? 'mobile' : 'studio';
+
     let workerClient = null;
     let audioCtx = null;
     let workletModuleLoaded = false;
@@ -943,6 +954,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     let oscilloscopeData = new Float32Array(512);
 
     const HF_MODEL_BASE = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx';
+    const HF_MOBILE_MODEL_BASE = 'https://huggingface.co/gnumanth/swanada/resolve/main/onnx_mobile';
 
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -978,7 +990,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     const transcriptSection = document.getElementById('transcriptSection');
     const wasmHeaderBadge = document.getElementById('wasmHeaderBadge');
 
-    if (isMobileDevice) {
+    if (useMobileTier) {
+      if (wasmHeaderBadge) wasmHeaderBadge.textContent = '25MB MOBILE · WASM SIMD 1T';
+      if (engineVal) engineVal.textContent = '25MB 1T';
+    } else if (isMobileDevice) {
       if (wasmHeaderBadge) wasmHeaderBadge.textContent = 'WASM SIMD 1T MOBILE';
       if (engineVal) engineVal.textContent = 'WASM 1T';
     }
@@ -1495,7 +1510,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.5.4',
+              workerUrl: './stt-worker.mjs?v=1.6.0',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -1523,10 +1538,11 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
                 window.__swanadaCacheHit = true;
               }
               if (readyEvt && readyEvt.numThreads) {
-                engineVal.textContent = `WASM ${readyEvt.numThreads}T`;
+                engineVal.textContent = useMobileTier ? `25MB ${readyEvt.numThreads}T` : `WASM ${readyEvt.numThreads}T`;
                 if (wasmHeaderBadge) {
-                  wasmHeaderBadge.textContent =
-                    readyEvt.numThreads === 1 ? 'WASM SIMD 1T' : `WASM SIMD ${readyEvt.numThreads} THREADS`;
+                  wasmHeaderBadge.textContent = useMobileTier
+                    ? `25MB MOBILE · WASM SIMD ${readyEvt.numThreads}T`
+                    : (readyEvt.numThreads === 1 ? 'WASM SIMD 1T' : `WASM SIMD ${readyEvt.numThreads} THREADS`);
                 }
               }
               statusDot.className = 'status-dot ready';
@@ -1630,16 +1646,25 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             });
           }
 
-          // Shared 178 MB Conformer encoder + 515 KB per-language linear CTC head
-          const encoderUrl = isLocalDevHost()
-            ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0'
-            : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0`;
-          const headUrl = lang === 'en' ? './heads/en.bin?v=1.5.4' : `./heads/${lang}.bin?v=1.5.0`;
+          // Capability-routed Dual-Tier Shared Conformer Encoder + 515 KB per-language linear CTC head:
+          // - Mobile (<30 MB): 25.4 MiB `swanada_mobile_ctc_int8.onnx` + `heads_mobile/<lang>.bin`
+          // - Studio (Desktop): 177.4 MiB `sushrota_sanskrit_ctc_int8.onnx` + `heads/<lang>.bin`
+          const encoderUrl = useMobileTier
+            ? (isLocalDevHost()
+                ? '../models/onnx_mobile/swanada_mobile_ctc_int8.onnx?v=1.6.0'
+                : `${HF_MOBILE_MODEL_BASE}/swanada_mobile_ctc_int8.onnx?v=1.6.0`)
+            : (isLocalDevHost()
+                ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0'
+                : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0`);
+          const headUrl = useMobileTier
+            ? `./heads_mobile/${lang}.bin?v=1.6.0`
+            : (lang === 'en' ? './heads/en.bin?v=1.5.4' : `./heads/${lang}.bin?v=1.5.0`);
           const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
           const vocabUrl = `./vocabularies/${vocabFile}?v=1.5.0`;
 
           await workerClient.init({
             language: lang,
+            modelTier: useMobileTier ? 'mobile' : 'studio',
             modelUrl: encoderUrl,
             headUrl,
             vocabUrl,

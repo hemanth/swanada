@@ -47,13 +47,21 @@ metrics:
   - cer
 ---
 
-# Swanada (स्वनद) v1.0.0 — In-Browser & Multi-Runtime Indic Speech-to-Text
+# Swanada (स्वनद) v1.1.0 — Dual-Tier (`25.4 MiB` Mobile + `177.4 MiB` Studio) In-Browser & Multi-Runtime Indic Speech-to-Text
 
-Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is a **16 kHz In-Browser, Node.js, and Python Multilingual Speech-to-Text** suite (**~178 MB active INT8 ONNX per language, < 0.12x browser WASM RTF, < 0.04x native CPU RTF**) providing client-side speech recognition across **Classical Sanskrit (`sa`)**, **Indian English (`en`)**, and **10 Indic languages** (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) with **zero cloud or server dependencies**.
+Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is a **16 kHz In-Browser, Node.js, and Python Multilingual Speech-to-Text** suite with **Capability-Routed Dual-Tier INT8 ONNX models** (`25.35 MiB` Conformer-Small Mobile tier + `515 KB` heads for phones/tablets; `177.4 MiB` Conformer-Large Studio tier + `515 KB` heads for desktop/workstations) providing client-side speech recognition across **Classical Sanskrit (`sa`)**, **Indian English (`en`)**, and **10 Indic languages** (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) with **zero cloud or server dependencies**.
 
-- **Interactive In-Browser Tactile Playground**: [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
+- **h3manth.com AI Studio**: [https://h3manth.com/ai/swanada/](https://h3manth.com/ai/swanada/)
+- **GitHub Pages Playground**: [https://hemanth.github.io/swanada/](https://hemanth.github.io/swanada/)
 - **GitHub Repository & Multi-Runtime SDKs**: [https://github.com/hemanth/swanada](https://github.com/hemanth/swanada)
 - **Hugging Face Model Repository**: [https://huggingface.co/gnumanth/swanada](https://huggingface.co/gnumanth/swanada)
+
+## Capability-Routed Dual-Tier Architecture (`v1.1.0`)
+
+| Model Tier | Shared INT8 Encoder | Per-Language Head | Active Footprint | Native 4T RTF | Target Runtime |
+| :--- | :--- | :--- | :---: | :---: | :--- |
+| **Mobile (`< 30 MB`)** | `onnx_mobile/swanada_mobile_ctc_int8.onnx` (14L, `d=256`, `23.56M` params) | `heads_mobile/<lang>.bin` (`515 KB`) | **`25.35 MiB` + `515 KB`** | **`0.009x`** | iOS Safari, Android Chrome (`CacheStorage` offline), `--tier mobile` |
+| **Studio (Max Accuracy)** | `onnx/sushrota_sanskrit_ctc_int8.onnx` (17L, `d=512`, `115.2M` params) | `heads/<lang>.bin` (`515 KB`) | **`177.4 MiB` + `515 KB`** | **`0.025x`** | Desktop browsers, Node.js, Python (`--tier studio`, default) |
 
 ## Architecture & Offline Inference Pipeline
 
@@ -90,7 +98,7 @@ Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is 
 | System Tier | Runtime / Provider | Active Footprint | Mean RTF (CPU) | Mean RTF (WASM) | TTFT p50 (ms) | CER (%) [95% CI] | WER (%) [95% CI] |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | IndicConformer Full (FP32) | PyTorch (MPS/CUDA/CPU) | 481.4 MB × 12 | 0.082x | — | > 200 ms | `17.68%` | — |
-| **Swanada INT8 (Shared + 515 KB Head)** | **ONNX Runtime Web / CPU** | **178.4 MB + 515 KB** | **0.0436x** | **0.1937x** | **43.1 ms** | **`5.53% [4.94, 6.11]`** | **`26.15% [23.77, 28.53]`** |
+| **Swanada INT8 (Shared + 515 KB Head)** | **ONNX Runtime Web / CPU** | **178.4 MB + 515 KB** | **0.0436x** | **0.1937x** | **43.1 ms** | **`5.43% [4.85, 6.01]`** | **`25.88% [23.50, 28.27]`** |
 | Zero-Dep VAD Gate (Tier 2) | Audio Energy RMS < 1e-4 | 0.0 MB | < 0.001x | < 0.001x | < 1 ms | 0.00 (silence) | 0.00 (silence) |
 
 ### Per-Language Held-Out Accuracy
@@ -98,13 +106,13 @@ Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is 
 | Language | Script | Swanada INT8 CER (%) | Swanada INT8 WER (%) | Baseline FP32 CER (%) |
 | :--- | :--- | :---: | :---: | :---: |
 | Sanskrit (`sa`) | Devanagari | `4.27% [2.69, 6.10]` | `22.99% [15.41, 32.21]` | `8.20%` |
-| Indian English (`en`) | Latin | `6.23% [4.67, 7.92]` | `17.07% [13.85, 20.47]` | `15.80%` |
-| Hindi (`hi`) | Devanagari | `2.20% [1.45, 3.03]` | `8.18% [5.49, 10.98]` | `9.80%` |
-| Kannada (`kn`) | Kannada | `5.21% [3.88, 6.88]` | `31.67% [24.62, 39.64]` | `14.50%` |
+| Indian English (`en`) | Latin | `5.45% [4.19, 6.80]` | `15.82% [12.99, 18.82]` | `15.80%` |
+| Hindi (`hi`) | Devanagari | `2.14% [1.41, 2.97]` | `8.04% [5.40, 10.88]` | `9.80%` |
+| Kannada (`kn`) | Kannada | `5.18% [3.86, 6.86]` | `31.39% [24.49, 39.27]` | `14.50%` |
 | Marathi (`mr`) | Devanagari | `5.72% [3.19, 8.34]` | `22.52% [13.86, 31.50]` | `24.10%` |
-| Bengali (`bn`) | Bengali | `5.95% [4.37, 7.59]` | `31.14% [24.66, 37.64]` | `24.50%` |
-| Tamil (`ta`) | Tamil | `7.56% [6.01, 9.11]` | `38.24% [31.42, 45.24]` | `20.20%` |
-| Telugu (`te`) | Telugu | `4.95% [3.62, 6.49]` | `29.83% [22.28, 38.12]` | `20.80%` |
+| Bengali (`bn`) | Bengali | `5.92% [4.34, 7.54]` | `30.98% [24.62, 37.53]` | `24.50%` |
+| Tamil (`ta`) | Tamil | `7.50% [5.92, 9.09]` | `38.12% [31.30, 45.01]` | `20.20%` |
+| Telugu (`te`) | Telugu | `4.79% [3.48, 6.33]` | `28.51% [21.40, 36.34]` | `20.80%` |
 | Malayalam (`ml`) | Malayalam | `6.16% [4.10, 8.27]` | `34.03% [23.73, 44.19]` | `18.20%` |
 | Gujarati (`gu`) | Gujarati | `4.79% [2.97, 6.98]` | `19.28% [13.26, 25.98]` | `16.10%` |
 | Punjabi (`pa`) | Gurmukhi | `6.35% [3.52, 9.78]` | `23.38% [14.27, 33.11]` | `18.40%` |

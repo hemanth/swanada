@@ -9,8 +9,11 @@ export type SupportedLanguage =
 
 export type ExecutionProvider = 'wasm' | 'webgpu';
 
+export type ModelTier = 'auto' | 'mobile' | 'studio';
+
 export interface SwanadaConfig {
   language?: SupportedLanguage;
+  modelTier?: ModelTier;
   modelPath?: string;
   modelDir?: string;
   preprocessorPath?: string;
@@ -83,8 +86,11 @@ export interface AcousticInferenceResult {
   inferenceMs: number;
 }
 
+export declare function resolveEffectiveModelTier(tier?: ModelTier): 'mobile' | 'studio';
+
 export declare class AcousticEngine {
   static create(config?: SwanadaConfig): Promise<AcousticEngine>;
+  getModelTier(): 'mobile' | 'studio';
   transcribe(audio: Float32Array): Promise<TranscriptionResult>;
   warmup(): Promise<void>;
   release(): Promise<void>;
