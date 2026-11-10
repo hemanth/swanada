@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Swanada Capability-Routed WebAudio DSP and Two-Zone LCP Streaming Architecture</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 960px; height: 440px; overflow: hidden; background: #ffffff; }
+    @page { size: 960px 440px; margin: 0; }
+    svg { display: block; width: 960px; height: 440px; }
+  </style>
+</head>
+<body>
+<svg role="img" aria-labelledby="swanada-fig2-title swanada-fig2-desc" viewBox="0 0 960 440" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+  <title id="swanada-fig2-title">Swanada Capability-Routed WebAudio DSP and Two-Zone LCP Streaming Architecture</title>
+  <desc id="swanada-fig2-desc">Blueprint diagram showing hardware-rate 44.1/48 kHz microphone and file capture, multi-stage spectral Wiener denoising, capability-routed Mobile 25.35 MiB and Studio 177.4 MiB WASM SIMD worker sessions backed by CacheStorage, and two-zone Longest-Common-Prefix partial stabilization feeding browser and CLI runtimes.</desc>
+
+  <defs>
+    <style>
+      text { user-select: none; }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#000000"/>
+    </marker>
+  </defs>
+
+  <!-- 1. Canvas Background -->
+  <rect width="100%" height="100%" fill="#ffffff"/>
+
+  <!-- 2. Zone Containers -->
+  <rect x="24" y="48" width="248" height="312" rx="8" fill="rgba(0,0,0,0.015)" stroke="#000000" stroke-width="0.8" stroke-dasharray="4,4"/>
+  <rect x="40" y="40" width="192" height="16" rx="4" fill="#ffffff"/>
+  <text x="136" y="52" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.11em">CAPTURE &amp; ACOUSTIC DSP</text>
+
+  <rect x="296" y="48" width="368" height="312" rx="8" fill="rgba(0,0,0,0.02)" stroke="#000000" stroke-width="1.2"/>
+  <rect x="312" y="40" width="244" height="16" rx="4" fill="#ffffff"/>
+  <text x="434" y="52" fill="#000000" font-size="8" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.11em">CAPABILITY-ROUTED STREAMING CORE</text>
+
+  <rect x="688" y="48" width="248" height="312" rx="8" fill="rgba(0,0,0,0.015)" stroke="#000000" stroke-width="0.8" stroke-dasharray="4,4"/>
+  <rect x="704" y="40" width="184" height="16" rx="4" fill="#ffffff"/>
+  <text x="796" y="52" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.11em">MULTI-RUNTIME OUTPUTS</text>
+
+  <!-- 3. Orthogonal Connectors -->
+  <!-- C1: Hardware Capture -> Wiener + Log-Mel DSP -->
+  <line x1="148" y1="168" x2="148" y2="240" stroke="#000000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="156" y="196" width="84" height="16" rx="4" fill="#ffffff"/>
+  <text x="198" y="208" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.05em">16 KHZ PCM</text>
+
+  <!-- C2: DSP -> Capability Router -->
+  <path d="M 248,280 H 272 Q 280,280 280,272 V 136 Q 280,128 288,128 H 316" fill="none" stroke="#000000" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- C3: Offline CacheStorage -> Capability Router (dashed) -->
+  <line x1="392" y1="240" x2="392" y2="168" stroke="#000000" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <rect x="400" y="196" width="68" height="16" rx="4" fill="#ffffff"/>
+  <text x="434" y="208" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.05em">0 REFETCH</text>
+
+  <!-- C4: Capability Router -> Dual-Tier Worker -->
+  <line x1="468" y1="128" x2="504" y2="128" stroke="#000000" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- C5: Dual-Tier Worker -> Two-Zone LCP Stabilizer -->
+  <line x1="576" y1="168" x2="576" y2="240" stroke="#000000" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- C6: LCP Stabilizer -> Mobile & Desktop Web UI -->
+  <path d="M 648,268 H 668 Q 676,268 676,260 V 136 Q 676,128 684,128 H 712" fill="none" stroke="#000000" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- C7: LCP Stabilizer -> Node.js, Python & CLI (dashed) -->
+  <line x1="648" y1="288" x2="712" y2="288" stroke="#000000" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+  <!-- 4. Node Boxes -->
+  <!-- N1: Hardware-Rate Audio Capture -->
+  <rect x="48" y="88" width="200" height="80" rx="6" fill="rgba(0,0,0,0.03)" stroke="#000000" stroke-width="1"/>
+  <rect x="56" y="96" width="56" height="16" rx="4" fill="transparent" stroke="#000000" stroke-width="0.8"/>
+  <text x="84" y="108" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">INPUT</text>
+  <text x="148" y="132" fill="#000000" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Mic &amp; File Capture</text>
+  <text x="148" y="152" fill="#444444" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">44.1/48k-&gt;16k • Worklet</text>
+
+  <!-- N2: Multi-Stage Wiener + Log-Mel DSP -->
+  <rect x="48" y="240" width="200" height="80" rx="6" fill="#ffffff" stroke="#000000" stroke-width="1"/>
+  <rect x="56" y="248" width="48" height="16" rx="4" fill="transparent" stroke="#000000" stroke-width="0.8"/>
+  <text x="80" y="260" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">DSP</text>
+  <text x="148" y="284" fill="#000000" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Wiener + 80-Mel</text>
+  <text x="148" y="304" fill="#444444" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">80Hz HPF • 50/60Hz Notch</text>
+
+  <!-- N3: Capability Router (FOCAL INVERTED) -->
+  <rect x="316" y="88" width="152" height="80" rx="6" fill="#000000" stroke="#000000" stroke-width="1.2"/>
+  <rect x="324" y="96" width="56" height="16" rx="4" fill="transparent" stroke="#ffffff" stroke-width="0.8"/>
+  <text x="352" y="108" fill="#ffffff" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">ROUTER</text>
+  <text x="392" y="132" fill="#ffffff" font-size="11.5" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Capability Router</text>
+  <text x="392" y="152" fill="#cccccc" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">UA • RAM • COI Threading</text>
+
+  <!-- N4: Persistent Offline Model Store -->
+  <rect x="316" y="240" width="152" height="80" rx="6" fill="rgba(0,0,0,0.03)" stroke="#000000" stroke-width="1"/>
+  <rect x="324" y="248" width="56" height="16" rx="4" fill="transparent" stroke="#000000" stroke-width="0.8"/>
+  <text x="352" y="260" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">STORE</text>
+  <text x="392" y="284" fill="#000000" font-size="11.5" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Offline Cache</text>
+  <text x="392" y="304" fill="#444444" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">CacheStorage • HF Hub</text>
+
+  <!-- N5: Dual-Tier WASM SIMD Worker -->
+  <rect x="504" y="88" width="144" height="80" rx="6" fill="#ffffff" stroke="#000000" stroke-width="1.2"/>
+  <rect x="512" y="96" width="56" height="16" rx="4" fill="transparent" stroke="#000000" stroke-width="0.8"/>
+  <text x="540" y="108" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">WORKER</text>
+  <text x="576" y="132" fill="#000000" font-size="11.5" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Dual-Tier ONNX</text>
+  <text x="576" y="152" fill="#444444" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">25.4 / 177.4 MiB • SIMD</text>
+
+  <!-- N6: Two-Zone LCP Stabilizer -->
+  <rect x="504" y="240" width="144" height="80" rx="6" fill="#ffffff" stroke="#000000" stroke-width="1.2"/>
+  <rect x="512" y="248" width="48" height="16" rx="4" fill="transparent" stroke="#000000" stroke-width="0.8"/>
+  <text x="536" y="260" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">LCP</text>
+  <text x="576" y="284" fill="#000000" font-size="11.5" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">LCP Stabilizer</text>
+  <text x="576" y="304" fill="#444444" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">0.00% Churn • 3.8s Win</text>
+
+  <!-- N7: Mobile & Desktop Web Studio -->
+  <rect x="712" y="88" width="200" height="80" rx="6" fill="#ffffff" stroke="#000000" stroke-width="1"/>
+  <rect x="720" y="96" width="48" height="16" rx="4" fill="transparent" stroke="#000000" stroke-width="0.8"/>
+  <text x="744" y="108" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">WEB</text>
+  <text x="812" y="132" fill="#000000" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Browser Web Studio</text>
+  <text x="812" y="152" fill="#444444" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">30.6ms TTFT • Backpressure</text>
+
+  <!-- N8: Node.js, Python & CLI -->
+  <rect x="712" y="240" width="200" height="80" rx="6" fill="#ffffff" stroke="#000000" stroke-width="1"/>
+  <rect x="720" y="248" width="48" height="16" rx="4" fill="transparent" stroke="#000000" stroke-width="0.8"/>
+  <text x="744" y="260" fill="#000000" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SDK</text>
+  <text x="812" y="284" fill="#000000" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Node.js, Python &amp; CLI</text>
+  <text x="812" y="304" fill="#444444" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">0.01x-0.03x RTF • JSON</text>
+
+  <!-- 5. Bottom Legend Strip -->
+  <line x1="24" y1="384" x2="936" y2="384" stroke="rgba(0,0,0,0.16)" stroke-width="0.8"/>
+  <text x="24" y="408" fill="#444444" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.12em">LEGEND</text>
+
+  <rect x="96" y="396" width="16" height="16" rx="4" fill="#000000"/>
+  <text x="120" y="408" fill="#000000" font-size="8" font-family="'Geist Mono', monospace">CAPABILITY ROUTER</text>
+
+  <line x1="284" y1="404" x2="316" y2="404" stroke="#000000" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="324" y="408" fill="#000000" font-size="8" font-family="'Geist Mono', monospace">LIVE BROWSER STREAMING PATH</text>
+
+  <line x1="540" y1="404" x2="572" y2="404" stroke="#000000" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="580" y="408" fill="#000000" font-size="8" font-family="'Geist Mono', monospace">OFFLINE CACHE / NATIVE SDK PATH</text>
+</svg>
+</body>
+</html>

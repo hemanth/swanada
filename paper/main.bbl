@@ -1,0 +1,115 @@
+\begin{thebibliography}{10}
+
+\bibitem{adiga2021sanskrit}
+Devaraja Adiga, Rishabh Kumar, Amrith Krishna, Pawan Goyal, Preethi Jyothi,
+  Ganesh Ramakrishnan, and A.~P. Prathosh.
+\newblock Automatic speech recognition in {Sanskrit}: A new speech corpus and
+  modelling insights.
+\newblock In {\em Findings of the Association for Computational Linguistics:
+  ACL-IJCNLP}, pages 5039--5050, 2021.
+
+\bibitem{bhogale2023vistaar}
+Kaushal~Santosh Bhogale, Sai~Sundaresan Raman, Abhigyan Tahir, Tahir Javed,
+  Mitesh~M. Khapra, and Pratyush Kumar.
+\newblock Vistaar: Diverse benchmarks and training sets for {Indian} language
+  {ASR}.
+\newblock In {\em Proceedings of Interspeech}, pages 4384--4388, 2023.
+
+\bibitem{carletta2005ami}
+Jean Carletta, Simone Ashby, Sebastien Bourban, Mike Flynn, Mael Guillemot,
+  Thomas Hain, Jaroslav Kadlec, Vasilis Karaiskos, Wessel Kraaij, Melissa
+  Kronenthal, et~al.
+\newblock The {AMI} meeting corpus: A pre-announcement.
+\newblock In {\em Proceedings of the International Workshop on Machine Learning
+  for Multimodal Interaction (MLMI)}, pages 28--39, 2005.
+
+\bibitem{conneau2023fleurs}
+Alexis Conneau, Min Ma, Simran Khanuja, Yu~Zhang, Vera Axelrod, Siddharth
+  Dalmia, Jason Riesa, Clara Rivera, and Ankur Bapna.
+\newblock {FLEURS}: Few-shot learning evaluation of universal representations
+  of speech.
+\newblock In {\em Proceedings of the IEEE Spoken Language Technology Workshop
+  (SLT)}, pages 798--805, 2023.
+
+\bibitem{ephraim1984speech}
+Yariv Ephraim and David Malah.
+\newblock Speech enhancement using a minimum mean-square error short-time
+  spectral amplitude estimator.
+\newblock {\em IEEE Transactions on Acoustics, Speech, and Signal Processing},
+  32(6):1109--1121, 1984.
+
+\bibitem{graves2006ctc}
+Alex Graves, Santiago Fern{\'a}ndez, Faustino Gomez, and J{\"u}rgen
+  Schmidhuber.
+\newblock Connectionist temporal classification: Labelling unsegmented sequence
+  data with recurrent neural networks.
+\newblock In {\em Proceedings of the 23rd International Conference on Machine
+  Learning (ICML)}, pages 369--376, 2006.
+
+\bibitem{gulati2020conformer}
+Anmol Gulati, James Qin, Chung-Cheng Chiu, Niki Parmar, Yu~Zhang, Jiahui Yu,
+  Wei Han, Shibo Wang, Zhengdong Zhang, Yonghui Wu, and Ruoming Pang.
+\newblock Conformer: Convolution-augmented {Transformer} for speech
+  recognition.
+\newblock In {\em Proceedings of Interspeech}, pages 5036--5040, 2020.
+
+\bibitem{hinton2015distilling}
+Geoffrey Hinton, Oriol Vinyals, and Jeff Dean.
+\newblock Distilling the knowledge in a neural network.
+\newblock {\em arXiv preprint arXiv:1503.02531}, 2015.
+
+\bibitem{hemanth2026ninada}
+Hemanth HM.
+\newblock {Ninada}: Sub-clause split-graph {VITS} streaming and
+  capability-routed 24~{kHz} speech synthesis across twelve scripts.
+\newblock {\em arXiv preprint}, 2026.
+\newblock \url{https://github.com/hemanth/ninada}.
+
+\bibitem{kudo2018sentencepiece}
+Taku Kudo and John Richardson.
+\newblock {SentencePiece}: A simple and language independent subword tokenizer
+  and detokenizer for neural text processing.
+\newblock In {\em Proceedings of the 2018 Conference on Empirical Methods in
+  Natural Language Processing: System Demonstrations (EMNLP)}, pages 66--71,
+  2018.
+
+\bibitem{panayotov2015librispeech}
+Vassil Panayotov, Guoguo Chen, Daniel Povey, and Sanjeev Khudanpur.
+\newblock {LibriSpeech}: An {ASR} corpus based on public domain audio books.
+\newblock In {\em Proceedings of the IEEE International Conference on
+  Acoustics, Speech and Signal Processing (ICASSP)}, pages 5206--5210, 2015.
+
+\bibitem{pratap2024mms}
+Vineel Pratap, Andros Tjandra, Bowen Shi, Paden Tomasello, Arun Babu, Sayani
+  Kundu, Ali Elkahky, Zhaoheng Ni, Apoorv Vyas, Maryam Fazel-Zarandi, et~al.
+\newblock Scaling speech technology to 1,000+ languages.
+\newblock {\em Journal of Machine Learning Research}, 25(97):1--52, 2024.
+
+\bibitem{radford2023whisper}
+Alec Radford, Jong~Wook Kim, Tao Xu, Greg Brockman, Christine McLeavey, and
+  Ilya Sutskever.
+\newblock Robust speech recognition via large-scale weak supervision.
+\newblock In {\em Proceedings of the 40th International Conference on Machine
+  Learning (ICML)}, pages 28492--28518, 2023.
+
+\bibitem{romero2015fitnets}
+Adriana Romero, Nicolas Ballas, Samira~Ebrahimi Kahou, Antoine Chassang, Carlo
+  Gatta, and Yoshua Bengio.
+\newblock {FitNets}: Hints for thin deep nets.
+\newblock In {\em Proceedings of the 3rd International Conference on Learning
+  Representations (ICLR)}, 2015.
+
+\bibitem{shaw2018self}
+Peter Shaw, Jakob Uszkoreit, and Ashish Vaswani.
+\newblock Self-attention with relative position representations.
+\newblock In {\em Proceedings of the 2018 Conference of the North American
+  Chapter of the Association for Computational Linguistics: Human Language
+  Technologies (NAACL-HLT)}, volume~2, pages 464--468, 2018.
+
+\bibitem{wang2024globe}
+Wenbin Wang, Yang Song, and Sanjay Jha.
+\newblock {GLOBE}: A high-quality {English} corpus with global accents for
+  zero-shot speaker adaptive text-to-speech.
+\newblock In {\em Proceedings of Interspeech}, 2024.
+
+\end{thebibliography}
