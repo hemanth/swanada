@@ -62,8 +62,7 @@ Geoffrey Hinton, Oriol Vinyals, and Jeff Dean.
 Hemanth HM.
 \newblock {Ninada}: Sub-clause split-graph {VITS} streaming and
   capability-routed 24~{kHz} speech synthesis across twelve scripts.
-\newblock {\em arXiv preprint}, 2026.
-\newblock \url{https://github.com/hemanth/ninada}.
+\newblock {\em arXiv preprint arXiv:2611.10035}, 2026.
 
 \bibitem{kudo2018sentencepiece}
 Taku Kudo and John Richardson.
