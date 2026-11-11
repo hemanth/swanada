@@ -421,5 +421,29 @@ export declare function decodeBilingualCodeswitch(
   vocabEn: string[],
   isPartial?: boolean
 ): CodeSwitchDecodeResult;
+export declare function splitPcmAtPauses(
+  pcm: Float32Array,
+  sr?: number,
+  minPauseMs?: number,
+  minSegmentSec?: number
+): Array<[number, number]>;
+export declare function transcribeMultilangSegments(
+  pcm: Float32Array,
+  encodeSegment: (segPcm: Float32Array) => Promise<{ hidden: Float32Array; timeSteps: number }>,
+  projectHead: (hidden: Float32Array, timeSteps: number, weight: Float32Array, bias: Float32Array) => Float32Array,
+  multiHeads: Record<string, { weight: Float32Array; bias: Float32Array }>,
+  multiVocabs: Record<string, string[]>,
+  lidWeights: any,
+  fallbackVocab: string[],
+  useCodeSwitch: boolean,
+  sampleRate?: number
+): Promise<{
+  text: string;
+  language: string;
+  tokens: string[];
+  languageConfidence: number;
+  languageProbabilities: Record<string, number>;
+  englishSpans?: CodeSwitchSpan[];
+} | null>;
 
 export default Swanada;

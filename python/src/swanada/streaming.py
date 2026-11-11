@@ -350,10 +350,6 @@ class SwanadaStream:
 
         self.audio_buffer = np.zeros(0, dtype=np.float32)
         self.pending_chunk = np.zeros(0, dtype=np.float32)
-        self._full_recording_pcm = np.zeros(0, dtype=np.float32)
-        self._detected_language = None
-        self._language_confidence = None
-        self._language_locked = False
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0
@@ -370,6 +366,8 @@ class SwanadaStream:
         self._detected_language: Optional[str] = None
         self._language_confidence: Optional[float] = None
         self._language_locked: bool = False
+        self._prior_turns_text: str = ""
+        self._prior_turns_tokens: List[str] = []
         self._full_recording_pcm = np.zeros(0, dtype=np.float32)
         self.listeners_partial: List[Callable[[StreamingTranscript], None]] = []
         self.listeners_final: List[Callable[[TranscriptionResult], None]] = []
@@ -560,6 +558,24 @@ class SwanadaStream:
 
         return len(committed_tokens), 0
 
+    def _with_prior_turns(self, st: StreamingTranscript) -> StreamingTranscript:
+        if not self._prior_turns_text:
+            return st
+        comm = f"{self._prior_turns_text} {st.committed}".strip() if st.committed else self._prior_turns_text
+        full_txt = f"{self._prior_turns_text} {st.text}".strip() if st.text else self._prior_turns_text
+        return StreamingTranscript(
+            text=full_txt,
+            committed=comm,
+            volatile=st.volatile,
+            is_final=st.is_final,
+            tokens=list(self._prior_turns_tokens) + list(st.tokens),
+            duration_ms=st.duration_ms,
+            inference_ms=st.inference_ms,
+            rtf=st.rtf,
+            detected_language=st.detected_language,
+            language_confidence=st.language_confidence,
+        )
+
     def _segment_turn_on_pause(self, duration_ms: float) -> bool:
         did_infer = False
         if len(self.audio_buffer) >= 4800:
@@ -586,12 +602,47 @@ class SwanadaStream:
                         else:
                             bo, br = self._find_window_alignment(committed, tail_res.tokens)
                             global_tokens = committed[:bo] + tail_res.tokens[br:]
-                        self.last_transcript = self.decoder.update(
+                        st_tail = self.decoder.update(
                             global_tokens, False, duration_ms, 0.0, allow_commit=False
                         )
+                        if self._is_auto_language:
+                            st_tail.detected_language = self._detected_language
+                            st_tail.language_confidence = self._language_confidence
+                        self.last_transcript = self._with_prior_turns(st_tail)
                 except Exception as e:
                     self._emit_error(e)
-            self.pending_turn_flush = True
+
+            if self._is_auto_language:
+                # Snapshot finished turn in its native script and unlock Auto-LID for next turn!
+                self._promote_pending_turn()
+                turn_txt = self.decoder.committed_text.strip()
+                if turn_txt:
+                    self._prior_turns_text = (
+                        f"{self._prior_turns_text} {turn_txt}".strip()
+                        if self._prior_turns_text
+                        else turn_txt
+                    )
+                    self._prior_turns_tokens.extend(self.decoder.committed_tokens)
+                self.decoder.reset()
+                self.base_committed_tokens.clear()
+                self.pending_turn_flush = False
+                self._language_locked = False
+                if self._prior_turns_text:
+                    self.last_transcript = StreamingTranscript(
+                        text=self._prior_turns_text,
+                        committed=self._prior_turns_text,
+                        volatile="",
+                        is_final=False,
+                        tokens=list(self._prior_turns_tokens),
+                        duration_ms=duration_ms,
+                        inference_ms=0.0,
+                        rtf=0.0,
+                        detected_language=self._detected_language,
+                        language_confidence=self._language_confidence,
+                    )
+            else:
+                self.pending_turn_flush = True
+
             self.audio_buffer = np.zeros(0, dtype=np.float32)
             self.pending_chunk = np.zeros(0, dtype=np.float32)
             self.is_window_sliding = False
@@ -831,7 +882,7 @@ class SwanadaStream:
         ):
             global_tokens = committed + prev_hyp[len(committed):]
 
-        commit_min_samples = max(32000, self.max_buffer_samples - 8000)
+        commit_min_samples = max(32000, self.max_buffer_samples - 16384)
         allow_commit = (not self.pending_turn_flush) and (
             self.is_window_sliding or len(self.audio_buffer) >= commit_min_samples
         )
@@ -839,6 +890,7 @@ class SwanadaStream:
         if self._is_auto_language:
             st.detected_language = self._detected_language
             st.language_confidence = self._language_confidence
+            st = self._with_prior_turns(st)
         self.last_transcript = st
 
         for cb in self.listeners_partial:
@@ -847,7 +899,12 @@ class SwanadaStream:
             except Exception as e:
                 self._emit_error(e)
 
-        if len(self.audio_buffer) > self.max_buffer_samples:
+        slide_cap = (
+            self.max_buffer_samples + 15360
+            if (not self.is_window_sliding and len(self.decoder.committed_tokens) <= len(self.base_committed_tokens))
+            else self.max_buffer_samples
+        )
+        if len(self.audio_buffer) > slide_cap:
             self.audio_buffer = self.audio_buffer[-self.left_context_samples:]
             self.is_window_sliding = True
 
@@ -875,6 +932,8 @@ class SwanadaStream:
             self._detected_language = None
             self._language_confidence = None
             self._language_locked = False
+            self._prior_turns_text = ""
+            self._prior_turns_tokens.clear()
             self.total_audio_samples = 0
             self.consecutive_silent_chunks = 0
             self.consecutive_silent_samples = 0
@@ -940,6 +999,8 @@ class SwanadaStream:
         self._detected_language = None
         self._language_confidence = None
         self._language_locked = False
+        self._prior_turns_text = ""
+        self._prior_turns_tokens.clear()
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0
@@ -976,6 +1037,8 @@ class SwanadaStream:
         self._detected_language = None
         self._language_confidence = None
         self._language_locked = False
+        self._prior_turns_text = ""
+        self._prior_turns_tokens.clear()
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0

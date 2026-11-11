@@ -13,6 +13,8 @@ import {
   parseLidHeadBytes,
   detectLanguageFromHidden,
   decodeBilingualCodeswitch,
+  splitPcmAtPauses,
+  transcribeMultilangSegments,
 } from '../decoder/lid.ts';
 import type {
   LinearHeadWeights,
@@ -945,9 +947,93 @@ export class AcousticEngine {
       throw new Error('Acoustic model session is not initialized. Ensure models are available at modelPath.');
     }
 
+    let snrDb: number | undefined = undefined;
+
+    // 0. Multi-language mid-speech switching (`language === 'auto'` on full utterances >= 3.1 s)
+    if (
+      targetLang === 'auto' &&
+      !options?.isPartial &&
+      this.hasHiddenOutput &&
+      pcm.length >= 49600
+    ) {
+      const headsFolder = this.modelTier === 'mobile' ? 'heads_mobile' : 'heads';
+      if (Object.keys(this.multiHeads).length < LID_LANGUAGES.length) {
+        await this.loadMultiHeadsAndVocabs(
+          LID_LANGUAGES,
+          this.config.modelPath || this.config.modelDir,
+          headsFolder
+        );
+      }
+      if (Object.keys(this.multiHeads).length > 0) {
+        const multiRes = await transcribeMultilangSegments(
+          pcm,
+          async (segPcm: Float32Array) => {
+            let segClean = segPcm;
+            if (this.config.denoise !== false) {
+              const segEnh = enhanceSpeechWithTelemetry(segPcm);
+              if (snrDb === undefined) snrDb = segEnh.estimatedSnrDb;
+              if (!segEnh.isSpeechLikely) {
+                return { hidden: new Float32Array(0), timeSteps: 0 };
+              }
+              segClean = segEnh.pcm;
+            }
+            let segFeats: Float32Array;
+            let segFrames: number;
+            if (this.config.preprocessorMode === 'onnx' && this.preprocessorSession) {
+              let aT: any = null;
+              let lT: any = null;
+              let outT: any = null;
+              try {
+                aT = new this.ort.Tensor('float32', segClean, [1, segClean.length]);
+                lT = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(segClean.length)]), [1]);
+                outT = await this.preprocessorSession.run({ audio_signal: aT, length: lT });
+                const fT = outT.features || Object.values(outT)[0];
+                segFrames = fT.dims[2];
+                segFeats = new Float32Array(fT.data);
+              } finally {
+                aT?.dispose?.();
+                lT?.dispose?.();
+                if (outT) {
+                  for (const t of Object.values(outT)) (t as any)?.dispose?.();
+                }
+              }
+            } else {
+              const segMel = extractLogMelFeatures(segClean);
+              segFeats = segMel.features;
+              segFrames = segMel.numFrames;
+            }
+            const segEnc = await this.runEncoderHidden(segFeats, segFrames);
+            return { hidden: segEnc.hidden, timeSteps: segEnc.timeSteps };
+          },
+          projectLinearHead,
+          this.multiHeads,
+          this.multiVocabs,
+          this.lidWeights,
+          this.vocab,
+          useCodeSwitch,
+          16000
+        );
+        if (multiRes) {
+          const totalInferenceMs = performance.now() - startTotal;
+          return {
+            text: multiRes.text,
+            language: multiRes.language,
+            durationMs,
+            inferenceMs: totalInferenceMs,
+            rtf: durationMs > 0 ? totalInferenceMs / durationMs : 0,
+            tokens: multiRes.tokens,
+            ...(multiRes.language === 'sa' && multiRes.text ? { iast: devanagariToIast(multiRes.text) } : {}),
+            snrDb,
+            languageConfidence: multiRes.languageConfidence,
+            languageProbabilities: multiRes.languageProbabilities,
+            ...(multiRes.englishSpans !== undefined ? { englishSpans: multiRes.englishSpans } : {}),
+          };
+        }
+      }
+    }
+
     // Multi-stage background noise cancellation & speech enhancement layer (default: enabled)
     let cleanPcm = pcm;
-    let snrDb: number | undefined = undefined;
     if (this.config.denoise !== false) {
       const enhanced = enhanceSpeechWithTelemetry(pcm);
       snrDb = enhanced.estimatedSnrDb;

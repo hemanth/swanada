@@ -934,7 +934,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.7.0';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.8.0';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -1236,6 +1236,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
     const PRESETS = {
       auto: [
         { title: "Auto · Sanskrit", text: "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति", sampleLang: "sa" },
+        { title: "Auto · Kanglish (+EN)", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ · The king was troubled with jealousy.", sampleLang: "kanglish", enableCodeSwitch: true },
         { title: "Auto · Hindi", text: "अपने हेडमास्टर साहब ही को देखो", sampleLang: "hi" },
         { title: "Auto · Kannada", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ", sampleLang: "kn" },
         { title: "Auto · Tamil", text: "அதோ கலங்கரை விளக்கமும் தெரிகிறது", sampleLang: "ta" },
@@ -1442,7 +1443,12 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
         const chip = document.createElement('div');
         chip.className = 'chip';
         chip.innerHTML = `<strong>${item.title}:</strong> ${item.text}`;
-        chip.addEventListener('click', () => playAndStreamPreset(lang, item.sampleLang || lang));
+        chip.addEventListener('click', () => {
+          if (item.enableCodeSwitch && !codeSwitchEnabled && codeSwitchBtn) {
+            codeSwitchBtn.click();
+          }
+          playAndStreamPreset(lang, item.sampleLang || lang);
+        });
         presetChips.appendChild(chip);
       });
     }
@@ -1585,7 +1591,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.7.0',
+              workerUrl: './stt-worker.mjs?v=1.8.0',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;

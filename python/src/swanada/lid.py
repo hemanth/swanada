@@ -61,6 +61,41 @@ _CODEMIX_AMBIGUOUS_EN = frozenset({
 _EN_VOWELS_RE = re.compile(r"[aeiouy]")
 _EN_CLEAN_RE = re.compile(r"[^a-z']")
 
+# English function words permitted inside multi-word English code-switched clauses
+_EN_PHRASE_FUNC_WORDS = frozenset({
+    "the", "was", "were", "are", "is", "am", "be", "been", "to", "of", "in",
+    "on", "at", "for", "with", "from", "by", "and", "or", "but", "not", "this",
+    "that", "these", "those", "my", "our", "your", "his", "her", "their", "its",
+    "us", "we", "you", "they", "he", "she", "it", "can", "will", "just", "now",
+    "new", "all", "out", "up", "let",
+})
+
+# High-specificity 3-letter English technical & everyday borrowings safe for standalone code-switching
+_EN_SAFE_SHORT_WORDS = frozenset({
+    "app", "api", "web", "net", "cpu", "gpu", "ram", "sql", "cli", "git", "sdk",
+    "url", "pdf", "csv", "xml", "css", "aws", "gcp", "llm", "ios", "mac", "pro",
+    "fix", "bug", "log", "run", "try", "add", "set", "get", "put", "job",
+    "bus", "car", "cab", "gym", "tax", "fee", "pay", "buy", "win",
+})
+
+_INDIAN_EN_LOANWORD_FIXES: Dict[str, str] = {
+    "mobil": "mobile",
+    "mobal": "mobile",
+    "vidio": "video",
+    "vidyo": "video",
+    "vait": "wait",
+    "ofis": "office",
+    "afis": "office",
+    "afie": "office",
+    "afice": "office",
+    "ofice": "office",
+    "meething": "meeting",
+    "miting": "meeting",
+    "diployment": "deployment",
+    "prodakt": "product",
+    "onlain": "online",
+}
+
 
 @dataclass
 class LanguageDetectionResult:
@@ -395,7 +430,6 @@ def detect_language_from_hidden(
     if lid_weights is not None:
         neural_lp = lid_weights.predict_log_probs(h)
         ranked_neural = sorted(avail, key=lambda lg: neural_lp.get(lg, -20.0), reverse=True)
-        # Evaluate Top-8 neural candidates + always include 'en' for accent/code-mix safety
         shortlist = ranked_neural[: min(8, len(ranked_neural))]
         if "en" in avail and "en" not in shortlist:
             shortlist.append("en")
@@ -438,6 +472,213 @@ def detect_language_from_hidden(
     )
 
 
+def _count_indic_syllables_and_virama(phrase: str) -> Tuple[int, bool]:
+    w = phrase.strip()
+    if not w:
+        return 0, False
+    cps = [ord(c) for c in w if not c.isspace()]
+    if not cps:
+        return 0, False
+    ends_virama = (0x0900 <= cps[-1] <= 0x0D7F) and ((cps[-1] & 0x7F) == 0x4D)
+    syl = 0
+    n = len(cps)
+    for i, cp in enumerate(cps):
+        if not (0x0900 <= cp <= 0x0D7F):
+            continue
+        off = cp & 0x7F
+        if 0x05 <= off <= 0x14:
+            syl += 1
+        elif 0x15 <= off <= 0x39:
+            nxt_off = (cps[i + 1] & 0x7F) if (i + 1 < n and 0x0900 <= cps[i + 1] <= 0x0D7F) else -1
+            if nxt_off != 0x4D:
+                syl += 1
+    return max(1, syl), ends_virama
+
+
+def _count_en_syllables_and_coda(phrase: str) -> Tuple[int, bool]:
+    words = [w for w in phrase.lower().split() if w]
+    tot = 0
+    for w in words:
+        core = w[:-1] if (len(w) > 3 and w.endswith("e") and not w.endswith(("le", "ee", "ie"))) else w
+        groups = re.findall(r"[aeiouy]+", core)
+        tot += max(1, len(groups))
+    last_w = words[-1] if words else ""
+    ends_cons = bool(last_w) and last_w[-1] not in "aeiouy"
+    if last_w.endswith("e") and len(last_w) > 3 and last_w[-2] not in "aeiouy":
+        ends_cons = True
+    return max(1, tot), ends_cons
+
+
+def _canonical_consonant_skeleton_indic(phrase: str) -> str:
+    out: List[str] = []
+    first_alpha = True
+    for ch in phrase:
+        cp = ord(ch)
+        if 0x0900 <= cp <= 0x0D7F:
+            off = cp & 0x7F
+            c = ""
+            if off in (0x01, 0x02):
+                c = "n"
+            elif off in (0x15, 0x16, 0x17, 0x18, 0x58, 0x59, 0x5A):
+                c = "k"
+            elif off == 0x19:
+                c = "n"
+            elif off in (0x1A, 0x1B, 0x1C, 0x1D):
+                c = "c"
+            elif off == 0x5B:
+                c = "s"
+            elif off == 0x1E:
+                c = "n"
+            elif off in (0x1F, 0x20, 0x21, 0x22, 0x24, 0x25, 0x26, 0x27, 0x5C, 0x5D):
+                c = "t"
+            elif off in (0x23, 0x28, 0x29):
+                c = "n"
+            elif off in (0x2A, 0x2B, 0x2C, 0x2D, 0x5E):
+                c = "p"
+            elif off == 0x2E:
+                c = "m"
+            elif off in (0x2F, 0x5F):
+                c = "y" if first_alpha else ""
+            elif off in (0x30, 0x31, 0x0B):
+                c = "r"
+            elif off in (0x32, 0x33, 0x34):
+                c = "l"
+            elif off == 0x35:
+                c = "w"
+            elif off in (0x36, 0x37, 0x38):
+                c = "s"
+            elif off == 0x39:
+                c = "h"
+            if 0x05 <= off <= 0x39:
+                first_alpha = False
+            if c and (not out or out[-1] != c):
+                out.append(c)
+        elif ch == " ":
+            first_alpha = True
+    return "".join(out)
+
+
+def _canonical_consonant_skeleton_en(phrase: str) -> str:
+    w = phrase.lower()
+    w = w.replace("tch", "c").replace("ch", "c").replace("dg", "c")
+    w = w.replace("ph", "p").replace("gh", "").replace("ck", "k").replace("sh", "s").replace("th", "t")
+    out: List[str] = []
+    first_alpha = True
+    for ch in w:
+        if ch == " ":
+            first_alpha = True
+            continue
+        c = ""
+        if ch in ("k", "g", "q", "x"):
+            c = "k"
+        elif ch in ("c", "j"):
+            c = "c"
+        elif ch in ("s", "z"):
+            c = "s"
+        elif ch in ("t", "d"):
+            c = "t"
+        elif ch == "n":
+            c = "n"
+        elif ch in ("p", "b", "f"):
+            c = "p"
+        elif ch == "m":
+            c = "m"
+        elif ch == "y" and first_alpha:
+            c = "y"
+        elif ch == "r":
+            c = "r"
+        elif ch == "l":
+            c = "l"
+        elif ch in ("v", "w"):
+            c = "w"
+        elif ch == "h":
+            c = "h"
+        if "a" <= ch <= "z":
+            first_alpha = False
+        if c and (not out or out[-1] != c):
+            out.append(c)
+    return "".join(out)
+
+
+def _skel_edit_dist(a: str, b: str) -> int:
+    n, m = len(a), len(b)
+    dp = list(range(m + 1))
+    for i in range(1, n + 1):
+        prev = dp[0]
+        dp[0] = i
+        for j in range(1, m + 1):
+            tmp = dp[j]
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            dp[j] = min(prev + cost, dp[j] + 1, dp[j - 1] + 1)
+            prev = tmp
+    return dp[m]
+
+
+def _is_phonetic_loanword_match(ind_phrase: str, en_phrase: str) -> bool:
+    en_clean = en_phrase.strip().lower()
+    si = _canonical_consonant_skeleton_indic(ind_phrase)
+    if not si:
+        return False
+    if len(si) == 1 and en_clean != "app":
+        return False
+    w_hard = re.sub(r"c(?=[aoukrlt]|$)", "k", en_clean)
+    w_hard = re.sub(r"c(?=[eiy])", "s", w_hard)
+    variants = [v for v in (_canonical_consonant_skeleton_en(w_hard), _canonical_consonant_skeleton_en(en_clean)) if v]
+    if not variants:
+        return False
+    best_d = 99
+    best_len_ok = False
+    for se in variants:
+        if abs(len(si) - len(se)) <= 1:
+            best_len_ok = True
+            d = _skel_edit_dist(si, se)
+            if d < best_d:
+                best_d = d
+    if not best_len_ok:
+        return False
+    if min(len(si), min(len(v) for v in variants)) <= 2:
+        if best_d != 0:
+            return False
+    elif best_d > 1:
+        return False
+
+    first_ind_cp = next((ord(c) for c in ind_phrase if 0x0900 <= ord(c) <= 0x0D7F), 0)
+    is_south_indic = 0x0B80 <= first_ind_cp <= 0x0D7F
+    ind_syl, ends_virama = _count_indic_syllables_and_virama(ind_phrase)
+    en_syl, ends_cons = _count_en_syllables_and_coda(en_clean)
+    max_syl_diff = 1 if is_south_indic else 2
+    if ind_syl - en_syl > max_syl_diff or en_syl - ind_syl > 1:
+        return False
+    if is_south_indic and ends_cons and not ends_virama and ind_syl > en_syl:
+        return False
+    return True
+
+
+def _repair_indian_en_spelling(raw_w: str, en_lex_words: frozenset) -> str:
+    cw = _EN_CLEAN_RE.sub("", raw_w.lower()).strip("'")
+    if not cw:
+        return cw
+    if cw in _INDIAN_EN_LOANWORD_FIXES:
+        fixed = _INDIAN_EN_LOANWORD_FIXES[cw]
+        if is_en_word(fixed, en_lex_words):
+            return fixed
+    if is_en_word(cw, en_lex_words) or len(cw) < 3:
+        return cw
+    cands = (
+        cw + "e",
+        cw.replace("io", "eo"),
+        ("w" + cw[1:]) if cw.startswith("v") else "",
+        cw.replace("th", "t"),
+        cw.replace("f", "ff"),
+        ("o" + cw.replace("f", "ff")) if cw.startswith("af") else "",
+        cw.replace("k", "c"),
+    )
+    for c in cands:
+        if c and len(c) >= 3 and is_en_word(c, en_lex_words):
+            return c
+    return cw
+
+
 def _extract_ctc_word_spans(
     logits_2d: np.ndarray,
     vocab: Sequence[str],
@@ -445,7 +686,7 @@ def _extract_ctc_word_spans(
     """Extracts `(word_text, start_frame, end_frame)` spans from greedy/aligned CTC frames."""
     argmax_ids = np.argmax(logits_2d, axis=-1)
     vlen = len(vocab)
-    words: List[Tuple[str, int, int]] = []
+    raw_spans: List[Tuple[str, int, int]] = []
     cur_chars: List[str] = []
     cur_start: Optional[int] = None
     cur_end: int = 0
@@ -470,7 +711,7 @@ def _extract_ctc_word_spans(
             if cur_chars and cur_start is not None:
                 w_txt = normalize_indic_text("".join(cur_chars)).strip()
                 if w_txt:
-                    words.append((w_txt, cur_start, max(cur_end, cur_start + 1)))
+                    raw_spans.append((w_txt, cur_start, max(cur_end, cur_start + 1)))
                 cur_chars = []
                 cur_start = None
             rest = tok.lstrip("\u2581 ")
@@ -487,7 +728,22 @@ def _extract_ctc_word_spans(
     if cur_chars and cur_start is not None:
         w_txt = normalize_indic_text("".join(cur_chars)).strip()
         if w_txt:
-            words.append((w_txt, cur_start, max(cur_end, cur_start + 1)))
+            raw_spans.append((w_txt, cur_start, max(cur_end, cur_start + 1)))
+
+    words: List[Tuple[str, int, int]] = []
+    for w_txt, s0, s1 in raw_spans:
+        parts = [p for p in w_txt.split() if p]
+        if len(parts) <= 1:
+            words.append((w_txt, s0, s1))
+        else:
+            tot_c = max(1, sum(len(p) for p in parts))
+            span_len = max(len(parts), s1 - s0)
+            cur_f = s0
+            for i, p in enumerate(parts):
+                w_f = max(1, int(round(span_len * len(p) / tot_c)))
+                nxt_f = s1 if i == len(parts) - 1 else min(s1, cur_f + w_f)
+                words.append((p, cur_f, max(cur_f + 1, nxt_f)))
+                cur_f = nxt_f
     return words
 
 
@@ -512,66 +768,316 @@ def decode_bilingual_codeswitch(
     is_partial: bool = False,
 ) -> CodeSwitchDecodeResult:
     """Decodes an Indic utterance while preserving genuinely English code-mixed words
-    in Latin script (Shruti-style bilingual Indic + English transcription) using
-    frame-synchronous comparison between `logits_indic` and `logits_en`."""
+    and clauses in Latin script (Kanglish / Hinglish / Tanglish) via whole-utterance
+    frame alignment, Indic-to-English consonant skeleton matching, and acoustic certainty."""
     lg_ind = logits_indic[0] if logits_indic.ndim == 3 else logits_indic
     lg_en = logits_en[0] if logits_en.ndim == 3 else logits_en
     base_res: CTCDecodeResult = decode_ctc(lg_ind, vocab=vocab_indic, is_partial=is_partial)
     if lang_indic == "en" or lg_ind.shape[0] < 4 or not base_res.text:
         return CodeSwitchDecodeResult(text=base_res.text, tokens=base_res.tokens, english_spans=[])
 
-    spans = _extract_ctc_word_spans(lg_ind, vocab_indic)
-    base_words = base_res.text.split()
-    if not spans or len(spans) != len(base_words):
+    ind_spans = _extract_ctc_word_spans(lg_ind, vocab_indic)
+    if not ind_spans:
         return CodeSwitchDecodeResult(text=base_res.text, tokens=base_res.tokens, english_spans=[])
+
+    base_words = base_res.text.split()
+    if len(base_words) == len(ind_spans):
+        ind_spans = [(base_words[i], ind_spans[i][1], ind_spans[i][2]) for i in range(len(ind_spans))]
+
+    en_res: CTCDecodeResult = decode_ctc(lg_en, vocab=vocab_en, is_partial=is_partial)
+    en_spans_raw = _extract_ctc_word_spans(lg_en, vocab_en)
+    en_words_dec = en_res.text.split()
+    if len(en_words_dec) == len(en_spans_raw):
+        en_spans_raw = [(en_words_dec[i], en_spans_raw[i][1], en_spans_raw[i][2]) for i in range(len(en_spans_raw))]
 
     core_set, ext_set = get_indic_lexicon(lang_indic)
     en_lex_words, _ = get_en_lexicon()
+
+    classified_en: List[Tuple[str, str, int, int, bool, bool]] = []
+    for w_raw, e0, e1 in en_spans_raw:
+        cw = _repair_indian_en_spelling(w_raw, en_lex_words)
+        has_v = bool(_EN_VOWELS_RE.search(cw))
+        in_lex = bool(cw) and is_en_word(cw, en_lex_words)
+        is_strong = has_v and in_lex and (
+            (len(cw) >= 4 and cw not in _CODEMIX_AMBIGUOUS_EN)
+            or (cw in _EN_SAFE_SHORT_WORDS)
+        )
+        is_phrase_ok = is_strong or (cw in _EN_PHRASE_FUNC_WORDS) or (len(cw) >= 3 and has_v and in_lex)
+        classified_en.append((cw, w_raw, e0, e1, is_strong, is_phrase_ok))
+
+    cand_regions: List[List[Tuple[str, str, int, int, bool, bool]]] = []
+    i = 0
+    n_en = len(classified_en)
+    while i < n_en:
+        if not classified_en[i][5]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n_en and classified_en[j + 1][5] and (classified_en[j + 1][2] - classified_en[j][3]) <= 12:
+            j += 1
+        sub = classified_en[i : j + 1]
+        if any(item[4] for item in sub) and (len(sub) > 1 or sub[0][4]):
+            cand_regions.append(sub)
+        i = j + 1
+
+    replacements: Dict[int, Tuple[int, List[str]]] = {}
+    used_ind: set[int] = set()
+
+    def try_region(sub_items: List[Tuple[str, str, int, int, bool, bool]]) -> bool:
+        r_e0 = sub_items[0][2]
+        r_e1 = sub_items[-1][3]
+        en_clean_list = [x[0] for x in sub_items if x[0]]
+        if not en_clean_list:
+            return False
+        overlap_idxs: List[int] = []
+        for idx_i, (_, i0, i1) in enumerate(ind_spans):
+            i_mid = 0.5 * (i0 + i1)
+            ov = min(i1, r_e1) - max(i0, r_e0)
+            i_len = max(1, i1 - i0)
+            if (r_e0 <= i_mid <= r_e1) or (ov >= 0.60 * i_len):
+                overlap_idxs.append(idx_i)
+        if not overlap_idxs:
+            return False
+        lo, hi = overlap_idxs[0], overlap_idxs[-1] + 1
+
+        while (hi - lo) > len(en_clean_list):
+            w_left = ind_spans[lo][0].strip("।॥,?!.'\"-")
+            if (
+                w_left
+                and score_indic_word(w_left, lang_indic, core_set, ext_set) > 0.5
+                and not _is_phonetic_loanword_match(w_left, en_clean_list[0])
+            ):
+                lo += 1
+                continue
+            w_right = ind_spans[hi - 1][0].strip("।॥,?!.'\"-")
+            if (
+                w_right
+                and score_indic_word(w_right, lang_indic, core_set, ext_set) > 0.5
+                and not _is_phonetic_loanword_match(w_right, en_clean_list[-1])
+            ):
+                hi -= 1
+                continue
+            break
+
+        if lo >= hi or any(k in used_ind for k in range(lo, hi)):
+            return False
+
+        ind_words_slice = [ind_spans[k][0] for k in range(lo, hi)]
+        ind_phrase = " ".join(ind_words_slice)
+        en_phrase = " ".join(en_clean_list)
+        f0 = max(0, min(r_e0, ind_spans[lo][1]) - 2)
+        f1 = min(lg_ind.shape[0], max(r_e1, ind_spans[hi - 1][2]) + 2)
+        if f1 - f0 < 3:
+            return False
+
+        cert_ind = _span_conditional_certainty(lg_ind[f0:f1])
+        cert_en = _span_conditional_certainty(lg_en[f0:f1])
+        any_core = any(w.strip("।॥,?!.'\"-") in core_set for w in ind_words_slice if w.strip("।॥,?!.'\"-"))
+        phon_match = _is_phonetic_loanword_match(ind_phrase, en_phrase)
+
+        if any_core and not (len(en_clean_list) >= 3 and cert_en >= cert_ind + 0.20):
+            return False
+
+        accept = False
+        if phon_match:
+            edges_ok = True
+            if len(en_clean_list) >= 2 and len(ind_words_slice) >= 2:
+                if not _is_phonetic_loanword_match(ind_words_slice[0], en_clean_list[0]) or not _is_phonetic_loanword_match(ind_words_slice[-1], en_clean_list[-1]):
+                    edges_ok = False
+            _, ends_vir = _count_indic_syllables_and_virama(ind_phrase)
+            if not ends_vir and len(en_clean_list) == 1:
+                margin = -0.05
+            elif len(en_clean_list) == 1 and len(en_clean_list[0]) <= 4:
+                margin = -0.32
+            else:
+                margin = -0.45
+            if edges_ok and cert_en >= -0.82 and cert_en >= cert_ind + margin:
+                accept = True
+        elif len(en_clean_list) >= 3 and sum(1 for x in sub_items if x[4]) >= 1:
+            if cert_en >= cert_ind + 0.04 and cert_en >= -0.65:
+                accept = True
+        else:
+            ind_lex_scores = [
+                score_indic_word(w.strip("।॥,?!.'\"-"), lang_indic, core_set, ext_set)
+                for w in ind_words_slice
+                if w.strip("।॥,?!.'\"-")
+            ]
+            max_ind_lex = max(ind_lex_scores) if ind_lex_scores else 0.0
+            if max_ind_lex <= 0.05 and cert_en >= cert_ind + 0.28 and cert_en > -0.32:
+                accept = True
+
+        if accept:
+            replacements[lo] = (hi, en_clean_list)
+            for k in range(lo, hi):
+                used_ind.add(k)
+            return True
+        return False
+
+    for reg in cand_regions:
+        if not try_region(reg) and len(reg) > 1:
+            for length in range(min(3, len(reg) - 1), 0, -1):
+                for start_k in range(0, len(reg) - length + 1):
+                    sub = reg[start_k : start_k + length]
+                    if any(x[4] for x in sub) and (len(sub) > 1 or sub[0][4]):
+                        try_region(sub)
+
+    # Local Voronoi fallback for isolated English loanwords missed by full-sequence greedy boundaries
     total_frames = lg_ind.shape[0]
+    for idx, (w_i, i0, i1) in enumerate(ind_spans):
+        if idx in used_ind:
+            continue
+        w_clean = w_i.strip("।॥,?!.'\"-")
+        if not w_clean or w_clean in core_set:
+            continue
+        prev_e = ind_spans[idx - 1][2] if idx > 0 else 0
+        next_s = ind_spans[idx + 1][1] if (idx + 1) < len(ind_spans) else total_frames
+        s0 = max(prev_e, i0 - 1)
+        s1 = min(next_s, i1 + 1)
+        if (s1 - s0) < 3:
+            continue
+        sub_en_txt = decode_ctc(lg_en[s0:s1], vocab=vocab_en, is_partial=True).text.strip()
+        sub_en_words = [_repair_indian_en_spelling(u, en_lex_words) for u in sub_en_txt.split()]
+        sub_en_words = [u for u in sub_en_words if u and is_en_word(u, en_lex_words) and bool(_EN_VOWELS_RE.search(u))]
+        if len(sub_en_words) == 1:
+            cand_w = sub_en_words[0]
+            if (len(cand_w) >= 4 and cand_w not in _CODEMIX_AMBIGUOUS_EN) or (cand_w in _EN_SAFE_SHORT_WORDS):
+                if _is_phonetic_loanword_match(w_clean, cand_w):
+                    _, ends_vir2 = _count_indic_syllables_and_virama(w_clean)
+                    m2 = -0.42 if ends_vir2 else -0.05
+                    c_ind = _span_conditional_certainty(lg_ind[s0:s1])
+                    c_en = _span_conditional_certainty(lg_en[s0:s1])
+                    if c_en >= -0.82 and c_en >= c_ind + m2:
+                        replacements[idx] = (idx + 1, [cand_w])
+                        used_ind.add(idx)
+                elif (
+                    len(_canonical_consonant_skeleton_en(cand_w)) >= 2
+                    and score_indic_word(w_clean, lang_indic, core_set, ext_set) <= 0.05
+                ):
+                    c_ind = _span_conditional_certainty(lg_ind[s0:s1])
+                    c_en = _span_conditional_certainty(lg_en[s0:s1])
+                    if c_en >= c_ind + 0.28 and c_en > -0.35:
+                        replacements[idx] = (idx + 1, [cand_w])
+                        used_ind.add(idx)
+
+    if not replacements:
+        return CodeSwitchDecodeResult(text=base_res.text, tokens=base_res.tokens, english_spans=[])
+
     out_words: List[str] = []
     en_spans: List[CodeSwitchSpan] = []
     cursor = 0
+    idx = 0
+    while idx < len(ind_spans):
+        if idx in replacements:
+            hi, en_list = replacements[idx]
+            for ew in en_list:
+                if out_words:
+                    cursor += 1
+                sc = cursor
+                cursor += len(ew)
+                en_spans.append(CodeSwitchSpan(word=ew, start_char=sc, end_char=cursor))
+                out_words.append(ew)
+            idx = hi
+        else:
+            w_i = ind_spans[idx][0]
+            if out_words:
+                cursor += 1
+            cursor += len(w_i)
+            out_words.append(w_i)
+            idx += 1
 
-    for idx, (_, t0, t1) in enumerate(spans):
-        w_ind = base_words[idx]
-        chosen = w_ind
-        is_en_swap = False
+    out_tokens = [f"\u2581{w}" for w in out_words]
+    return CodeSwitchDecodeResult(text=" ".join(out_words), tokens=out_tokens, english_spans=en_spans)
 
-        # Voronoi-bounded acoustic window around spiky CTC emissions without crossing adjacent words
-        prev_t1 = spans[idx - 1][2] if idx > 0 else 0
-        next_t0 = spans[idx + 1][1] if (idx + 1) < len(spans) else total_frames
-        s0 = max(prev_t1, t0 - 4)
-        s1 = min(next_t0, t1 + 6)
-        w_ind_clean = w_ind.strip("।॥,?!.'\"-")
-        ind_lex_sc = score_indic_word(w_ind_clean, lang_indic, core_set, ext_set) if w_ind_clean else 0.0
-        if (s1 - s0) >= 3 and ind_lex_sc <= 0.05:
-            en_sub_res = decode_ctc(lg_en[s0:s1], vocab=vocab_en, is_partial=True)
-            en_cand_raw = en_sub_res.text.strip().lower()
-            en_words = [
-                _EN_CLEAN_RE.sub("", u).strip("'")
-                for u in en_cand_raw.split()
-                if _EN_CLEAN_RE.sub("", u).strip("'")
-            ]
-            if (
-                len(en_words) == 1
-                and len(en_words[0]) >= 4
-                and en_words[0] not in _CODEMIX_AMBIGUOUS_EN
-                and is_en_word(en_words[0], en_lex_words)
-                and bool(_EN_VOWELS_RE.search(en_words[0]))
-            ):
-                cert_ind = _span_conditional_certainty(lg_ind[s0:s1])
-                cert_en = _span_conditional_certainty(lg_en[s0:s1])
-                if cert_en >= cert_ind + 0.08 and cert_en > -0.85:
-                    chosen = en_words[0]
-                    is_en_swap = True
 
-        if idx > 0:
-            cursor += 1  # space
-        start_c = cursor
-        cursor += len(chosen)
-        if is_en_swap:
-            en_spans.append(CodeSwitchSpan(word=chosen, start_char=start_c, end_char=cursor))
-        out_words.append(chosen)
+def split_pcm_at_pauses(
+    pcm: np.ndarray,
+    sr: int = 16000,
+    min_segment_sec: float = 1.55,
+    min_pause_ms: float = 160.0,
+) -> List[Tuple[int, int]]:
+    """Splits a 16 kHz PCM buffer into `(start_sample, end_sample)` active-speech
+    segments separated by clear acoustic pauses (`>= min_pause_ms`), trimming dead
+    silence margins (`40 ms` pad) so per-segment CMVN is never skewed by silence."""
+    min_seg = int(min_segment_sec * sr)
+    if len(pcm) < 2 * min_seg:
+        return [(0, len(pcm))]
+    hop = int(0.02 * sr)
+    n_frames = len(pcm) // hop
+    if n_frames < 20:
+        return [(0, len(pcm))]
+    frames = pcm[: n_frames * hop].reshape(n_frames, hop)
+    rms = np.sqrt(np.mean(frames * frames, axis=1))
+    p80 = float(np.percentile(rms, 80))
+    if p80 < 1.0e-4:
+        return [(0, len(pcm))]
+    valley_th = max(0.0035, min(0.018, 0.12 * p80))
+    is_sil = rms < valley_th
+    min_sil_frames = max(4, int(round(min_pause_ms / 20.0)))
 
-    joined = " ".join(out_words)
-    return CodeSwitchDecodeResult(text=joined, tokens=base_res.tokens, english_spans=en_spans)
+    cuts: List[Tuple[int, float]] = []
+    i = 0
+    while i < n_frames:
+        if not is_sil[i]:
+            i += 1
+            continue
+        j = i
+        while j < n_frames and is_sil[j]:
+            j += 1
+        if (j - i) >= min_sil_frames:
+            med_v_rms = float(np.median(rms[i:j]))
+            strength = (float(j - i) ** 1.5) / (med_v_rms + 5.0e-4)
+            cuts.append((((i + j) // 2) * hop, strength))
+        i = j
+
+    if not cuts:
+        return [(0, len(pcm))]
+
+    segs: List[List[int]] = []
+    boundary_strengths: List[float] = []
+    prev = 0
+    for c_samp, st in cuts:
+        segs.append([prev, c_samp])
+        boundary_strengths.append(st)
+        prev = c_samp
+    segs.append([prev, len(pcm)])
+
+    while len(segs) > 1:
+        shortest_idx = min(range(len(segs)), key=lambda k: segs[k][1] - segs[k][0])
+        if (segs[shortest_idx][1] - segs[shortest_idx][0]) >= min_seg:
+            break
+        if shortest_idx == 0:
+            segs[1][0] = segs[0][0]
+            segs.pop(0)
+            boundary_strengths.pop(0)
+        elif shortest_idx == len(segs) - 1:
+            segs[-2][1] = segs[-1][1]
+            segs.pop()
+            boundary_strengths.pop()
+        else:
+            if boundary_strengths[shortest_idx - 1] <= boundary_strengths[shortest_idx]:
+                segs[shortest_idx - 1][1] = segs[shortest_idx][1]
+                segs.pop(shortest_idx)
+                boundary_strengths.pop(shortest_idx - 1)
+            else:
+                segs[shortest_idx + 1][0] = segs[shortest_idx][0]
+                segs.pop(shortest_idx)
+                boundary_strengths.pop(shortest_idx)
+
+    if len(segs) <= 1:
+        return [(0, len(pcm))]
+
+    trimmed: List[Tuple[int, int]] = []
+    for s0, s1 in segs:
+        f0 = s0 // hop
+        f1 = min(n_frames, s1 // hop)
+        while f0 < f1 and is_sil[f0]:
+            f0 += 1
+        while f1 > f0 and is_sil[f1 - 1]:
+            f1 -= 1
+        t0 = max(s0, (f0 - 2) * hop)
+        t1 = min(s1, (f1 + 2) * hop)
+        if (t1 - t0) >= int(0.4 * sr):
+            trimmed.append((t0, t1))
+        else:
+            trimmed.append((s0, s1))
+    return trimmed

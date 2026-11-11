@@ -8662,6 +8662,39 @@ const EN_VOWELS_RE = /[aeiouy]/;
 const EN_CLEAN_RE = /[^a-z']/g;
 const INDIC_STRIP_PUNCT_RE = /^[।॥,?!.'"\\-]+|[।॥,?!.'"\\-]+$/g;
 
+const EN_PHRASE_FUNC_WORDS = new Set        ([
+  'the', 'was', 'were', 'are', 'is', 'am', 'be', 'been', 'to', 'of', 'in',
+  'on', 'at', 'for', 'with', 'from', 'by', 'and', 'or', 'but', 'not', 'this',
+  'that', 'these', 'those', 'my', 'our', 'your', 'his', 'her', 'their', 'its',
+  'us', 'we', 'you', 'they', 'he', 'she', 'it', 'can', 'will', 'just', 'now',
+  'new', 'all', 'out', 'up', 'let',
+]);
+
+const EN_SAFE_SHORT_WORDS = new Set        ([
+  'app', 'api', 'web', 'net', 'cpu', 'gpu', 'ram', 'sql', 'cli', 'git', 'sdk',
+  'url', 'pdf', 'csv', 'xml', 'css', 'aws', 'gcp', 'llm', 'ios', 'mac', 'pro',
+  'fix', 'bug', 'log', 'run', 'try', 'add', 'set', 'get', 'put', 'job',
+  'bus', 'car', 'cab', 'gym', 'tax', 'fee', 'pay', 'buy', 'win',
+]);
+
+const INDIAN_EN_LOANWORD_FIXES                         = {
+  mobil: 'mobile',
+  mobal: 'mobile',
+  vidio: 'video',
+  vidyo: 'video',
+  vait: 'wait',
+  ofis: 'office',
+  afis: 'office',
+  afie: 'office',
+  afice: 'office',
+  ofice: 'office',
+  meething: 'meeting',
+  miting: 'meeting',
+  diployment: 'deployment',
+  prodakt: 'product',
+  onlain: 'online',
+};
+
                                     
                        
                      
@@ -9268,6 +9301,212 @@ function detectLanguageFromHidden(
   };
 }
 
+function countIndicSyllablesAndVirama(phrase        )                                             {
+  const w = phrase.trim();
+  if (!w) return { syllables: 0, endsVirama: false };
+  const cps           = [];
+  for (let i = 0; i < w.length; i++) {
+    const ch = w[i];
+    if (ch !== ' ' && ch !== '\t' && ch !== '\n') {
+      cps.push(w.charCodeAt(i));
+    }
+  }
+  if (cps.length === 0) return { syllables: 0, endsVirama: false };
+  const lastCp = cps[cps.length - 1];
+  const endsVirama = lastCp >= 0x0900 && lastCp <= 0x0d7f && (lastCp & 0x7f) === 0x4d;
+  let syl = 0;
+  for (let i = 0; i < cps.length; i++) {
+    const cp = cps[i];
+    if (cp < 0x0900 || cp > 0x0d7f) continue;
+    const off = cp & 0x7f;
+    if (off >= 0x05 && off <= 0x14) {
+      syl += 1;
+    } else if (off >= 0x15 && off <= 0x39) {
+      const nxtCp = i + 1 < cps.length ? cps[i + 1] : 0;
+      const nxtOff = nxtCp >= 0x0900 && nxtCp <= 0x0d7f ? nxtCp & 0x7f : -1;
+      if (nxtOff !== 0x4d) syl += 1;
+    }
+  }
+  return { syllables: Math.max(1, syl), endsVirama };
+}
+
+function countEnSyllablesAndCoda(phrase        )                                                {
+  const words = phrase.toLowerCase().split(/\s+/).filter(Boolean);
+  let tot = 0;
+  for (const w of words) {
+    const dropSilentE =
+      w.length > 3 && w.endsWith('e') && !w.endsWith('le') && !w.endsWith('ee') && !w.endsWith('ie');
+    const core = dropSilentE ? w.slice(0, -1) : w;
+    const groups = core.match(/[aeiouy]+/g);
+    tot += Math.max(1, groups ? groups.length : 1);
+  }
+  const lastW = words.length > 0 ? words[words.length - 1] : '';
+  const lastCh = lastW ? lastW[lastW.length - 1] : '';
+  let endsConsonant = Boolean(lastW) && !/[aeiouy]/.test(lastCh);
+  if (lastW.endsWith('e') && lastW.length > 3 && !/[aeiouy]/.test(lastW[lastW.length - 2])) {
+    endsConsonant = true;
+  }
+  return { syllables: Math.max(1, tot), endsConsonant };
+}
+
+function canonicalConsonantSkeletonIndic(phrase        )         {
+  const out           = [];
+  let firstAlpha = true;
+  for (let i = 0; i < phrase.length; i++) {
+    const ch = phrase[i];
+    const cp = phrase.charCodeAt(i);
+    if (cp >= 0x0900 && cp <= 0x0d7f) {
+      const off = cp & 0x7f;
+      let c = '';
+      if (off === 0x01 || off === 0x02) c = 'n';
+      else if ((off >= 0x15 && off <= 0x18) || (off >= 0x58 && off <= 0x5a)) c = 'k';
+      else if (off === 0x19 || off === 0x1e || off === 0x23 || off === 0x28 || off === 0x29) c = 'n';
+      else if (off >= 0x1a && off <= 0x1d) c = 'c';
+      else if (off === 0x5b || (off >= 0x36 && off <= 0x38)) c = 's';
+      else if ((off >= 0x1f && off <= 0x22) || (off >= 0x24 && off <= 0x27) || off === 0x5c || off === 0x5d) c = 't';
+      else if ((off >= 0x2a && off <= 0x2d) || off === 0x5e) c = 'p';
+      else if (off === 0x2e) c = 'm';
+      else if (off === 0x2f || off === 0x5f) c = firstAlpha ? 'y' : '';
+      else if (off === 0x30 || off === 0x31 || off === 0x0b) c = 'r';
+      else if (off >= 0x32 && off <= 0x34) c = 'l';
+      else if (off === 0x35) c = 'w';
+      else if (off === 0x39) c = 'h';
+
+      if (off >= 0x05 && off <= 0x39) firstAlpha = false;
+      if (c && (out.length === 0 || out[out.length - 1] !== c)) {
+        out.push(c);
+      }
+    } else if (ch === ' ') {
+      firstAlpha = true;
+    }
+  }
+  return out.join('');
+}
+
+function canonicalConsonantSkeletonEn(phrase        )         {
+  const w = phrase
+    .toLowerCase()
+    .replace(/tch/g, 'c')
+    .replace(/ch/g, 'c')
+    .replace(/dg/g, 'c')
+    .replace(/ph/g, 'p')
+    .replace(/gh/g, '')
+    .replace(/ck/g, 'k')
+    .replace(/sh/g, 's')
+    .replace(/th/g, 't');
+  const out           = [];
+  let firstAlpha = true;
+  for (let i = 0; i < w.length; i++) {
+    const ch = w[i];
+    if (ch === ' ') {
+      firstAlpha = true;
+      continue;
+    }
+    let c = '';
+    if (ch === 'k' || ch === 'g' || ch === 'q' || ch === 'x') c = 'k';
+    else if (ch === 'c' || ch === 'j') c = 'c';
+    else if (ch === 's' || ch === 'z') c = 's';
+    else if (ch === 't' || ch === 'd') c = 't';
+    else if (ch === 'n') c = 'n';
+    else if (ch === 'p' || ch === 'b' || ch === 'f') c = 'p';
+    else if (ch === 'm') c = 'm';
+    else if (ch === 'y' && firstAlpha) c = 'y';
+    else if (ch === 'r') c = 'r';
+    else if (ch === 'l') c = 'l';
+    else if (ch === 'v' || ch === 'w') c = 'w';
+    else if (ch === 'h') c = 'h';
+
+    if (ch >= 'a' && ch <= 'z') firstAlpha = false;
+    if (c && (out.length === 0 || out[out.length - 1] !== c)) {
+      out.push(c);
+    }
+  }
+  return out.join('');
+}
+
+function skelEditDist(a        , b        )         {
+  const n = a.length;
+  const m = b.length;
+  const dp           = new Array(m + 1);
+  for (let j = 0; j <= m; j++) dp[j] = j;
+  for (let i = 1; i <= n; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= m; j++) {
+      const tmp = dp[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[j] = Math.min(prev + cost, dp[j] + 1, dp[j - 1] + 1);
+      prev = tmp;
+    }
+  }
+  return dp[m];
+}
+
+function isPhoneticLoanwordMatch(indPhrase        , enPhrase        )          {
+  const enClean = enPhrase.trim().toLowerCase();
+  const si = canonicalConsonantSkeletonIndic(indPhrase);
+  if (!si) return false;
+  if (si.length === 1 && enClean !== 'app') return false;
+  const wHard = enClean.replace(/c(?=[aoukrlt]|$)/g, 'k').replace(/c(?=[eiy])/g, 's');
+  const variants = [canonicalConsonantSkeletonEn(wHard), canonicalConsonantSkeletonEn(enClean)].filter(Boolean);
+  if (variants.length === 0) return false;
+
+  let bestD = 99;
+  let bestLenOk = false;
+  let minVarLen = 99;
+  for (const se of variants) {
+    if (se.length < minVarLen) minVarLen = se.length;
+    if (Math.abs(si.length - se.length) <= 1) {
+      bestLenOk = true;
+      const d = skelEditDist(si, se);
+      if (d < bestD) bestD = d;
+    }
+  }
+  if (!bestLenOk) return false;
+  if (Math.min(si.length, minVarLen) <= 2) {
+    if (bestD !== 0) return false;
+  } else if (bestD > 1) {
+    return false;
+  }
+
+  let firstIndCp = 0;
+  for (let i = 0; i < indPhrase.length; i++) {
+    const cp = indPhrase.charCodeAt(i);
+    if (cp >= 0x0900 && cp <= 0x0d7f) {
+      firstIndCp = cp;
+      break;
+    }
+  }
+  const isSouthIndic = firstIndCp >= 0x0b80 && firstIndCp <= 0x0d7f;
+  const { syllables: indSyl, endsVirama } = countIndicSyllablesAndVirama(indPhrase);
+  const { syllables: enSyl, endsConsonant } = countEnSyllablesAndCoda(enClean);
+  const maxSylDiff = isSouthIndic ? 1 : 2;
+  if (indSyl - enSyl > maxSylDiff || enSyl - indSyl > 1) return false;
+  if (isSouthIndic && endsConsonant && !endsVirama && indSyl > enSyl) return false;
+  return true;
+}
+
+function repairIndianEnSpelling(rawW        , enLexWords             )         {
+  const cw = rawW.toLowerCase().replace(EN_CLEAN_RE, '').replace(/^'+|'+$/g, '');
+  if (!cw) return cw;
+  const mapped = INDIAN_EN_LOANWORD_FIXES[cw];
+  if (mapped && isEnWord(mapped, enLexWords)) return mapped;
+  if (isEnWord(cw, enLexWords) || cw.length < 3) return cw;
+  const cands = [
+    cw + 'e',
+    cw.replace(/io/g, 'eo'),
+    cw.startsWith('v') ? 'w' + cw.slice(1) : '',
+    cw.replace(/th/g, 't'),
+    cw.replace(/f/g, 'ff'),
+    cw.startsWith('af') ? 'o' + cw.replace(/f/g, 'ff') : '',
+    cw.replace(/k/g, 'c'),
+  ];
+  for (const c of cands) {
+    if (c && c.length >= 3 && isEnWord(c, enLexWords)) return c;
+  }
+  return cw;
+}
+
 function extractCtcWordSpans(
   logits              ,
   timeSteps        ,
@@ -9275,7 +9514,7 @@ function extractCtcWordSpans(
 )                                                                {
   const numClasses = 257;
   const vlen = vocab.length;
-  const words                                                                = [];
+  const rawSpans                                                                = [];
   let curChars           = [];
   let curStart = -1;
   let curEnd = 0;
@@ -9308,7 +9547,7 @@ function extractCtcWordSpans(
       if (curChars.length > 0 && curStart >= 0) {
         const wTxt = normalizeIndicText(curChars.join('')).trim();
         if (wTxt) {
-          words.push({ text: wTxt, startFrame: curStart, endFrame: Math.max(curEnd, curStart + 1) });
+          rawSpans.push({ text: wTxt, startFrame: curStart, endFrame: Math.max(curEnd, curStart + 1) });
         }
         curChars = [];
         curStart = -1;
@@ -9329,7 +9568,27 @@ function extractCtcWordSpans(
   if (curChars.length > 0 && curStart >= 0) {
     const wTxt = normalizeIndicText(curChars.join('')).trim();
     if (wTxt) {
-      words.push({ text: wTxt, startFrame: curStart, endFrame: Math.max(curEnd, curStart + 1) });
+      rawSpans.push({ text: wTxt, startFrame: curStart, endFrame: Math.max(curEnd, curStart + 1) });
+    }
+  }
+
+  const words                                                                = [];
+  for (const sp of rawSpans) {
+    const parts = sp.text.split(/\s+/).filter(Boolean);
+    if (parts.length <= 1) {
+      words.push(sp);
+    } else {
+      let totC = 0;
+      for (const p of parts) totC += p.length;
+      totC = Math.max(1, totC);
+      const spanLen = Math.max(parts.length, sp.endFrame - sp.startFrame);
+      let curF = sp.startFrame;
+      for (let i = 0; i < parts.length; i++) {
+        const wF = Math.max(1, Math.round((spanLen * parts[i].length) / totC));
+        const nxtF = i === parts.length - 1 ? sp.endFrame : Math.min(sp.endFrame, curF + wF);
+        words.push({ text: parts[i], startFrame: curF, endFrame: Math.max(curF + 1, nxtF) });
+        curF = nxtF;
+      }
     }
   }
   return words;
@@ -9382,70 +9641,653 @@ function decodeBilingualCodeswitch(
     return { text: baseRes.text, tokens: baseRes.tokens, englishSpans: [] };
   }
 
-  const spans = extractCtcWordSpans(logitsIndic, timeSteps, vocabIndic);
-  const baseWords = baseRes.text.split(/\s+/).filter(Boolean);
-  if (spans.length === 0 || spans.length !== baseWords.length) {
+  let indSpans = extractCtcWordSpans(logitsIndic, timeSteps, vocabIndic);
+  if (indSpans.length === 0) {
     return { text: baseRes.text, tokens: baseRes.tokens, englishSpans: [] };
+  }
+  const baseWords = baseRes.text.split(/\s+/).filter(Boolean);
+  if (baseWords.length === indSpans.length) {
+    indSpans = indSpans.map((sp, idx) => ({
+      text: baseWords[idx],
+      startFrame: sp.startFrame,
+      endFrame: sp.endFrame,
+    }));
+  }
+
+  const enRes = decodeCTC(
+    logitsEn,
+    [timeSteps, numClasses],
+    vocabEn,
+    isPartial ? { isPartial: true } : undefined
+  );
+  let enSpansRaw = extractCtcWordSpans(logitsEn, timeSteps, vocabEn);
+  const enWordsDec = enRes.text.split(/\s+/).filter(Boolean);
+  if (enWordsDec.length === enSpansRaw.length) {
+    enSpansRaw = enSpansRaw.map((sp, idx) => ({
+      text: enWordsDec[idx],
+      startFrame: sp.startFrame,
+      endFrame: sp.endFrame,
+    }));
   }
 
   const { core, ext } = getIndicLexicon(langIndic);
   const { words: enLexWords } = getEnLexicon();
-  const outWords           = [];
-  const englishSpans                   = [];
-  let cursor = 0;
 
-  for (let i = 0; i < spans.length; i++) {
-    const sp = spans[i];
-    const wInd = baseWords[i];
-    let chosen = wInd;
-    let isEnSwap = false;
+                              
+               
+                
+               
+               
+                      
+                        
+   
 
-    const prevEnd = i > 0 ? spans[i - 1].endFrame : 0;
-    const nextStart = i + 1 < spans.length ? spans[i + 1].startFrame : timeSteps;
-    const s0 = Math.max(prevEnd, sp.startFrame - 4);
-    const s1 = Math.min(nextStart, sp.endFrame + 6);
-    const wIndClean = wInd.replace(INDIC_STRIP_PUNCT_RE, '');
-    const indLexSc = wIndClean ? scoreIndicWord(wIndClean, langIndic, core, ext) : 0.0;
-    if (s1 - s0 >= 3 && indLexSc <= 0.05) {
-      const sliceLen = s1 - s0;
-      const subSlice = logitsEn.subarray(s0 * numClasses, s1 * numClasses);
-      const enSubRes = decodeCTC(subSlice, [sliceLen, numClasses], vocabEn, { isPartial: true });
-      const enWords = enSubRes.text
-        .trim()
-        .toLowerCase()
-        .split(/\s+/)
-        .map((u) => u.replace(EN_CLEAN_RE, '').replace(/^'+|'+$/g, ''))
-        .filter(Boolean);
+  const classifiedEn                     = enSpansRaw.map((sp) => {
+    const cw = repairIndianEnSpelling(sp.text, enLexWords);
+    const hasV = EN_VOWELS_RE.test(cw);
+    const inLex = Boolean(cw) && isEnWord(cw, enLexWords);
+    const isStrong =
+      hasV &&
+      inLex &&
+      ((cw.length >= 4 && !CODEMIX_AMBIGUOUS_EN.has(cw)) || EN_SAFE_SHORT_WORDS.has(cw));
+    const isPhraseOk = isStrong || EN_PHRASE_FUNC_WORDS.has(cw) || (cw.length >= 3 && hasV && inLex);
+    return { cw, raw: sp.text, e0: sp.startFrame, e1: sp.endFrame, isStrong, isPhraseOk };
+  });
 
+  const candRegions                       = [];
+  let i = 0;
+  while (i < classifiedEn.length) {
+    if (!classifiedEn[i].isPhraseOk) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (
+      j + 1 < classifiedEn.length &&
+      classifiedEn[j + 1].isPhraseOk &&
+      classifiedEn[j + 1].e0 - classifiedEn[j].e1 <= 12
+    ) {
+      j++;
+    }
+    const sub = classifiedEn.slice(i, j + 1);
+    if (sub.some((x) => x.isStrong) && (sub.length > 1 || sub[0].isStrong)) {
+      candRegions.push(sub);
+    }
+    i = j + 1;
+  }
+
+  const replacements = new Map                                          ();
+  const usedInd = new Set        ();
+
+  const tryRegion = (subItems                    )          => {
+    const rE0 = subItems[0].e0;
+    const rE1 = subItems[subItems.length - 1].e1;
+    const enCleanList = subItems.map((x) => x.cw).filter(Boolean);
+    if (enCleanList.length === 0) return false;
+
+    const overlapIdxs           = [];
+    for (let idx = 0; idx < indSpans.length; idx++) {
+      const sp = indSpans[idx];
+      const iMid = 0.5 * (sp.startFrame + sp.endFrame);
+      const ov = Math.min(sp.endFrame, rE1) - Math.max(sp.startFrame, rE0);
+      const iLen = Math.max(1, sp.endFrame - sp.startFrame);
+      if ((iMid >= rE0 && iMid <= rE1) || ov >= 0.6 * iLen) {
+        overlapIdxs.push(idx);
+      }
+    }
+    if (overlapIdxs.length === 0) return false;
+    let lo = overlapIdxs[0];
+    let hi = overlapIdxs[overlapIdxs.length - 1] + 1;
+
+    while (hi - lo > enCleanList.length) {
+      const wLeft = indSpans[lo].text.replace(INDIC_STRIP_PUNCT_RE, '');
       if (
-        enWords.length === 1 &&
-        enWords[0].length >= 4 &&
-        !CODEMIX_AMBIGUOUS_EN.has(enWords[0]) &&
-        isEnWord(enWords[0], enLexWords) &&
-        EN_VOWELS_RE.test(enWords[0])
+        wLeft &&
+        scoreIndicWord(wLeft, langIndic, core, ext) > 0.5 &&
+        !isPhoneticLoanwordMatch(wLeft, enCleanList[0])
       ) {
-        const certInd = spanConditionalCertainty(logitsIndic, s0, s1);
-        const certEn = spanConditionalCertainty(logitsEn, s0, s1);
-        if (certEn >= certInd + 0.08 && certEn > -0.85) {
-          chosen = enWords[0];
-          isEnSwap = true;
+        lo++;
+        continue;
+      }
+      const wRight = indSpans[hi - 1].text.replace(INDIC_STRIP_PUNCT_RE, '');
+      if (
+        wRight &&
+        scoreIndicWord(wRight, langIndic, core, ext) > 0.5 &&
+        !isPhoneticLoanwordMatch(wRight, enCleanList[enCleanList.length - 1])
+      ) {
+        hi--;
+        continue;
+      }
+      break;
+    }
+
+    if (lo >= hi) return false;
+    for (let k = lo; k < hi; k++) {
+      if (usedInd.has(k)) return false;
+    }
+
+    const indWordsSlice           = [];
+    for (let k = lo; k < hi; k++) indWordsSlice.push(indSpans[k].text);
+    const indPhrase = indWordsSlice.join(' ');
+    const enPhrase = enCleanList.join(' ');
+    const f0 = Math.max(0, Math.min(rE0, indSpans[lo].startFrame) - 2);
+    const f1 = Math.min(timeSteps, Math.max(rE1, indSpans[hi - 1].endFrame) + 2);
+    if (f1 - f0 < 3) return false;
+
+    const certInd = spanConditionalCertainty(logitsIndic, f0, f1);
+    const certEn = spanConditionalCertainty(logitsEn, f0, f1);
+    const anyCore = indWordsSlice.some((w) => {
+      const wc = w.replace(INDIC_STRIP_PUNCT_RE, '');
+      return wc ? core.has(wc) : false;
+    });
+    const phonMatch = isPhoneticLoanwordMatch(indPhrase, enPhrase);
+
+    if (anyCore && !(enCleanList.length >= 3 && certEn >= certInd + 0.20)) {
+      return false;
+    }
+
+    let accept = false;
+    if (phonMatch) {
+      let edgesOk = true;
+      if (enCleanList.length >= 2 && indWordsSlice.length >= 2) {
+        if (
+          !isPhoneticLoanwordMatch(indWordsSlice[0], enCleanList[0]) ||
+          !isPhoneticLoanwordMatch(indWordsSlice[indWordsSlice.length - 1], enCleanList[enCleanList.length - 1])
+        ) {
+          edgesOk = false;
         }
+      }
+      const { endsVirama } = countIndicSyllablesAndVirama(indPhrase);
+      let margin = -0.45;
+      if (!endsVirama && enCleanList.length === 1) {
+        margin = -0.05;
+      } else if (enCleanList.length === 1 && enCleanList[0].length <= 4) {
+        margin = -0.32;
+      }
+      if (edgesOk && certEn >= -0.82 && certEn >= certInd + margin) {
+        accept = true;
+      }
+    } else if (enCleanList.length >= 3 && subItems.some((x) => x.isStrong)) {
+      if (certEn >= certInd + 0.04 && certEn >= -0.65) {
+        accept = true;
+      }
+    } else {
+      let maxIndLex = 0.0;
+      for (const w of indWordsSlice) {
+        const wc = w.replace(INDIC_STRIP_PUNCT_RE, '');
+        if (wc) {
+          const sc = scoreIndicWord(wc, langIndic, core, ext);
+          if (sc > maxIndLex) maxIndLex = sc;
+        }
+      }
+      if (maxIndLex <= 0.05 && certEn >= certInd + 0.28 && certEn > -0.32) {
+        accept = true;
       }
     }
 
-    if (i > 0) cursor += 1;
-    const startChar = cursor;
-    cursor += chosen.length;
-    if (isEnSwap) {
-      englishSpans.push({ word: chosen, startChar, endChar: cursor });
+    if (accept) {
+      replacements.set(lo, { hi, enList: enCleanList });
+      for (let k = lo; k < hi; k++) usedInd.add(k);
+      return true;
     }
-    outWords.push(chosen);
+    return false;
+  };
+
+  for (const reg of candRegions) {
+    if (!tryRegion(reg) && reg.length > 1) {
+      for (let len = Math.min(3, reg.length - 1); len >= 1; len--) {
+        for (let startK = 0; startK <= reg.length - len; startK++) {
+          const sub = reg.slice(startK, startK + len);
+          if (sub.some((x) => x.isStrong) && (sub.length > 1 || sub[0].isStrong)) {
+            tryRegion(sub);
+          }
+        }
+      }
+    }
+  }
+
+  for (let idx = 0; idx < indSpans.length; idx++) {
+    if (usedInd.has(idx)) continue;
+    const sp = indSpans[idx];
+    const wClean = sp.text.replace(INDIC_STRIP_PUNCT_RE, '');
+    if (!wClean || core.has(wClean)) continue;
+    const prevEnd = idx > 0 ? indSpans[idx - 1].endFrame : 0;
+    const nextStart = idx + 1 < indSpans.length ? indSpans[idx + 1].startFrame : timeSteps;
+    const s0 = Math.max(prevEnd, sp.startFrame - 1);
+    const s1 = Math.min(nextStart, sp.endFrame + 1);
+    if (s1 - s0 < 3) continue;
+    const subSlice = logitsEn.subarray(s0 * numClasses, s1 * numClasses);
+    const enSubRes = decodeCTC(subSlice, [s1 - s0, numClasses], vocabEn, { isPartial: true });
+    const subEnWords = enSubRes.text
+      .trim()
+      .split(/\s+/)
+      .map((u) => repairIndianEnSpelling(u, enLexWords))
+      .filter((u) => Boolean(u) && isEnWord(u, enLexWords) && EN_VOWELS_RE.test(u));
+
+    if (subEnWords.length === 1) {
+      const candW = subEnWords[0];
+      if ((candW.length >= 4 && !CODEMIX_AMBIGUOUS_EN.has(candW)) || EN_SAFE_SHORT_WORDS.has(candW)) {
+        if (isPhoneticLoanwordMatch(wClean, candW)) {
+          const { endsVirama } = countIndicSyllablesAndVirama(wClean);
+          const m2 = endsVirama ? -0.42 : -0.05;
+          const certInd = spanConditionalCertainty(logitsIndic, s0, s1);
+          const certEn = spanConditionalCertainty(logitsEn, s0, s1);
+          if (certEn >= -0.82 && certEn >= certInd + m2) {
+            replacements.set(idx, { hi: idx + 1, enList: [candW] });
+            usedInd.add(idx);
+          }
+        } else if (
+          canonicalConsonantSkeletonEn(candW).length >= 2 &&
+          scoreIndicWord(wClean, langIndic, core, ext) <= 0.05
+        ) {
+          const certInd = spanConditionalCertainty(logitsIndic, s0, s1);
+          const certEn = spanConditionalCertainty(logitsEn, s0, s1);
+          if (certEn >= certInd + 0.28 && certEn > -0.35) {
+            replacements.set(idx, { hi: idx + 1, enList: [candW] });
+            usedInd.add(idx);
+          }
+        }
+      }
+    }
+  }
+
+  if (replacements.size === 0) {
+    return { text: baseRes.text, tokens: baseRes.tokens, englishSpans: [] };
+  }
+
+  const outWords           = [];
+  const englishSpans                   = [];
+  let cursor = 0;
+  let idx = 0;
+  while (idx < indSpans.length) {
+    const rep = replacements.get(idx);
+    if (rep) {
+      for (const ew of rep.enList) {
+        if (outWords.length > 0) cursor += 1;
+        const sc = cursor;
+        cursor += ew.length;
+        englishSpans.push({ word: ew, startChar: sc, endChar: cursor });
+        outWords.push(ew);
+      }
+      idx = rep.hi;
+    } else {
+      const wI = indSpans[idx].text;
+      if (outWords.length > 0) cursor += 1;
+      cursor += wI.length;
+      outWords.push(wI);
+      idx++;
+    }
   }
 
   return {
     text: outWords.join(' '),
-    tokens: baseRes.tokens,
+    tokens: outWords.map((w) => `\u2581${w}`),
     englishSpans,
+  };
+}
+
+function splitPcmAtPauses(
+  pcm              ,
+  sr         = 16000,
+  minSegmentSec         = 1.55,
+  minPauseMs         = 160
+)                          {
+  const minSeg = Math.floor(minSegmentSec * sr);
+  if (pcm.length < 2 * minSeg) {
+    return [[0, pcm.length]];
+  }
+  const hop = Math.floor(0.02 * sr);
+  const nFrames = Math.floor(pcm.length / hop);
+  if (nFrames < 20) {
+    return [[0, pcm.length]];
+  }
+
+  const rms = new Float32Array(nFrames);
+  const sortedRms = new Float32Array(nFrames);
+  for (let f = 0; f < nFrames; f++) {
+    const base = f * hop;
+    let sumSq = 0;
+    for (let k = 0; k < hop; k++) {
+      const v = pcm[base + k];
+      sumSq += v * v;
+    }
+    const r = Math.sqrt(sumSq / hop);
+    rms[f] = r;
+    sortedRms[f] = r;
+  }
+  sortedRms.sort();
+  const p80 = sortedRms[Math.min(nFrames - 1, Math.floor(0.8 * nFrames))];
+  if (p80 < 1e-4) {
+    return [[0, pcm.length]];
+  }
+
+  const valleyTh = Math.max(0.0035, Math.min(0.018, 0.12 * p80));
+  const isSil = new Uint8Array(nFrames);
+  for (let f = 0; f < nFrames; f++) {
+    if (rms[f] < valleyTh) isSil[f] = 1;
+  }
+
+  const minSilFrames = Math.max(4, Math.round(minPauseMs / 20));
+  const cuts                                              = [];
+  let i = 0;
+  while (i < nFrames) {
+    if (!isSil[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < nFrames && isSil[j]) {
+      j++;
+    }
+    if (j - i >= minSilFrames) {
+      const valley = Array.from(rms.subarray(i, j)).sort((a, b) => a - b);
+      const mid = valley.length >> 1;
+      const medVRms =
+        valley.length % 2 === 1 ? valley[mid] : 0.5 * (valley[mid - 1] + valley[mid]);
+      const strength = Math.pow(j - i, 1.5) / (medVRms + 5e-4);
+      cuts.push({ sample: Math.floor((i + j) / 2) * hop, strength });
+    }
+    i = j;
+  }
+
+  if (cuts.length === 0) {
+    return [[0, pcm.length]];
+  }
+
+  const segs                          = [];
+  const boundaryStrengths           = [];
+  let prev = 0;
+  for (const c of cuts) {
+    segs.push([prev, c.sample]);
+    boundaryStrengths.push(c.strength);
+    prev = c.sample;
+  }
+  segs.push([prev, pcm.length]);
+
+  while (segs.length > 1) {
+    let shortestIdx = 0;
+    let shortestLen = segs[0][1] - segs[0][0];
+    for (let k = 1; k < segs.length; k++) {
+      const len = segs[k][1] - segs[k][0];
+      if (len < shortestLen) {
+        shortestLen = len;
+        shortestIdx = k;
+      }
+    }
+    if (shortestLen >= minSeg) break;
+
+    if (shortestIdx === 0) {
+      segs[1][0] = segs[0][0];
+      segs.shift();
+      boundaryStrengths.shift();
+    } else if (shortestIdx === segs.length - 1) {
+      segs[segs.length - 2][1] = segs[segs.length - 1][1];
+      segs.pop();
+      boundaryStrengths.pop();
+    } else {
+      if (boundaryStrengths[shortestIdx - 1] <= boundaryStrengths[shortestIdx]) {
+        segs[shortestIdx - 1][1] = segs[shortestIdx][1];
+        segs.splice(shortestIdx, 1);
+        boundaryStrengths.splice(shortestIdx - 1, 1);
+      } else {
+        segs[shortestIdx + 1][0] = segs[shortestIdx][0];
+        segs.splice(shortestIdx, 1);
+        boundaryStrengths.splice(shortestIdx, 1);
+      }
+    }
+  }
+
+  if (segs.length <= 1) {
+    return [[0, pcm.length]];
+  }
+
+  const trimmed                          = [];
+  for (const [s0, s1] of segs) {
+    let f0 = Math.floor(s0 / hop);
+    let f1 = Math.min(nFrames, Math.floor(s1 / hop));
+    while (f0 < f1 && isSil[f0]) f0++;
+    while (f1 > f0 && isSil[f1 - 1]) f1--;
+    const t0 = Math.max(s0, (f0 - 2) * hop);
+    const t1 = Math.min(s1, (f1 + 2) * hop);
+    if (t1 - t0 >= Math.floor(0.4 * sr)) {
+      trimmed.push([t0, t1]);
+    } else {
+      trimmed.push([s0, s1]);
+    }
+  }
+  return trimmed;
+}
+
+                                               
+                       
+                    
+ 
+
+async function transcribeMultilangSegments(
+  pcm              ,
+  encodeSegment                                                                 ,
+  projectHead                                                                                                     ,
+  multiHeads                                   ,
+  multiVocabs                          ,
+  lidWeights                         ,
+  fallbackVocab          ,
+  useCodeSwitch         ,
+  sampleRate         = 16000
+)           
+               
+                   
+                   
+                             
+                                                
+                                  
+          {
+  const segs = splitPcmAtPauses(pcm, sampleRate);
+  if (segs.length < 2) return null;
+
+                     
+               
+               
+                         
+                      
+                                    
+                                               
+                    
+   
+
+  const segInfos            = [];
+  for (const [s0, s1] of segs) {
+    const enc = await encodeSegment(pcm.subarray(s0, s1));
+    if (enc.timeSteps <= 0 || enc.hidden.length === 0) continue;
+    const { result: lidRes, cachedLogits } = detectLanguageFromHidden(
+      enc.hidden,
+      enc.timeSteps,
+      multiHeads,
+      multiVocabs,
+      lidWeights
+    );
+    segInfos.push({
+      s0,
+      s1,
+      hidden: enc.hidden,
+      timeSteps: enc.timeSteps,
+      lidRes,
+      cachedLogits,
+      effLang: lidRes.language,
+    });
+  }
+
+  if (segInfos.length < 2) return null;
+
+  for (let k = 0; k < segInfos.length; k++) {
+    const lrK = segInfos[k].lidRes;
+    if (lrK.confidence < 0.65) {
+      const nbrLg = k > 0 ? segInfos[k - 1].effLang : k + 1 < segInfos.length ? segInfos[k + 1].effLang : '';
+      const nbrP = nbrLg ? (lrK.probabilities[nbrLg] ?? 0) : 0;
+      if (nbrLg && nbrP >= 0.18 && lrK.confidence < 2.2 * nbrP) {
+        segInfos[k].effLang = nbrLg;
+      }
+    }
+  }
+
+  const agg                         = {};
+  for (const lg of LID_LANGUAGES) agg[lg] = 0;
+  let totalDur = 0;
+  for (const item of segInfos) {
+    const dur = item.s1 - item.s0;
+    totalDur += dur;
+    for (const [lg, p] of Object.entries(item.lidRes.probabilities)) {
+      agg[lg] = (agg[lg] ?? 0) + dur * p;
+    }
+  }
+
+  let domLg = segInfos[0].effLang;
+  let bestAgg = -1;
+  for (const [lg, v] of Object.entries(agg)) {
+    if (v > bestAgg) {
+      bestAgg = v;
+      domLg = lg;
+    }
+  }
+
+  let domMaxConf = 0;
+  for (const item of segInfos) {
+    if (item.effLang === domLg && item.lidRes.confidence > domMaxConf) {
+      domMaxConf = item.lidRes.confidence;
+    }
+  }
+
+  const devSiblings = new Set(['sa', 'hi', 'mr']);
+  const distinctLangs = new Set        ();
+  for (const item of segInfos) {
+    if (item.effLang === domLg) {
+      distinctLangs.add(domLg);
+      continue;
+    }
+    const bothDev = devSiblings.has(item.effLang) && devSiblings.has(domLg);
+    const minReq = bothDev ? 0.72 : 0.34;
+    const domP = item.lidRes.probabilities[domLg] ?? 0;
+    if (item.lidRes.confidence >= minReq && domP < 0.28 && item.lidRes.confidence >= 2.0 * domP) {
+      distinctLangs.add(item.effLang);
+    }
+  }
+
+  if (domMaxConf < 0.34 || distinctLangs.size < 2) {
+    return null;
+  }
+
+                       
+               
+               
+                 
+                                                                                                           
+   
+
+  const mergedRuns              = [];
+  for (const item of segInfos) {
+    let resolvedLg = domLg;
+    if (distinctLangs.has(item.effLang)) {
+      resolvedLg = item.effLang;
+    } else {
+      let bestP = -1;
+      for (const candLg of distinctLangs) {
+        const cp = item.lidRes.probabilities[candLg] ?? 0;
+        if (cp > bestP) {
+          bestP = cp;
+          resolvedLg = candLg;
+        }
+      }
+    }
+    if (mergedRuns.length > 0 && mergedRuns[mergedRuns.length - 1].lang === resolvedLg) {
+      mergedRuns[mergedRuns.length - 1].s1 = item.s1;
+      mergedRuns[mergedRuns.length - 1].cached = null;
+    } else {
+      mergedRuns.push({
+        s0: item.s0,
+        s1: item.s1,
+        lang: resolvedLg,
+        cached: { hidden: item.hidden, timeSteps: item.timeSteps, cachedLogits: item.cachedLogits },
+      });
+    }
+  }
+
+  const textParts           = [];
+  const allTokens           = [];
+  const allEnSpans                   = [];
+  let charCursor = 0;
+
+  for (const run of mergedRuns) {
+    let mHidden              ;
+    let mSteps        ;
+    let mCached                              ;
+    if (run.cached) {
+      mHidden = run.cached.hidden;
+      mSteps = run.cached.timeSteps;
+      mCached = run.cached.cachedLogits;
+    } else {
+      const enc = await encodeSegment(pcm.subarray(run.s0, run.s1));
+      mHidden = enc.hidden;
+      mSteps = enc.timeSteps;
+      mCached = {};
+    }
+    if (mSteps <= 0) continue;
+
+    let lg2d = mCached[run.lang];
+    if (!lg2d && multiHeads[run.lang]) {
+      lg2d = projectHead(mHidden, mSteps, multiHeads[run.lang].weight, multiHeads[run.lang].bias);
+    }
+    if (!lg2d) continue;
+    const segVocab = multiVocabs[run.lang] || fallbackVocab;
+
+    let segText = '';
+    let segTokens           = [];
+    const segSpans                   = [];
+
+    if (useCodeSwitch && run.lang !== 'en' && multiHeads.en && multiVocabs.en) {
+      const enLogits = mCached.en || projectHead(mHidden, mSteps, multiHeads.en.weight, multiHeads.en.bias);
+      const cs = decodeBilingualCodeswitch(lg2d, mSteps, segVocab, run.lang, enLogits, multiVocabs.en, false);
+      segText = cs.text;
+      segTokens = cs.tokens;
+      segSpans.push(...cs.englishSpans);
+    } else {
+      const dec = decodeCTC(lg2d, [mSteps, 257], segVocab);
+      segText = dec.text;
+      segTokens = dec.tokens;
+      if (run.lang === 'en' && distinctLangs.size >= 2 && segText) {
+        let wCur = 0;
+        for (const wEn of segText.split(/\s+/).filter(Boolean)) {
+          if (wCur > 0) wCur += 1;
+          segSpans.push({ word: wEn, startChar: wCur, endChar: wCur + wEn.length });
+          wCur += wEn.length;
+        }
+      }
+    }
+
+    if (!segText) continue;
+    if (textParts.length > 0) charCursor += 1;
+    for (const sp of segSpans) {
+      allEnSpans.push({
+        word: sp.word,
+        startChar: charCursor + sp.startChar,
+        endChar: charCursor + sp.endChar,
+      });
+    }
+    textParts.push(segText);
+    allTokens.push(...segTokens);
+    charCursor += segText.length;
+  }
+
+  const normProbs                         = {};
+  for (const [lg, val] of Object.entries(agg)) {
+    normProbs[lg] = totalDur > 0 ? val / totalDur : 0;
+  }
+
+  return {
+    text: textParts.join(' '),
+    language: domLg,
+    tokens: allTokens,
+    languageConfidence: normProbs[domLg] ?? domMaxConf,
+    languageProbabilities: normProbs,
+    ...(useCodeSwitch || allEnSpans.length > 0 ? { englishSpans: allEnSpans } : {}),
   };
 }
 
@@ -10032,6 +10874,7 @@ async function loadModelAsset(
  * Manages WASM SIMD, multi-threading negotiation, WebGPU probing,
  * RAII tensor disposal, and model session lifecycles.
  */
+
 
 
 
@@ -10968,9 +11811,93 @@ class AcousticEngine {
       throw new Error('Acoustic model session is not initialized. Ensure models are available at modelPath.');
     }
 
+    let snrDb                     = undefined;
+
+    // 0. Multi-language mid-speech switching (`language === 'auto'` on full utterances >= 3.1 s)
+    if (
+      targetLang === 'auto' &&
+      !options?.isPartial &&
+      this.hasHiddenOutput &&
+      pcm.length >= 49600
+    ) {
+      const headsFolder = this.modelTier === 'mobile' ? 'heads_mobile' : 'heads';
+      if (Object.keys(this.multiHeads).length < LID_LANGUAGES.length) {
+        await this.loadMultiHeadsAndVocabs(
+          LID_LANGUAGES,
+          this.config.modelPath || this.config.modelDir,
+          headsFolder
+        );
+      }
+      if (Object.keys(this.multiHeads).length > 0) {
+        const multiRes = await transcribeMultilangSegments(
+          pcm,
+          async (segPcm              ) => {
+            let segClean = segPcm;
+            if (this.config.denoise !== false) {
+              const segEnh = enhanceSpeechWithTelemetry(segPcm);
+              if (snrDb === undefined) snrDb = segEnh.estimatedSnrDb;
+              if (!segEnh.isSpeechLikely) {
+                return { hidden: new Float32Array(0), timeSteps: 0 };
+              }
+              segClean = segEnh.pcm;
+            }
+            let segFeats              ;
+            let segFrames        ;
+            if (this.config.preprocessorMode === 'onnx' && this.preprocessorSession) {
+              let aT      = null;
+              let lT      = null;
+              let outT      = null;
+              try {
+                aT = new this.ort.Tensor('float32', segClean, [1, segClean.length]);
+                lT = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(segClean.length)]), [1]);
+                outT = await this.preprocessorSession.run({ audio_signal: aT, length: lT });
+                const fT = outT.features || Object.values(outT)[0];
+                segFrames = fT.dims[2];
+                segFeats = new Float32Array(fT.data);
+              } finally {
+                aT?.dispose?.();
+                lT?.dispose?.();
+                if (outT) {
+                  for (const t of Object.values(outT)) (t       )?.dispose?.();
+                }
+              }
+            } else {
+              const segMel = extractLogMelFeatures(segClean);
+              segFeats = segMel.features;
+              segFrames = segMel.numFrames;
+            }
+            const segEnc = await this.runEncoderHidden(segFeats, segFrames);
+            return { hidden: segEnc.hidden, timeSteps: segEnc.timeSteps };
+          },
+          projectLinearHead,
+          this.multiHeads,
+          this.multiVocabs,
+          this.lidWeights,
+          this.vocab,
+          useCodeSwitch,
+          16000
+        );
+        if (multiRes) {
+          const totalInferenceMs = performance.now() - startTotal;
+          return {
+            text: multiRes.text,
+            language: multiRes.language,
+            durationMs,
+            inferenceMs: totalInferenceMs,
+            rtf: durationMs > 0 ? totalInferenceMs / durationMs : 0,
+            tokens: multiRes.tokens,
+            ...(multiRes.language === 'sa' && multiRes.text ? { iast: devanagariToIast(multiRes.text) } : {}),
+            snrDb,
+            languageConfidence: multiRes.languageConfidence,
+            languageProbabilities: multiRes.languageProbabilities,
+            ...(multiRes.englishSpans !== undefined ? { englishSpans: multiRes.englishSpans } : {}),
+          };
+        }
+      }
+    }
+
     // Multi-stage background noise cancellation & speech enhancement layer (default: enabled)
     let cleanPcm = pcm;
-    let snrDb                     = undefined;
     if (this.config.denoise !== false) {
       const enhanced = enhanceSpeechWithTelemetry(pcm);
       snrDb = enhanced.estimatedSnrDb;
@@ -11261,6 +12188,8 @@ class StreamingAcousticEngine {
           detectedLanguage                     = undefined;
           languageConfidence                     = undefined;
           languageLocked          = false;
+          priorTurnsText         = '';
+          priorTurnsTokens           = [];
           fullRecordingPcm               = new Float32Array(0);
 
   get audioBuffer()               {
@@ -11375,6 +12304,18 @@ class StreamingAcousticEngine {
     this.pendingTurnFlush = false;
   }
 
+          withPriorTurns(st                     )                      {
+    if (!this.priorTurnsText) return st;
+    const comm = st.committed ? `${this.priorTurnsText} ${st.committed}`.trim() : this.priorTurnsText;
+    const fullTxt = st.text ? `${this.priorTurnsText} ${st.text}`.trim() : this.priorTurnsText;
+    return {
+      ...st,
+      text: fullTxt,
+      committed: comm,
+      tokens: [...this.priorTurnsTokens, ...st.tokens],
+    };
+  }
+
           async segmentTurnOnPause(durationMs        )                {
     if (this.audioBuffer.length >= 4800) {
       if (this.hasUntranscribedTail || !(this.decoder       ).lastHypTokens?.length) {
@@ -11382,7 +12323,7 @@ class StreamingAcousticEngine {
           const evalBuf = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
             ? this.audioBuffer.slice(-this.maxBufferSamples)
             : this.audioBuffer;
-          const tailRes = await this.transcribeStreamWindow(evalBuf, false);
+          const tailRes = await this.transcribeStreamWindow(evalBuf, true);
           if (tailRes?.tokens?.length > 0) {
             if (this.pendingTurnFlush) {
               this.promotePendingTurn();
@@ -11398,14 +12339,47 @@ class StreamingAcousticEngine {
                   const [bo, br] = this.findWindowAlignment(committed, tailRes.tokens);
                   return [...committed.slice(0, bo), ...tailRes.tokens.slice(br)];
                 })();
-            this.lastPartialTranscript = this.decoder.update(globalTokens, false, durationMs, 0, false);
+            const stTail = this.decoder.update(globalTokens, false, durationMs, 0, false);
+            if (this.isAutoLanguage) {
+              stTail.detectedLanguage = this.detectedLanguage;
+              stTail.languageConfidence = this.languageConfidence;
+            }
+            this.lastPartialTranscript = this.isAutoLanguage ? this.withPriorTurns(stTail) : stTail;
           }
         } catch (err     ) {
           this.emitError(err);
         }
       }
-      this.pendingTurnFlush = true;
+      if (this.isAutoLanguage) {
+        this.promotePendingTurn();
+        const turnTxt = this.decoder.getCommittedText().trim();
+        if (turnTxt) {
+          this.priorTurnsText = this.priorTurnsText ? `${this.priorTurnsText} ${turnTxt}`.trim() : turnTxt;
+          this.priorTurnsTokens.push(...this.decoder.getCommittedTokens());
+        }
+        this.decoder.reset();
+        this.baseCommittedTokens = [];
+        this.pendingTurnFlush = false;
+        this.languageLocked = false;
+        if (this.priorTurnsText) {
+          this.lastPartialTranscript = {
+            text: this.priorTurnsText,
+            committed: this.priorTurnsText,
+            volatile: '',
+            isFinal: false,
+            tokens: [...this.priorTurnsTokens],
+            durationMs,
+            inferenceMs: 0,
+            rtf: 0,
+            detectedLanguage: this.detectedLanguage,
+            languageConfidence: this.languageConfidence,
+          };
+        }
+      } else {
+        this.pendingTurnFlush = true;
+      }
       this.audioBuffer = new Float32Array(0);
+      this.pendingChunk = new Float32Array(0);
       this.isWindowSliding = false;
       this.samplesSinceLastInference = 0;
       this.hasUntranscribedTail = false;
@@ -11611,14 +12585,15 @@ class StreamingAcousticEngine {
         globalTokens = [...committed, ...prevHyp.slice(committed.length)];
       }
 
-      const commitMinSamples = Math.max(32000, this.maxBufferSamples - 8000);
+      const commitMinSamples = Math.max(32000, this.maxBufferSamples - 16384);
       const allowCommit =
         !this.pendingTurnFlush && (this.isWindowSliding || this.audioBuffer.length >= commitMinSamples);
 
-      const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);
+      let st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);
       if (this.isAutoLanguage) {
         st.detectedLanguage = this.detectedLanguage;
         st.languageConfidence = this.languageConfidence;
+        st = this.withPriorTurns(st);
       }
       this.lastPartialTranscript = st;
 
@@ -11637,8 +12612,12 @@ class StreamingAcousticEngine {
         }
       }
 
-      // Bound buffer to maxBufferSamples with leftContext
-      if (this.audioBuffer.length > this.maxBufferSamples) {
+      // Bound buffer to maxBufferSamples with leftContext (deferring initial slide briefly if 0 tokens committed yet)
+      const slideCap =
+        !this.isWindowSliding && this.decoder.getCommittedTokens().length <= this.baseCommittedTokens.length
+          ? this.maxBufferSamples + 15360
+          : this.maxBufferSamples;
+      if (this.audioBuffer.length > slideCap) {
         this.audioBuffer = this.audioBuffer.slice(-this.leftContextSamples);
         this.isWindowSliding = true;
       }
@@ -11676,6 +12655,8 @@ class StreamingAcousticEngine {
       this.detectedLanguage = undefined;
       this.languageConfidence = undefined;
       this.languageLocked = false;
+      this.priorTurnsText = '';
+      this.priorTurnsTokens = [];
       this.totalAudioSamples = 0;
       this.consecutiveSilentSamples = 0;
       this.baseCommittedTokens = [];
@@ -11728,6 +12709,12 @@ class StreamingAcousticEngine {
 
     this.audioBuffer = new Float32Array(0);
     this.pendingChunk = new Float32Array(0);
+    this.fullRecordingPcm = new Float32Array(0);
+    this.detectedLanguage = undefined;
+    this.languageConfidence = undefined;
+    this.languageLocked = false;
+    this.priorTurnsText = '';
+    this.priorTurnsTokens = [];
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];
@@ -11921,6 +12908,8 @@ class StreamingAcousticEngine {
     this.detectedLanguage = undefined;
     this.languageConfidence = undefined;
     this.languageLocked = false;
+    this.priorTurnsText = '';
+    this.priorTurnsTokens = [];
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];
@@ -13664,6 +14653,8 @@ export {
   scoreCtcHeadEvidence,
   detectLanguageFromHidden,
   decodeBilingualCodeswitch,
+  splitPcmAtPauses,
+  transcribeMultilangSegments,
   StreamingCTCDecoder,
   StreamingAcousticEngine,
   SwanadaStreamSession,

@@ -86,6 +86,7 @@ const engineSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'engine
   .replace(/import .*? from '\.\.\/audio\/frontend\.ts';/gs, '')
   .replace(/import .*? from '\.\.\/audio\/denoise\.ts';/gs, '')
   .replace(/import .*? from '\.\.\/decoder\/ctc\.ts';/gs, '')
+  .replace(/import .*? from '\.\.\/tokenizers\/iast\.ts';/gs, '')
   .replace(/import .*? from '\.\.\/decoder\/lid\.ts';/gs, '')
   .replace(/import .*? from '\.\/cache\.ts';/gs, '')
   .replace(/import type .*?;/gs, '')
@@ -180,6 +181,8 @@ export {
   scoreCtcHeadEvidence,
   detectLanguageFromHidden,
   decodeBilingualCodeswitch,
+  splitPcmAtPauses,
+  transcribeMultilangSegments,
   StreamingCTCDecoder,
   StreamingAcousticEngine,
   SwanadaStreamSession,
@@ -320,6 +323,8 @@ module.exports = {
   scoreCtcHeadEvidence,
   detectLanguageFromHidden,
   decodeBilingualCodeswitch,
+  splitPcmAtPauses,
+  transcribeMultilangSegments,
   StreamingCTCDecoder,
   StreamingAcousticEngine,
   SwanadaStreamSession,

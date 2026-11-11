@@ -161,6 +161,83 @@ def test_bilingual_codeswitch_decoder_splices_english_and_protects_indic() -> No
     sp = res.english_spans[0]
     assert sp.word == "account"
     assert res.text[sp.start_char : sp.end_char] == "account"
+    assert res.tokens == ["▁मेरा", "▁account", "▁करो"]
+
+
+def test_kanglish_fused_suffix_preserved_and_multilang_and_multiturn_streaming() -> None:
+    import re
+    import soundfile as sf
+
+    # 1. Fused Kannada suffix ("ಮೊಬೈಲ್ನಲ್ಲಿ" = 5 syllables vs "mobile" = 2 syllables) must stay Kannada,
+    #    while phonetic borrowing ("ವೀಡಿಯೊ" = "video") splices cleanly into Latin.
+    kn_vocab = [""] * 257
+    en_vocab = [""] * 257
+    kn_vocab[10] = "▁ಮೊಬೈಲ್ನಲ್ಲಿ"
+    kn_vocab[11] = "▁ವೀಡಿಯೊ"
+    kn_vocab[12] = "▁ಮಾಡ್ತೀನಿ"
+    for idx, ch in enumerate(["▁", "m", "o", "b", "i", "l", "e", "v", "d"], start=20):
+        en_vocab[idx] = ch
+
+    t_steps = 34
+    kn_logits = np.full((t_steps, 257), -12.0, dtype=np.float32)
+    en_logits = np.full((t_steps, 257), -12.0, dtype=np.float32)
+    kn_logits[:, 0] = 6.0
+    en_logits[:, 0] = 6.0
+
+    # Word 1 (frames 2..9): Kannada "ಮೊಬೈಲ್ನಲ್ಲಿ" vs English "mobile" -> syllable mismatch (5 vs 2) preserves Kannada!
+    kn_logits[3, 0] = -4.0
+    kn_logits[3, 10] = 6.5
+    for off, tid in enumerate([20, 21, 22, 23, 24, 25, 26]):  # ▁mobile
+        en_logits[2 + off, :] = -12.0
+        en_logits[2 + off, tid] = 8.0
+
+    # Word 2 (frames 14..19): Kannada "ವೀಡಿಯೊ" vs English "video" -> phonetic match (v-d == v-d) swaps to "video"!
+    kn_logits[15, 0] = -3.0
+    kn_logits[15, 11] = 4.5
+    for off, tid in enumerate([20, 27, 24, 28, 26, 22]):  # ▁video
+        en_logits[14 + off, :] = -12.0
+        en_logits[14 + off, tid] = 8.5
+
+    # Word 3 (frames 25..28): Kannada "ಮಾಡ್ತೀನಿ"
+    kn_logits[26, 0] = -5.0
+    kn_logits[26, 12] = 8.5
+
+    cs_res = decode_bilingual_codeswitch(kn_logits, kn_vocab, "kn", en_logits, en_vocab)
+    assert cs_res.text == "ಮೊಬೈಲ್ನಲ್ಲಿ video ಮಾಡ್ತೀನಿ"
+    assert [sp.word for sp in cs_res.english_spans] == ["video"]
+    assert cs_res.tokens == ["▁ಮೊಬೈಲ್ನಲ್ಲಿ", "▁video", "▁ಮಾಡ್ತೀನಿ"]
+
+    # 2. Multi-language single-buffer (`kanglish.wav` = kn + en, and `sa + kn + en`) across Studio AND Mobile
+    pcm_sa, _ = sf.read(SAMPLES_DIR / "sa.wav", dtype="float32")
+    pcm_kn, _ = sf.read(SAMPLES_DIR / "kn.wav", dtype="float32")
+    pcm_en, _ = sf.read(SAMPLES_DIR / "en.wav", dtype="float32")
+    pause_250ms = np.zeros(int(0.25 * 16000), dtype=np.float32)
+    tri_pcm = np.concatenate([pcm_sa, pause_250ms, pcm_kn, pause_250ms, pcm_en])
+
+    for tier in ("studio", "mobile"):
+        stt_t = Swanada.create(tier=tier, language="auto", code_switch_en=True, num_threads=2)
+        kg = stt_t.transcribe(SAMPLES_DIR / "kanglish.wav")
+        assert re.search(r"[\u0C80-\u0CFF]", kg.text), f"[{tier}] Missing Kannada script in: {kg.text}"
+        assert re.search(r"[A-Za-z]{3,}", kg.text), f"[{tier}] Missing English clause in: {kg.text}"
+        assert len(kg.english_spans) >= 1
+        for sp in kg.english_spans:
+            assert kg.text[sp.start_char : sp.end_char] == sp.word
+
+        tri = stt_t.transcribe(tri_pcm, sample_rate=16000)
+        assert re.search(r"[\u0900-\u097F]", tri.text), f"[{tier}] Missing Devanagari in: {tri.text}"
+        assert re.search(r"[\u0C80-\u0CFF]", tri.text), f"[{tier}] Missing Kannada in: {tri.text}"
+        assert re.search(r"[A-Za-z]{3,}", tri.text), f"[{tier}] Missing English in: {tri.text}"
+
+    # 3. Live multi-turn streaming (`kn.wav` -> 650ms silence -> `en.wav`) unlocks LID across turns
+    stt_auto = Swanada.create(language="auto", code_switch_en=True, num_threads=2)
+    stream = stt_auto.create_stream()
+    turn_mix = np.concatenate([pcm_kn, np.zeros(int(0.65 * 16000), dtype=np.float32), pcm_en])
+    step = 4800
+    for idx in range(0, len(turn_mix), step):
+        stream.push(turn_mix[idx : idx + step])
+    fin = stream.finish()
+    assert re.search(r"[\u0C80-\u0CFF]", fin.text), f"Turn 1 Kannada lost in multi-turn stream: {fin.text}"
+    assert re.search(r"[A-Za-z]{3,}", fin.text), f"Turn 2 English lost in multi-turn stream: {fin.text}"
 
 
 def test_auto_lid_end_to_end_silence_and_streaming() -> None:

@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.7.0' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.8.0' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -42,6 +42,7 @@ const LID_LANGUAGES = swanadaMod.LID_LANGUAGES || ['sa', 'en', 'hi', 'kn', 'mr',
 const parseLidHeadBytes = swanadaMod.parseLidHeadBytes;
 const detectLanguageFromHidden = swanadaMod.detectLanguageFromHidden;
 const decodeBilingualCodeswitch = swanadaMod.decodeBilingualCodeswitch;
+const transcribeMultilangSegments = swanadaMod.transcribeMultilangSegments;
 
 let workerState = 'UNINITIALIZED';
 let denoiseEnabled = true;
@@ -932,6 +933,79 @@ async function runAcousticInference(pcm, decodeOpts) {
       rtf,
       tokens: [],
     };
+  }
+
+  // 0a. Multi-language mid-speech switching (`auto` mode on full utterances >= 3.1 s)
+  const reqLang = decodeOpts?.forcedLanguage || currentLanguage;
+  if (
+    reqLang === 'auto' &&
+    !decodeOpts?.isPartial &&
+    activeSession &&
+    Object.keys(multiHeads).length > 0 &&
+    pcm.length >= 49600 &&
+    typeof transcribeMultilangSegments === 'function'
+  ) {
+    const multiRes = await transcribeMultilangSegments(
+      pcm,
+      async (segPcm) => {
+        let segClean = segPcm;
+        if (denoiseEnabled && typeof enhanceSpeechWithTelemetry === 'function') {
+          const segEnh = enhanceSpeechWithTelemetry(segPcm);
+          lastEstimatedSnrDb = segEnh.estimatedSnrDb;
+          if (!segEnh.isSpeechLikely) {
+            return { hidden: new Float32Array(0), timeSteps: 0 };
+          }
+          segClean = segEnh.pcm;
+        }
+        const segMel = extractLogMelFeatures(segClean);
+        let sFeats = null;
+        let sLen = null;
+        let sOut = null;
+        try {
+          sFeats = new ort.Tensor('float32', segMel.features, [1, 80, segMel.numFrames]);
+          sLen = new ort.Tensor('int64', BigInt64Array.from([BigInt(segMel.numFrames)]), [1]);
+          sOut = await activeSession.run({ audio_signal: sFeats, length: sLen });
+          if (sOut.layer_norm_84) {
+            const hTensor = sOut.layer_norm_84;
+            const hDims = hTensor.dims;
+            const tSteps = hDims.length === 3 ? hDims[1] : hDims[0];
+            return { hidden: new Float32Array(hTensor.data), timeSteps: tSteps };
+          }
+          return { hidden: new Float32Array(0), timeSteps: 0 };
+        } finally {
+          sFeats?.dispose?.();
+          sLen?.dispose?.();
+          if (sOut) {
+            for (const t of Object.values(sOut)) t?.dispose?.();
+          }
+        }
+      },
+      projectLinearHead,
+      multiHeads,
+      multiVocabs,
+      lidWeights,
+      activeVocab,
+      Boolean(codeSwitchEn),
+      16000
+    );
+    if (multiRes) {
+      const elapsedMs = performance.now() - startMs;
+      const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
+      const iastText = multiRes.language === 'sa' ? devanagariToIast(multiRes.text) : undefined;
+      return {
+        text: multiRes.text,
+        iast: iastText,
+        language: multiRes.language,
+        languageConfidence: multiRes.languageConfidence,
+        languageProbabilities: multiRes.languageProbabilities,
+        ...(multiRes.englishSpans !== undefined ? { englishSpans: multiRes.englishSpans } : {}),
+        durationMs,
+        inferenceMs: elapsedMs,
+        rtf,
+        tokens: multiRes.tokens,
+        ...(denoiseEnabled ? { snrDb: lastEstimatedSnrDb } : {}),
+      };
+    }
   }
 
   // 0. Multi-Stage Background Noise Cancellation & Speech Enhancement Layer

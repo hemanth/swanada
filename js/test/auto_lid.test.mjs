@@ -118,6 +118,82 @@ test('Bilingual Indic+English code-switching splices confident English words', (
     res.text.slice(res.englishSpans[0].startChar, res.englishSpans[0].endChar),
     'account'
   );
+  assert.deepEqual(res.tokens, ['▁मेरा', '▁account', '▁करो']);
+});
+
+test('Kanglish fused suffix protection, multi-lang kanglish.wav (Studio+Mobile) & multi-turn streaming', async () => {
+  // 1. Fused Kannada suffix ("ಮೊಬೈಲ್ನಲ್ಲಿ") preserved while phonetic loanword ("ವೀಡಿಯೊ" -> "video") swaps
+  const knVocab = new Array(257).fill('');
+  const enVocab = new Array(257).fill('');
+  knVocab[10] = '▁ಮೊಬೈಲ್ನಲ್ಲಿ';
+  knVocab[11] = '▁ವೀಡಿಯೊ';
+  knVocab[12] = '▁ಮಾಡ್ತೀನಿ';
+  const enChars = ['▁', 'm', 'o', 'b', 'i', 'l', 'e', 'v', 'd'];
+  enChars.forEach((ch, idx) => {
+    enVocab[20 + idx] = ch;
+  });
+
+  const T = 34;
+  const knLogits = new Float32Array(T * 257).fill(-12);
+  const enLogits = new Float32Array(T * 257).fill(-12);
+  for (let t = 0; t < T; t++) {
+    knLogits[t * 257] = 6;
+    enLogits[t * 257] = 6;
+  }
+
+  knLogits[3 * 257] = -4;
+  knLogits[3 * 257 + 10] = 6.5;
+  [20, 21, 22, 23, 24, 25, 26].forEach((tid, off) => {
+    enLogits.fill(-12, (2 + off) * 257, (3 + off) * 257);
+    enLogits[(2 + off) * 257 + tid] = 8.0;
+  });
+
+  knLogits[15 * 257] = -3;
+  knLogits[15 * 257 + 11] = 4.5;
+  [20, 27, 24, 28, 26, 22].forEach((tid, off) => {
+    enLogits.fill(-12, (14 + off) * 257, (15 + off) * 257);
+    enLogits[(14 + off) * 257 + tid] = 8.5;
+  });
+
+  knLogits[26 * 257] = -5;
+  knLogits[26 * 257 + 12] = 8.5;
+
+  const cs = decodeBilingualCodeswitch(knLogits, T, knVocab, 'kn', enLogits, enVocab, false);
+  assert.equal(cs.text, 'ಮೊಬೈಲ್ನಲ್ಲಿ video ಮಾಡ್ತೀನಿ');
+  assert.deepEqual(cs.englishSpans.map((s) => s.word), ['video']);
+  assert.deepEqual(cs.tokens, ['▁ಮೊಬೈಲ್ನಲ್ಲಿ', '▁video', '▁ಮಾಡ್ತೀನಿ']);
+
+  // 2. Multi-language single-buffer kanglish.wav across both Studio and Mobile tiers
+  const kanglishPath = path.join(SAMPLES_DIR, 'kanglish.wav');
+  for (const modelTier of ['studio', 'mobile']) {
+    const sttTier = await Swanada.create({ modelTier, language: 'auto', codeSwitchEn: true, numThreads: 2 });
+    const kg = await sttTier.transcribe(kanglishPath);
+    assert.match(kg.text, /[\u0C80-\u0CFF]/, `[${modelTier}] Expected Kannada script in ${kg.text}`);
+    assert.match(kg.text, /[A-Za-z]{3,}/, `[${modelTier}] Expected English clause in ${kg.text}`);
+    assert.ok(Array.isArray(kg.englishSpans) && kg.englishSpans.length >= 1);
+    for (const sp of kg.englishSpans) {
+      assert.equal(kg.text.slice(sp.startChar, sp.endChar), sp.word);
+    }
+    await sttTier.dispose();
+  }
+
+  // 3. Multi-turn streaming: kn.wav -> 650ms pause -> en.wav unlocks auto-LID across turns
+  const knPcm = parseWav(fs.readFileSync(path.join(SAMPLES_DIR, 'kn.wav'))).pcm;
+  const enPcm = parseWav(fs.readFileSync(path.join(SAMPLES_DIR, 'en.wav'))).pcm;
+  const pause = new Float32Array(Math.floor(0.65 * 16000));
+  const mixed = new Float32Array(knPcm.length + pause.length + enPcm.length);
+  mixed.set(knPcm, 0);
+  mixed.set(enPcm, knPcm.length + pause.length);
+
+  const sttStream = await Swanada.create({ language: 'auto', codeSwitchEn: true, numThreads: 2 });
+  const stream = sttStream.createStream();
+  for (let i = 0; i < mixed.length; i += 4800) {
+    await stream.push(mixed.subarray(i, i + 4800));
+  }
+  const fin = await stream.finish();
+  assert.match(fin.text, /[\u0C80-\u0CFF]/, `Expected Turn 1 Kannada in ${fin.text}`);
+  assert.match(fin.text, /[A-Za-z]{3,}/, `Expected Turn 2 English in ${fin.text}`);
+  await sttStream.dispose();
 });
 
 test('Node SDK Auto-LID end-to-end, silence zero-hallucination, streaming & CLI', async () => {

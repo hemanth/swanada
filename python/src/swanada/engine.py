@@ -20,6 +20,7 @@ from .lid import (
     decode_bilingual_codeswitch,
     detect_language_from_hidden,
     load_lid_head,
+    split_pcm_at_pauses,
 )
 
 _LAYER_NORM_84_VALUE_INFO = bytes(
@@ -441,6 +442,27 @@ class AcousticEngine:
                 )
             clean_pcm = enhanced.pcm
 
+        # 0b. Pause-aware multi-language segment Auto-LID & native-script decoding
+        active_lang = forced_language or self.language
+        if (
+            active_lang == "auto"
+            and not is_partial
+            and self.acoustic_session is not None
+            and self._has_hidden_output
+            and self._multi_heads
+            and len(pcm) >= int(3.1 * sample_rate)
+        ):
+            multi_res = self._try_transcribe_multilang_segments(
+                pcm=pcm,
+                sample_rate=sample_rate,
+                use_cs=use_cs,
+                snr_db=snr_db,
+                start_time=start_time,
+                duration_ms=duration_ms,
+            )
+            if multi_res is not None:
+                return multi_res
+
         # 1. Feature extraction
         if self.preprocessor_mode == "onnx" and self.preprocessor_session is not None:
             audio_sig = np.ascontiguousarray(clean_pcm.reshape(1, -1), dtype=np.float32)
@@ -569,4 +591,182 @@ class AcousticEngine:
             language_confidence=lang_conf,
             language_probabilities=lang_probs,
             english_spans=en_spans,
+        )
+
+    def _encode_hidden_segment(self, seg_pcm: np.ndarray, sample_rate: int) -> np.ndarray:
+        if self.denoise:
+            enh = enhance_speech_with_telemetry(seg_pcm, sr=sample_rate)
+            proc_pcm = enh.pcm if enh.is_speech_likely else seg_pcm
+        else:
+            proc_pcm = seg_pcm
+        if self.preprocessor_mode == "onnx" and self.preprocessor_session is not None:
+            audio_sig = np.ascontiguousarray(proc_pcm.reshape(1, -1), dtype=np.float32)
+            length = np.array([len(proc_pcm)], dtype=np.int64)
+            outputs = self.preprocessor_session.run(None, {"audio_signal": audio_sig, "length": length})
+            feats = outputs[0]
+        else:
+            feats, _ = extract_log_mel_features(proc_pcm, sr=sample_rate)
+        feats_in = np.ascontiguousarray(feats, dtype=np.float32)
+        lens_in = np.array([feats.shape[2]], dtype=np.int64)
+        return self.acoustic_session.run(  # type: ignore[union-attr]
+            ["layer_norm_84"],
+            {"audio_signal": feats_in, "length": lens_in},
+        )[0]
+
+    def _try_transcribe_multilang_segments(
+        self,
+        pcm: np.ndarray,
+        sample_rate: int,
+        use_cs: bool,
+        snr_db: Optional[float],
+        start_time: float,
+        duration_ms: float,
+    ) -> Optional[TranscriptionResult]:
+        segs = split_pcm_at_pauses(pcm, sr=sample_rate)
+        if len(segs) < 2:
+            return None
+
+        seg_infos: List[List[object]] = []
+        for s0, s1 in segs:
+            h = self._encode_hidden_segment(pcm[s0:s1], sample_rate)
+            lr, cl = detect_language_from_hidden(
+                h, self._multi_heads, self._multi_vocabs, self._lid_weights
+            )
+            seg_infos.append([s0, s1, h, lr, cl, lr.language])
+
+        for k in range(len(seg_infos)):
+            lr_k: LanguageDetectionResult = seg_infos[k][3]  # type: ignore[assignment]
+            if lr_k.confidence < 0.65:
+                nbr_lg: Optional[str] = (
+                    str(seg_infos[k - 1][5])
+                    if k > 0
+                    else (str(seg_infos[k + 1][5]) if (k + 1) < len(seg_infos) else None)
+                )
+                if (
+                    nbr_lg
+                    and lr_k.probabilities.get(nbr_lg, 0.0) >= 0.18
+                    and lr_k.confidence < 2.2 * lr_k.probabilities.get(nbr_lg, 0.0)
+                ):
+                    seg_infos[k][5] = nbr_lg
+
+        agg: Dict[str, float] = {lg: 0.0 for lg in LID_LANGUAGES}
+        total_dur = 0.0
+        for item in seg_infos:
+            s0_i, s1_i, _, lr_i, _, _ = item  # type: ignore[misc]
+            dur = float(int(s1_i) - int(s0_i))
+            total_dur += dur
+            for lg, p in lr_i.probabilities.items():  # type: ignore[attr-defined]
+                agg[lg] = agg.get(lg, 0.0) + dur * p
+
+        dom_lg = max(agg.items(), key=lambda kv: kv[1])[0]
+        dom_max_conf = max(
+            (
+                float(item[3].confidence)  # type: ignore[attr-defined]
+                for item in seg_infos
+                if item[5] == dom_lg
+            ),
+            default=0.0,
+        )
+
+        distinct_langs: set[str] = set()
+        for item in seg_infos:
+            _, _, _, lr_i, _, eff_lg = item  # type: ignore[misc]
+            eff_str = str(eff_lg)
+            if eff_str == dom_lg:
+                distinct_langs.add(dom_lg)
+                continue
+            min_req = 0.72 if {eff_str, dom_lg} <= {"sa", "hi", "mr"} else 0.34
+            dom_p = float(lr_i.probabilities.get(dom_lg, 0.0))  # type: ignore[attr-defined]
+            if float(lr_i.confidence) >= min_req and dom_p < 0.28 and float(lr_i.confidence) >= 2.0 * dom_p:  # type: ignore[attr-defined]
+                distinct_langs.add(eff_str)
+
+        if dom_max_conf < 0.34 or len(distinct_langs) < 2:
+            return None
+
+        merged_runs: List[List[object]] = []
+        for item in seg_infos:
+            s0_i, s1_i, h_i, lr_i_m, cl_i, eff_lg = item  # type: ignore[misc]
+            if str(eff_lg) in distinct_langs:
+                resolved_lg = str(eff_lg)
+            else:
+                resolved_lg = max(
+                    distinct_langs,
+                    key=lambda lg: float(lr_i_m.probabilities.get(lg, 0.0)),  # type: ignore[attr-defined]
+                )
+            if merged_runs and merged_runs[-1][2] == resolved_lg:
+                merged_runs[-1][1] = s1_i
+                merged_runs[-1][3] = None
+            else:
+                merged_runs.append([s0_i, s1_i, resolved_lg, (h_i, cl_i)])
+
+        text_parts: List[str] = []
+        all_tokens: List[str] = []
+        all_en_spans: List[CodeSwitchSpan] = []
+        char_cursor = 0
+
+        for m_s0, m_s1, m_lg_obj, cached_pair in merged_runs:
+            m_lg = str(m_lg_obj)
+            if cached_pair is not None:
+                m_h, m_cl = cached_pair  # type: ignore[misc]
+            else:
+                m_h = self._encode_hidden_segment(pcm[int(m_s0) : int(m_s1)], sample_rate)
+                m_cl = {}
+            lg_2d = m_cl.get(m_lg)
+            if lg_2d is None:
+                w_h, b_h = self._multi_heads[m_lg]
+                lg_2d = m_h[0] @ w_h.T + b_h
+            seg_vocab = self._multi_vocabs.get(m_lg, self.vocab)
+
+            seg_text = ""
+            seg_tokens: List[str] = []
+            seg_spans: List[CodeSwitchSpan] = []
+            if use_cs and m_lg != "en" and "en" in self._multi_heads and "en" in self._multi_vocabs:
+                lg_en = m_cl.get("en")
+                if lg_en is None:
+                    w_e, b_e = self._multi_heads["en"]
+                    lg_en = m_h[0] @ w_e.T + b_e
+                cs = decode_bilingual_codeswitch(
+                    lg_2d, seg_vocab, m_lg, lg_en, self._multi_vocabs["en"], is_partial=False
+                )
+                seg_text, seg_tokens, seg_spans = cs.text, cs.tokens, cs.english_spans
+            else:
+                dec = decode_ctc(lg_2d[None, :, :], vocab=seg_vocab, is_partial=False)
+                seg_text, seg_tokens = dec.text, dec.tokens
+                if m_lg == "en" and len(distinct_langs) >= 2 and seg_text:
+                    w_cur = 0
+                    for w_en in seg_text.split():
+                        if w_cur > 0:
+                            w_cur += 1
+                        seg_spans.append(CodeSwitchSpan(word=w_en, start_char=w_cur, end_char=w_cur + len(w_en)))
+                        w_cur += len(w_en)
+
+            if not seg_text:
+                continue
+            if text_parts:
+                char_cursor += 1  # space separator
+            for sp in seg_spans:
+                all_en_spans.append(
+                    CodeSwitchSpan(
+                        word=sp.word,
+                        start_char=char_cursor + sp.start_char,
+                        end_char=char_cursor + sp.end_char,
+                    )
+                )
+            text_parts.append(seg_text)
+            all_tokens.extend(seg_tokens)
+            char_cursor += len(seg_text)
+
+        norm_probs = {lg: (agg[lg] / total_dur if total_dur > 0 else 0.0) for lg in agg}
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        return TranscriptionResult(
+            text=" ".join(text_parts),
+            language=dom_lg,
+            duration_ms=duration_ms,
+            inference_ms=elapsed_ms,
+            rtf=elapsed_ms / duration_ms if duration_ms > 0 else 0.0,
+            tokens=all_tokens,
+            snr_db=snr_db,
+            language_confidence=float(norm_probs.get(dom_lg, dom_max_conf)),
+            language_probabilities=norm_probs,
+            english_spans=all_en_spans if (use_cs or all_en_spans) else None,
         )

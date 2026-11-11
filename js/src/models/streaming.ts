@@ -39,6 +39,8 @@ export class StreamingAcousticEngine {
   private detectedLanguage: string | undefined = undefined;
   private languageConfidence: number | undefined = undefined;
   private languageLocked: boolean = false;
+  private priorTurnsText: string = '';
+  private priorTurnsTokens: string[] = [];
   private fullRecordingPcm: Float32Array = new Float32Array(0);
 
   get audioBuffer(): Float32Array {
@@ -153,6 +155,18 @@ export class StreamingAcousticEngine {
     this.pendingTurnFlush = false;
   }
 
+  private withPriorTurns(st: StreamingTranscript): StreamingTranscript {
+    if (!this.priorTurnsText) return st;
+    const comm = st.committed ? `${this.priorTurnsText} ${st.committed}`.trim() : this.priorTurnsText;
+    const fullTxt = st.text ? `${this.priorTurnsText} ${st.text}`.trim() : this.priorTurnsText;
+    return {
+      ...st,
+      text: fullTxt,
+      committed: comm,
+      tokens: [...this.priorTurnsTokens, ...st.tokens],
+    };
+  }
+
   private async segmentTurnOnPause(durationMs: number): Promise<void> {
     if (this.audioBuffer.length >= 4800) {
       if (this.hasUntranscribedTail || !(this.decoder as any).lastHypTokens?.length) {
@@ -160,7 +174,7 @@ export class StreamingAcousticEngine {
           const evalBuf = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
             ? this.audioBuffer.slice(-this.maxBufferSamples)
             : this.audioBuffer;
-          const tailRes = await this.transcribeStreamWindow(evalBuf, false);
+          const tailRes = await this.transcribeStreamWindow(evalBuf, true);
           if (tailRes?.tokens?.length > 0) {
             if (this.pendingTurnFlush) {
               this.promotePendingTurn();
@@ -176,14 +190,47 @@ export class StreamingAcousticEngine {
                   const [bo, br] = this.findWindowAlignment(committed, tailRes.tokens);
                   return [...committed.slice(0, bo), ...tailRes.tokens.slice(br)];
                 })();
-            this.lastPartialTranscript = this.decoder.update(globalTokens, false, durationMs, 0, false);
+            const stTail = this.decoder.update(globalTokens, false, durationMs, 0, false);
+            if (this.isAutoLanguage) {
+              stTail.detectedLanguage = this.detectedLanguage;
+              stTail.languageConfidence = this.languageConfidence;
+            }
+            this.lastPartialTranscript = this.isAutoLanguage ? this.withPriorTurns(stTail) : stTail;
           }
         } catch (err: any) {
           this.emitError(err);
         }
       }
-      this.pendingTurnFlush = true;
+      if (this.isAutoLanguage) {
+        this.promotePendingTurn();
+        const turnTxt = this.decoder.getCommittedText().trim();
+        if (turnTxt) {
+          this.priorTurnsText = this.priorTurnsText ? `${this.priorTurnsText} ${turnTxt}`.trim() : turnTxt;
+          this.priorTurnsTokens.push(...this.decoder.getCommittedTokens());
+        }
+        this.decoder.reset();
+        this.baseCommittedTokens = [];
+        this.pendingTurnFlush = false;
+        this.languageLocked = false;
+        if (this.priorTurnsText) {
+          this.lastPartialTranscript = {
+            text: this.priorTurnsText,
+            committed: this.priorTurnsText,
+            volatile: '',
+            isFinal: false,
+            tokens: [...this.priorTurnsTokens],
+            durationMs,
+            inferenceMs: 0,
+            rtf: 0,
+            detectedLanguage: this.detectedLanguage,
+            languageConfidence: this.languageConfidence,
+          };
+        }
+      } else {
+        this.pendingTurnFlush = true;
+      }
       this.audioBuffer = new Float32Array(0);
+      this.pendingChunk = new Float32Array(0);
       this.isWindowSliding = false;
       this.samplesSinceLastInference = 0;
       this.hasUntranscribedTail = false;
@@ -389,14 +436,15 @@ export class StreamingAcousticEngine {
         globalTokens = [...committed, ...prevHyp.slice(committed.length)];
       }
 
-      const commitMinSamples = Math.max(32000, this.maxBufferSamples - 8000);
+      const commitMinSamples = Math.max(32000, this.maxBufferSamples - 16384);
       const allowCommit =
         !this.pendingTurnFlush && (this.isWindowSliding || this.audioBuffer.length >= commitMinSamples);
 
-      const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);
+      let st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);
       if (this.isAutoLanguage) {
         st.detectedLanguage = this.detectedLanguage;
         st.languageConfidence = this.languageConfidence;
+        st = this.withPriorTurns(st);
       }
       this.lastPartialTranscript = st;
 
@@ -415,8 +463,12 @@ export class StreamingAcousticEngine {
         }
       }
 
-      // Bound buffer to maxBufferSamples with leftContext
-      if (this.audioBuffer.length > this.maxBufferSamples) {
+      // Bound buffer to maxBufferSamples with leftContext (deferring initial slide briefly if 0 tokens committed yet)
+      const slideCap =
+        !this.isWindowSliding && this.decoder.getCommittedTokens().length <= this.baseCommittedTokens.length
+          ? this.maxBufferSamples + 15360
+          : this.maxBufferSamples;
+      if (this.audioBuffer.length > slideCap) {
         this.audioBuffer = this.audioBuffer.slice(-this.leftContextSamples);
         this.isWindowSliding = true;
       }
@@ -454,6 +506,8 @@ export class StreamingAcousticEngine {
       this.detectedLanguage = undefined;
       this.languageConfidence = undefined;
       this.languageLocked = false;
+      this.priorTurnsText = '';
+      this.priorTurnsTokens = [];
       this.totalAudioSamples = 0;
       this.consecutiveSilentSamples = 0;
       this.baseCommittedTokens = [];
@@ -506,6 +560,12 @@ export class StreamingAcousticEngine {
 
     this.audioBuffer = new Float32Array(0);
     this.pendingChunk = new Float32Array(0);
+    this.fullRecordingPcm = new Float32Array(0);
+    this.detectedLanguage = undefined;
+    this.languageConfidence = undefined;
+    this.languageLocked = false;
+    this.priorTurnsText = '';
+    this.priorTurnsTokens = [];
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];
@@ -699,6 +759,8 @@ export class StreamingAcousticEngine {
     this.detectedLanguage = undefined;
     this.languageConfidence = undefined;
     this.languageLocked = false;
+    this.priorTurnsText = '';
+    this.priorTurnsTokens = [];
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];
