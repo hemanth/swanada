@@ -56,67 +56,54 @@ Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is 
 - **GitHub Repository & Multi-Runtime SDKs**: [https://github.com/hemanth/swanada](https://github.com/hemanth/swanada)
 - **Hugging Face Model Repository**: [https://huggingface.co/gnumanth/swanada](https://huggingface.co/gnumanth/swanada)
 
-## Capability-Routed Dual-Tier Architecture (`v1.1.0`)
+## Capability-Routed Dual-Tier Architecture + `<1 ms` 12-Way Auto-LID (`v1.1.0`)
 
-| Model Tier | Shared INT8 Encoder | Per-Language Head | Active Footprint | Native 4T RTF | Target Runtime |
+| Model Tier | Shared INT8 Encoder | Per-Language Head + Auto-LID Head | 12-Lang Fleet | Native 4T RTF | Target Runtime |
 | :--- | :--- | :--- | :---: | :---: | :--- |
-| **Mobile (`< 30 MB`)** | `onnx_mobile/swanada_mobile_ctc_int8.onnx` (14L, `d=256`, `23.56M` params) | `heads_mobile/<lang>.bin` (`515 KB`) | **`25.35 MiB` + `515 KB`** | **`0.009x`** | iOS Safari, Android Chrome (`CacheStorage` offline), `--tier mobile` |
-| **Studio (Max Accuracy)** | `onnx/sushrota_sanskrit_ctc_int8.onnx` (17L, `d=512`, `115.2M` params) | `heads/<lang>.bin` (`515 KB`) | **`177.4 MiB` + `515 KB`** | **`0.025x`** | Desktop browsers, Node.js, Python (`--tier studio`, default) |
+| **Mobile (`< 30 MiB`)** | `onnx_mobile/swanada_mobile_ctc_int8.onnx` (14L, `d=256`, `23.56M` params) | `heads_mobile/<lang>.bin` (`515 KiB`) + `lid.bin` (`396 KiB`) | **`31.8 MiB` (`33.3 MB`)** | **`0.009x`** | iOS Safari, Android Chrome (`CacheStorage` offline), `--tier mobile` |
+| **Studio (Max Accuracy)** | `onnx/sushrota_sanskrit_ctc_int8.onnx` (17L, `d=512`, `115.2M` params) | `heads/<lang>.bin` (`515 KiB`) + `lid.bin` (`396 KiB`) | **`183.8 MiB` (`192.7 MB`)** | **`0.021x`** | Desktop browsers, Node.js, Python (`--tier studio`, default) |
 
-## Architecture & Offline Inference Pipeline
+- **12-Way `<1 ms` Automatic Language Identification (`language="auto"`)**: Attentive statistics pooling (`mean + std`) over shared Conformer hidden states (`layer_norm_84`) fused with CTC acoustic certainty routes speech across all 12 languages in a single encoder pass (`100.0%` Studio / `95.4%` Mobile accuracy on `n = 240` unseen clips).
+- **Bilingual Indic + English Code-Switching (`code_switch_en=True` / `codeSwitchEn: true`)**: Simultaneously projects shared Conformer states through the detected Indic head and the English head (`en.bin`), preserving genuine English technical/conversational words in Latin script while keeping Indic phrases in native Brahmic script.
+- **Zero Silence Hallucinations**: Multi-stage spectral/modulation/formant non-speech gate guarantees `0 / 100` invented words across silent, hum, rumble, and thermal-floor clips.
 
-```
-[ Audio Input (PCM 16 kHz Mono) ]
-               │
-               ▼
-   [ Audio Frontend: preprocessor.onnx ]
-   (80-channel Log-Mel Filterbank, 25ms window, 10ms hop)
-               │
-               ▼
-   [ Acoustic Encoder: Conformer Backbone ]
-   (17 layers, d_model=512, 8 heads, conv_kernel=31, 4x subsampling)
-               │
-               ▼
-   [ Multilingual Sliced CTC Acoustic Head ]
-   (257-token language-specific linear projection: 512 -> 257)
-               │
-               ▼
-   [ Linear-Time CTC Greedy Decoder ]
-   (Argmax -> Dedup consecutive tokens -> Drop blank 0 -> NFC normalization)
-               │
-               ▼
-   [ Transcription: Native Script / Classical Sanskrit IAST ]
-```
+## Public ASR Leaderboard (`N = 1,600` Unseen `test` Clips; `B = 1,000` Bootstrap 95% CIs)
 
-- **Deterministic Audio Frontend (`preprocessor.onnx`)**: Extracts 80-channel log-mel spectrogram features directly from 16 kHz Float32 PCM. Runtimes provide an analytical standard-library FFT fallback if WASM tensor operators are unavailable.
-- **Quantized INT8 Conformer-CTC**: 17 Conformer encoder layers dynamically quantized to `QUInt8` weights, reducing size from 481 MB to 178 MB with minimal precision degradation.
-- **Multi-Script Tokenizer Maps (`models/vocabularies/*.json`)**: Subword SentencePiece BPE vocabularies (256 units + blank at index 0) covering Sanskrit Devanagari, Indian English Latin, and 10 regional Indic scripts.
-- **Offline CacheStorage Contract**: Model weights are stored in browser `CacheStorage` (`swanada-onnx-v1.0.0`) on first use, guaranteeing **zero network requests** during subsequent sessions.
+| Benchmark / Metric | Swanada Studio (`177.4 MiB`) | Swanada Mobile (`25.35 MiB`) | Udgam Labs `Shruti` (`356.2 MB` for 12 langs) |
+| :--- | :---: | :---: | :---: |
+| **10-Indic `google/fleurs` (`test`) Mean WER** | **`24.18%` (`10 / 10` wins)** | `50.15%` | `32.20%` |
+| **12-Lang Open `FLEURS`+Wild CER (`n = 1,200`)** | **`8.25%` [7.41, 9.29]** | **`19.23%` [18.16, 20.41]** | N/A |
+| **All 16 Open Suites Overall CER (`n = 1,600`)** | **`10.44%` [9.62, 11.30]** | **`22.14%` [21.13, 23.11]** | N/A |
+| **`LibriSpeech test-clean` CER / WER** | **`5.90%` / `13.90%`** | `14.30%` / `33.75%` | — / `5.95%` |
+| **`GLOBE` Multi-Accent CER / WER** | **`9.89%` / `23.76%`** | `21.92%` / `47.81%` | — / `22.47%` (`25.75%` auto) |
+| **12-Way `language="auto"` Accuracy (`n = 240`)** | **`100.00%` (`8.45%` Auto CER)** | **`95.42%` (`21.24%` Auto CER)** | None (manual picker) |
+| **Words Invented on `100` Silent Clips** | **`0`** | **`0`** | `0` |
+| **ONNX / Browser / Mobile Parity** | **`12 / 12` passed** | **`12 / 12` passed** | `0 / 22` passed |
 
 ## Held-Out 16 kHz Benchmark Leaderboard (N = 480 Utterances; B = 1000 Bootstrap 95% CIs)
 
-| System Tier | Runtime / Provider | Active Footprint | Mean RTF (CPU) | Mean RTF (WASM) | TTFT p50 (ms) | CER (%) [95% CI] | WER (%) [95% CI] |
+| System Tier | Runtime / Provider | Active Footprint | Mean RTF (CPU) | TTFT p50 (ms) | Committed Churn | CER (%) [95% CI] | WER (%) [95% CI] |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| IndicConformer Full (FP32) | PyTorch (MPS/CUDA/CPU) | 481.4 MB × 12 | 0.082x | — | > 200 ms | `17.68%` | — |
-| **Swanada INT8 (Shared + 515 KB Head)** | **ONNX Runtime Web / CPU** | **178.4 MB + 515 KB** | **0.0436x** | **0.1937x** | **43.1 ms** | **`5.43% [4.85, 6.01]`** | **`25.88% [23.50, 28.27]`** |
-| Zero-Dep VAD Gate (Tier 2) | Audio Energy RMS < 1e-4 | 0.0 MB | < 0.001x | < 0.001x | < 1 ms | 0.00 (silence) | 0.00 (silence) |
+| **Swanada Studio INT8** | **ONNX Runtime Web / CPU** | **177.4 MiB + 515 KiB** | **0.0227x** | **28.6 ms** | **0.00% (0/72)** | **`5.35% [4.79, 5.95]`** | **`25.08% [22.68, 27.45]`** |
+| **Swanada Mobile INT8** | **ONNX Runtime Web / CPU** | **25.35 MiB + 515 KiB** | **0.0101x** | **28.6 ms** | **0.00% (0/72)** | **`18.58% [17.45, 19.72]`** | **`59.11% [56.45, 61.87]`** |
+| Non-Speech Gate | Spectral + Modulation VAD | 0.0 MB | < 0.001x | < 1 ms | 0.00% | 0.00 (0/100 silent) | 0.00 (0/100 silent) |
 
 ### Per-Language Held-Out Accuracy
 
 | Language | Script | Swanada INT8 CER (%) | Swanada INT8 WER (%) | Baseline FP32 CER (%) |
 | :--- | :--- | :---: | :---: | :---: |
-| Sanskrit (`sa`) | Devanagari | `4.27% [2.69, 6.10]` | `22.99% [15.41, 32.21]` | `8.20%` |
-| Indian English (`en`) | Latin | `5.45% [4.19, 6.80]` | `15.82% [12.99, 18.82]` | `15.80%` |
-| Hindi (`hi`) | Devanagari | `2.14% [1.41, 2.97]` | `8.04% [5.40, 10.88]` | `9.80%` |
-| Kannada (`kn`) | Kannada | `5.18% [3.86, 6.86]` | `31.39% [24.49, 39.27]` | `14.50%` |
-| Marathi (`mr`) | Devanagari | `5.72% [3.19, 8.34]` | `22.52% [13.86, 31.50]` | `24.10%` |
-| Bengali (`bn`) | Bengali | `5.92% [4.34, 7.54]` | `30.98% [24.62, 37.53]` | `24.50%` |
-| Tamil (`ta`) | Tamil | `7.50% [5.92, 9.09]` | `38.12% [31.30, 45.01]` | `20.20%` |
-| Telugu (`te`) | Telugu | `4.79% [3.48, 6.33]` | `28.51% [21.40, 36.34]` | `20.80%` |
-| Malayalam (`ml`) | Malayalam | `6.16% [4.10, 8.27]` | `34.03% [23.73, 44.19]` | `18.20%` |
-| Gujarati (`gu`) | Gujarati | `4.79% [2.97, 6.98]` | `19.28% [13.26, 25.98]` | `16.10%` |
-| Punjabi (`pa`) | Gurmukhi | `6.35% [3.52, 9.78]` | `23.38% [14.27, 33.11]` | `18.40%` |
-| Odia (`or`) | Odia | `6.93% [4.91, 9.41]` | `35.50% [24.81, 48.97]` | `21.50%` |
+| Sanskrit (`sa`) | Devanagari | `4.50% [2.86, 6.40]` | `24.95% [16.60, 34.25]` | `8.20%` |
+| Indian English (`en`) | Latin | `3.94% [2.76, 5.13]` | `9.42% [7.01, 11.88]` | `15.80%` |
+| Hindi (`hi`) | Devanagari | `2.55% [1.61, 3.61]` | `9.72% [6.62, 13.00]` | `9.80%` |
+| Kannada (`kn`) | Kannada | `6.09% [4.36, 8.18]` | `34.28% [27.12, 42.30]` | `14.50%` |
+| Marathi (`mr`) | Devanagari | `5.82% [3.56, 8.54]` | `24.63% [16.05, 33.54]` | `24.10%` |
+| Bengali (`bn`) | Bengali | `4.71% [3.45, 6.09]` | `23.14% [17.96, 28.76]` | `24.50%` |
+| Tamil (`ta`) | Tamil | `6.86% [5.19, 8.65]` | `36.30% [29.09, 44.62]` | `20.20%` |
+| Telugu (`te`) | Telugu | `4.05% [2.95, 5.17]` | `25.82% [17.87, 33.30]` | `20.80%` |
+| Malayalam (`ml`) | Malayalam | `5.92% [3.71, 8.37]` | `31.15% [20.77, 41.42]` | `18.20%` |
+| Gujarati (`gu`) | Gujarati | `5.20% [3.28, 7.79]` | `21.73% [15.20, 29.36]` | `16.10%` |
+| Punjabi (`pa`) | Gurmukhi | `7.46% [4.68, 11.38]` | `25.28% [16.71, 34.71]` | `18.40%` |
+| Odia (`or`) | Odia | `7.13% [5.06, 9.83]` | `34.51% [23.84, 47.89]` | `21.50%` |
 
 ## Quickstart: JavaScript & Python Usage
 
@@ -126,7 +113,8 @@ Swanada (*Svanada* — Sanskrit `स्वनद`, resonant acoustic stream) is 
 import { Swanada } from 'swanada';
 
 const transcriber = await Swanada.create({
-  language: 'sa', // Classical Sanskrit
+  language: 'auto', // 12-Way <1 ms Auto-LID across sa, en, hi, kn, mr, bn, ta, te, ml, gu, pa, or
+  codeSwitchEn: true, // Optional bilingual Indic + English Latin preservation
   executionProvider: 'wasm',
   numThreads: 4,
 });
@@ -141,9 +129,9 @@ console.log(`Inference: ${result.inferenceMs.toFixed(1)}ms | RTF: ${result.rtf.t
 ```python
 from swanada import Swanada
 
-stt = Swanada(language="kn")  # Kannada
+stt = Swanada(language="auto")  # 12-Way Auto-LID (or explicit 'sa', 'hi', 'kn', ...)
 result = stt.transcribe("speech_sample_16k.wav")
-print("Transcribed Text:", result.text)
+print(f"Detected: {result.language} ({result.language_confidence:.2%}) -> {result.text}")
 print(f"Duration: {result.duration_ms:.1f}ms | RTF: {result.rtf:.3f}x")
 ```
 

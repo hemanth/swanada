@@ -187,6 +187,19 @@ export function enhanceSpeechWithTelemetry(
   const nonSpeechGate = options.nonSpeechGate !== false;
   const adaptiveGain = options.adaptiveGain === true;
 
+  let cleanPcm = pcm;
+  for (let i = 0; i < N; i++) {
+    if (!Number.isFinite(pcm[i])) {
+      cleanPcm = new Float32Array(N);
+      for (let j = 0; j < N; j++) {
+        const x = pcm[j];
+        cleanPcm[j] = Number.isNaN(x) ? 0.0 : x > 0 ? 1.0 : x < 0 ? -1.0 : x;
+      }
+      break;
+    }
+  }
+  pcm = cleanPcm;
+
   let rawSumSq = 0.0;
   let dcSum = 0.0;
   for (let i = 0; i < N; i++) {
@@ -262,9 +275,9 @@ export function enhanceSpeechWithTelemetry(
     lfFrameRms[idx] = r;
     lfMeanSum += r;
   }
-  const lfP30 = percentileFloat(lfFrameRms, 0.3);
+  const lfP15 = percentileFloat(lfFrameRms, 0.15);
   const lfMean = lfMeanSum / interiorCount;
-  const hasHumOrRumble = hasDcOffset || (lfP30 > 0.0075 && lfMean / (acRms + 1e-9) > 0.16);
+  const hasHumOrRumble = hasDcOffset || (lfP15 > 0.0085 && lfMean / (acRms + 1e-9) > 0.16);
 
   let work: Float32Array;
   if (hasHumOrRumble) {
@@ -363,24 +376,39 @@ export function enhanceSpeechWithTelemetry(
   const modSnrDb = Math.max(0.0, Math.min(60.0, 10.0 * Math.log10((eSpeech90 + 1e-12) / eNoise15)));
 
   const hfP25 = percentileFloat(hfFrameRms, 0.25);
-  const sfmP30 = percentileFloat(frameSfm, 0.3);
-  const quietRmsP15 = percentileFloat(midHighRms, 0.15);
+  let quietSfmSum = 0.0;
+  let quietRmsSum = 0.0;
+  for (let qi = 0; qi < nQuiet; qi++) {
+    const ri = sortedIndices[qi] - interiorStart;
+    quietSfmSum += frameSfm[ri];
+    quietRmsSum += midHighRms[ri];
+  }
+  const quietSfm = quietSfmSum / nQuiet;
+  const quietRms = quietRmsSum / nQuiet;
 
   let totalSpeechRatio = 0.0;
+  let upperSfmSum = 0.0;
   const halfIdx = Math.floor(interiorCount * 0.5);
   for (let i = halfIdx; i < interiorCount; i++) {
     const ti = sortedIndices[i];
     totalSpeechRatio += speechBandEnergy[ti] / (totalBandEnergy[ti] + 1e-12);
+    upperSfmSum += frameSfm[ti - interiorStart];
   }
-  const avgFormantRatio = totalSpeechRatio / Math.max(1, interiorCount - halfIdx);
+  const upperCount = Math.max(1, interiorCount - halfIdx);
+  const avgFormantRatio = totalSpeechRatio / upperCount;
+  const upperSfm = upperSfmSum / upperCount;
+  const speechRms90 = Math.sqrt(eSpeech90 * normScale);
 
-  // Stationary Non-Speech Gate: pure unmodulated background hiss/buzz
+  // Stationary & Sub-Formant Non-Speech Gate: pure unmodulated background hiss, mains hum, HVAC rumble, or thermal floor
   if (
     nonSpeechGate &&
     numFrames >= 10 &&
-    modSnrDb < 2.2 &&
     acRms < 0.025 &&
-    avgFormantRatio < 0.52
+    (
+      (modSnrDb < 2.2 && avgFormantRatio < 0.52) ||
+      (speechRms90 < 0.0018 && (modSnrDb < 4.5 || upperSfm > 0.3)) ||
+      avgFormantRatio < 0.08
+    )
   ) {
     return {
       pcm: new Float32Array(N),
@@ -391,12 +419,13 @@ export function enhanceSpeechWithTelemetry(
     };
   }
 
-  // Genuine broadband/colored background noise check (requires >= 300ms = 4800 samples)
+  // Genuine broadband/colored background noise check in quietest 20% frames (requires >= 300ms = 4800 samples)
   const hasBroadbandNoise =
     N >= 4800 &&
     modSnrDb < cleanBypassSnrDb &&
-    ((hfP25 > 0.0024 && sfmP30 > 0.032) ||
-      (N >= 12000 && modSnrDb < 22.0 && quietRmsP15 > 0.0045 && sfmP30 > 0.022));
+    quietSfm > 0.24 &&
+    quietRms > 0.0065 &&
+    (hfP25 > 0.0024 || (N >= 12000 && modSnrDb < 22.0));
 
   if (!hasBroadbandNoise) {
     const effectiveSnr = !hasHumOrRumble ? Math.max(modSnrDb, 32.0) : Math.max(modSnrDb, 20.0);

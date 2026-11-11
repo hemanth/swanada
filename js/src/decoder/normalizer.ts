@@ -19,6 +19,8 @@ const BRAHMIC_PRIMARY_MATRA_CLASS =
 
 // Virama / Halant signs across all 9 Brahmic blocks
 const BRAHMIC_VIRAMA_CLASS = '\\u094D\\u09CD\\u0A4D\\u0ACD\\u0B4D\\u0BCD\\u0C4D\\u0CCD\\u0D4D';
+const BRAHMIC_ANUSVARA_CLASS =
+  '\\u0901\\u0902\\u0981\\u0982\\u0A01\\u0A02\\u0A70\\u0A81\\u0A82\\u0B01\\u0B02\\u0B82\\u0C01\\u0C02\\u0C81\\u0C82\\u0D01\\u0D02';
 
 // Independent vowels across all 9 Brahmic blocks
 const BRAHMIC_INDEP_VOWEL_CLASS =
@@ -36,6 +38,7 @@ const BRAHMIC_LATERAL_CONSONANTS = '\\u0CB3\\u0B33\\u0C33';
 
 const RE_COLLIDING_MATRAS = new RegExp(`([${BRAHMIC_PRIMARY_MATRA_CLASS}])[${BRAHMIC_PRIMARY_MATRA_CLASS}]+`, 'gu');
 const RE_MATRA_THEN_VIRAMA = new RegExp(`([${BRAHMIC_PRIMARY_MATRA_CLASS}])[${BRAHMIC_VIRAMA_CLASS}]+`, 'gu');
+const RE_ANUSVARA_THEN_VIRAMA = new RegExp(`([${BRAHMIC_ANUSVARA_CLASS}])[${BRAHMIC_VIRAMA_CLASS}]+`, 'gu');
 const RE_INDEP_VOWEL_ILLEGAL_MARK = new RegExp(
   `([${BRAHMIC_INDEP_VOWEL_CLASS}])([${BRAHMIC_PRIMARY_MATRA_CLASS}${BRAHMIC_VIRAMA_CLASS}]+)`,
   'gu'
@@ -130,6 +133,7 @@ export function repairBrahmicOrthography(nfcText: string, lang?: string): string
   let text = nfcText
     .replace(RE_COLLIDING_MATRAS, '$1')
     .replace(RE_MATRA_THEN_VIRAMA, '$1')
+    .replace(RE_ANUSVARA_THEN_VIRAMA, '$1')
     .replace(RE_INDEP_VOWEL_ILLEGAL_MARK, (match, v, m) => {
       // Preserve Bengali /æ/ diphthong (অ + virama + য)
       if (v === '\u0985' && m && m.startsWith('\u09CD')) {

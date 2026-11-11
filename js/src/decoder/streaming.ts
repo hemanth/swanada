@@ -16,6 +16,8 @@ export interface StreamingTranscript {
   durationMs: number;
   inferenceMs: number;
   rtf: number;
+  detectedLanguage?: string;
+  languageConfidence?: number;
 }
 
 export interface StreamingDecoderOptions extends NormalizeOptions {
@@ -40,9 +42,13 @@ function isEnVocab(vocab: string[] | Record<number, string>): boolean {
   return false;
 }
 
-function formatEnDisplay(text: string): string {
+export function formatEnDisplay(text: string): string {
   if (!text) return text;
-  let out = text.replace(/^[a-z]/, (ch) => ch.toUpperCase());
+  let out = text.replace(/([a-zA-Z])([0-9])/g, '$1 $2');
+  out = out.replace(/([0-9])([a-zA-Z]{2,})\b/g, (m, d: string, w: string) =>
+    /^(?:st|nd|rd|th)$/i.test(w) ? m : `${d} ${w}`
+  );
+  out = out.replace(/^[a-z]/, (ch) => ch.toUpperCase());
   out = out.replace(/([.?!]\s+)([a-z])/g, (_, sep: string, ch: string) => sep + ch.toUpperCase());
   out = out.replace(/\bi(?=(?:['’](?:m|ve|ll|d))?\b)/g, 'I');
   return out;

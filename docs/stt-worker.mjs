@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.6.0' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.7.0' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -38,15 +38,23 @@ const devanagariToIast = swanadaMod.devanagariToIast || ((t) => t);
 const loadModelAsset = swanadaMod.loadModelAsset;
 const StreamingAcousticEngine = swanadaMod.StreamingAcousticEngine;
 const CACHE_STORAGE_NAME = swanadaMod.CACHE_STORAGE_NAME || 'swanada-onnx-v1.0.0';
+const LID_LANGUAGES = swanadaMod.LID_LANGUAGES || ['sa', 'en', 'hi', 'kn', 'mr', 'bn', 'ta', 'te', 'ml', 'gu', 'pa', 'or'];
+const parseLidHeadBytes = swanadaMod.parseLidHeadBytes;
+const detectLanguageFromHidden = swanadaMod.detectLanguageFromHidden;
+const decodeBilingualCodeswitch = swanadaMod.decodeBilingualCodeswitch;
 
 let workerState = 'UNINITIALIZED';
 let denoiseEnabled = true;
+let codeSwitchEn = false;
 let lastEstimatedSnrDb = 0;
 let ort = null;
 let currentLanguage = 'sa';
 let activeSession = null;
 let activeHead = null; // { weight: Float32Array(257*512), bias: Float32Array(257) } | null
 let activeVocab = [];
+let multiHeads = {};   // Record<lang, { weight, bias }>
+let multiVocabs = {};  // Record<lang, string[]>
+let lidWeights = null; // NeuralLIDWeights | null
 let ctcDecoder = null;
 let executionProvider = 'wasm';
 let activeModelTier = 'studio';
@@ -557,6 +565,7 @@ function buildStreamingEngineForActiveLanguage(lang, vocab) {
   const engineAdapter = {
     config: { language: lang },
     getVocab: () => vocab,
+    getVocabForLanguage: (lg) => multiVocabs[lg] || vocab,
     transcribe: async (pcm, opts) => runAcousticInference(pcm, opts),
   };
   return new StreamingAcousticEngine(engineAdapter, vocab, {
@@ -566,11 +575,116 @@ function buildStreamingEngineForActiveLanguage(lang, vocab) {
   });
 }
 
-async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, headUrl) {
+async function loadLidHeadOptional(lidUrlOrPath) {
+  if (!parseLidHeadBytes || !lidUrlOrPath) return null;
+  try {
+    if (typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open(cacheStorageName);
+        const matched =
+          (await cache.match(lidUrlOrPath)) ||
+          (await cache.match(lidUrlOrPath, { ignoreSearch: true }));
+        if (matched && matched.ok) {
+          return parseLidHeadBytes(await matched.arrayBuffer());
+        }
+      } catch {}
+    }
+    if (typeof process !== 'undefined' && process.versions?.node) {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const cleanPath = lidUrlOrPath.split('?')[0];
+      for (const cand of [
+        cleanPath,
+        path.resolve(process.cwd(), cleanPath),
+        path.resolve(process.cwd(), 'docs', cleanPath.replace(/^\.\//, '')),
+        path.resolve(process.cwd(), '..', 'docs', cleanPath.replace(/^\.\//, '')),
+      ]) {
+        if (fs.existsSync(cand)) {
+          const buf = fs.readFileSync(cand);
+          return parseLidHeadBytes(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+        }
+      }
+      return null;
+    }
+    const fetchUrl = resolveRelativeWorkerUrl(lidUrlOrPath);
+    const res = await fetch(fetchUrl);
+    if (!res.ok) return null;
+    if (typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open(cacheStorageName);
+        cache.put(lidUrlOrPath, res.clone()).catch(() => {});
+      } catch {}
+    }
+    return parseLidHeadBytes(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+async function ensureMultiHeadsInWorker(langs, isMobileTier, lidUrl) {
+  const headsDir = isMobileTier ? './heads_mobile' : './heads';
+  const versionSuffix = isMobileTier ? '?v=1.7.0' : '?v=1.7.0';
+  await Promise.all(
+    langs.map(async (lg) => {
+      if (!multiVocabs[lg]) {
+        const vFile = lg === 'sa' ? 'sanskrit_vocab.json' : `${lg}_vocab.json`;
+        try {
+          multiVocabs[lg] = await loadVocab(`./vocabularies/${vFile}${versionSuffix}`);
+        } catch {
+          multiVocabs[lg] = await loadVocab(`./models/vocabularies/${vFile}`);
+        }
+      }
+      if (!multiHeads[lg]) {
+        multiHeads[lg] = await loadLinearHead(lg, `${headsDir}/${lg}.bin${versionSuffix}`);
+      }
+    })
+  );
+  if (langs.length > 2 && !lidWeights) {
+    lidWeights = await loadLidHeadOptional(lidUrl || `${headsDir}/lid.bin${versionSuffix}`);
+  }
+}
+
+async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, headUrl, lidUrl) {
   const myEpoch = ++latestSetupEpoch;
   workerState = 'INITIALIZING';
 
   const isMobileTier = activeModelTier === 'mobile';
+  multiHeads = {};
+  multiVocabs = {};
+  lidWeights = null;
+
+  // 12-Way Auto-LID Mode: Shared Encoder + All 12 `515 KB` Heads + Optional `lid.bin`
+  if (lang === 'auto') {
+    const effectiveEncoderUrl =
+      modelUrl ||
+      (isMobileTier
+        ? './models/onnx_mobile/swanada_mobile_ctc_int8.onnx'
+        : './models/onnx/sushrota_sanskrit_ctc_int8.onnx');
+    const [encInfo] = await Promise.all([
+      ensureSharedEncoderSession(effectiveEncoderUrl, userThreads, wasmPaths),
+      ensureMultiHeadsInWorker(LID_LANGUAGES, isMobileTier, lidUrl),
+    ]);
+    if (myEpoch !== latestSetupEpoch) return;
+
+    currentLanguage = 'auto';
+    activeSession = encInfo.session;
+    activeHead = multiHeads.sa || null;
+    activeVocab = multiVocabs.sa || [];
+    ctcDecoder = new CTCGreedyDecoder(activeVocab);
+    streamingSession = buildStreamingEngineForActiveLanguage('auto', activeVocab);
+    workerState = 'READY';
+
+    postWorkerMessage({
+      type: 'READY',
+      language: 'auto',
+      modelTier: activeModelTier,
+      executionProvider,
+      numThreads: encInfo.threads,
+      fromCache: encInfo.fromCache,
+    });
+    return;
+  }
+
   const tierLangKey = `${activeModelTier}:${lang}`;
   const prevUrls = languageUrlHistory.get(tierLangKey);
   const resolvedModelUrl = modelUrl || prevUrls?.modelUrl;
@@ -606,6 +720,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
       ensureSharedEncoderSession(effectiveEncoderUrl, userThreads, wasmPaths),
       loadVocab(effectiveVocabUrl),
       loadLinearHead(lang, resolvedHeadUrl),
+      ...(codeSwitchEn && lang !== 'en' ? [ensureMultiHeadsInWorker([lang, 'en'], isMobileTier)] : []),
     ]);
 
     // Abort cleanly if user clicked another language tab while loading
@@ -617,6 +732,8 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     activeSession = encInfo.session;
     activeHead = head;
     activeVocab = vocab;
+    multiHeads[lang] = head;
+    multiVocabs[lang] = vocab;
     ctcDecoder = new CTCGreedyDecoder(activeVocab);
     streamingSession = buildStreamingEngineForActiveLanguage(lang, activeVocab);
     workerState = 'READY';
@@ -850,6 +967,7 @@ async function runAcousticInference(pcm, decodeOpts) {
   let logits;
   let timeSteps;
   let numClasses;
+  let hiddenCopy = null;
 
   try {
     featsTensor = new ort.Tensor('float32', mel.features, [1, 80, mel.numFrames]);
@@ -860,12 +978,17 @@ async function runAcousticInference(pcm, decodeOpts) {
       length: lenTensor,
     });
 
-    if (activeHead && outputs.layer_norm_84) {
+    if (outputs.layer_norm_84 && (currentLanguage === 'auto' || activeHead || codeSwitchEn)) {
       const hiddenTensor = outputs.layer_norm_84;
       const hDims = hiddenTensor.dims;
       timeSteps = hDims.length === 3 ? hDims[1] : hDims[0];
       numClasses = 257;
-      logits = projectLinearHead(hiddenTensor.data, timeSteps, activeHead.weight, activeHead.bias);
+      if (currentLanguage === 'auto' || codeSwitchEn || decodeOpts?.forcedLanguage) {
+        hiddenCopy = new Float32Array(hiddenTensor.data);
+      }
+      if (currentLanguage !== 'auto' && !decodeOpts?.forcedLanguage && activeHead) {
+        logits = projectLinearHead(hiddenTensor.data, timeSteps, activeHead.weight, activeHead.bias);
+      }
     } else {
       const logitsTensor = outputs.logits || Object.values(outputs)[0];
       const dims = logitsTensor.dims;
@@ -881,21 +1004,115 @@ async function runAcousticInference(pcm, decodeOpts) {
     }
   }
 
+  let effectiveLang = decodeOpts?.forcedLanguage || currentLanguage;
+  let langConfidence = undefined;
+  let langProbabilities = undefined;
+  let englishSpans = undefined;
+
+  if (hiddenCopy && effectiveLang === 'auto' && typeof detectLanguageFromHidden === 'function') {
+    const { result: lidRes, cachedLogits } = detectLanguageFromHidden(
+      hiddenCopy,
+      timeSteps,
+      multiHeads,
+      multiVocabs,
+      lidWeights
+    );
+    effectiveLang = lidRes.language;
+    langConfidence = lidRes.confidence;
+    langProbabilities = lidRes.probabilities;
+    logits = cachedLogits[effectiveLang];
+    if (!logits && multiHeads[effectiveLang]) {
+      logits = projectLinearHead(hiddenCopy, timeSteps, multiHeads[effectiveLang].weight, multiHeads[effectiveLang].bias);
+    }
+    if (codeSwitchEn && effectiveLang !== 'en' && multiHeads.en && multiVocabs.en && logits && typeof decodeBilingualCodeswitch === 'function') {
+      const enLogits = cachedLogits.en || projectLinearHead(hiddenCopy, timeSteps, multiHeads.en.weight, multiHeads.en.bias);
+      const csRes = decodeBilingualCodeswitch(
+        logits,
+        timeSteps,
+        multiVocabs[effectiveLang] || activeVocab,
+        effectiveLang,
+        enLogits,
+        multiVocabs.en,
+        Boolean(decodeOpts?.isPartial)
+      );
+      const elapsedMs = performance.now() - startMs;
+      const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
+      const iastText = effectiveLang === 'sa' ? devanagariToIast(csRes.text) : undefined;
+      return {
+        text: csRes.text,
+        iast: iastText,
+        language: effectiveLang,
+        languageConfidence: langConfidence,
+        languageProbabilities: langProbabilities,
+        englishSpans: csRes.englishSpans,
+        durationMs,
+        inferenceMs: elapsedMs,
+        rtf,
+        tokens: csRes.tokens,
+      };
+    }
+  } else if (hiddenCopy && decodeOpts?.forcedLanguage && multiHeads[decodeOpts.forcedLanguage]) {
+    const fl = decodeOpts.forcedLanguage;
+    effectiveLang = fl;
+    logits = projectLinearHead(hiddenCopy, timeSteps, multiHeads[fl].weight, multiHeads[fl].bias);
+  }
+
+  if (
+    hiddenCopy &&
+    codeSwitchEn &&
+    effectiveLang !== 'en' &&
+    logits &&
+    typeof decodeBilingualCodeswitch === 'function'
+  ) {
+    if (!multiHeads.en || !multiVocabs.en) {
+      await ensureMultiHeadsInWorker([effectiveLang, 'en'], activeModelTier === 'mobile');
+    }
+    if (multiHeads.en && multiVocabs.en) {
+      const enLogits = projectLinearHead(hiddenCopy, timeSteps, multiHeads.en.weight, multiHeads.en.bias);
+      const csRes = decodeBilingualCodeswitch(
+        logits,
+        timeSteps,
+        multiVocabs[effectiveLang] || activeVocab,
+        effectiveLang,
+        enLogits,
+        multiVocabs.en,
+        Boolean(decodeOpts?.isPartial)
+      );
+      const elapsedMs = performance.now() - startMs;
+      const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
+      const iastText = effectiveLang === 'sa' ? devanagariToIast(csRes.text) : undefined;
+      return {
+        text: csRes.text,
+        iast: iastText,
+        language: effectiveLang,
+        englishSpans: csRes.englishSpans,
+        durationMs,
+        inferenceMs: elapsedMs,
+        rtf,
+        tokens: csRes.tokens,
+      };
+    }
+  }
+
   // 3. CTC Decoding
+  const decodeVocab = multiVocabs[effectiveLang] || activeVocab;
   const decoded = decodeCTC(
     logits,
     [timeSteps, numClasses],
-    activeVocab,
+    decodeVocab,
     decodeOpts?.isPartial ? { isPartial: true } : undefined
   );
   const elapsedMs = performance.now() - startMs;
   const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
-  const iastText = currentLanguage === 'sa' ? devanagariToIast(decoded.text) : undefined;
+  const iastText = effectiveLang === 'sa' ? devanagariToIast(decoded.text) : undefined;
 
   return {
     text: decoded.text,
     iast: iastText,
-    language: currentLanguage,
+    language: effectiveLang,
+    ...(langConfidence !== undefined ? { languageConfidence: langConfidence } : {}),
+    ...(langProbabilities !== undefined ? { languageProbabilities: langProbabilities } : {}),
+    ...(englishSpans !== undefined ? { englishSpans } : {}),
     durationMs,
     inferenceMs: elapsedMs,
     rtf,
@@ -931,13 +1148,17 @@ export async function handleIncomingMessage(msg) {
         if (msg.cacheName || config.cacheName) {
           cacheStorageName = msg.cacheName || config.cacheName || CACHE_STORAGE_NAME;
         }
+        if (msg.codeSwitchEn !== undefined || config.codeSwitchEn !== undefined) {
+          codeSwitchEn = Boolean(msg.codeSwitchEn ?? config.codeSwitchEn);
+        }
         const p = setupLanguage(
           lang,
           msg.modelUrl || config.modelUrl,
           msg.vocabUrl || config.vocabUrl,
           msg.numThreads || config.numThreads,
           msg.wasmPaths || config.wasmPaths,
-          msg.headUrl || config.headUrl
+          msg.headUrl || config.headUrl,
+          msg.lidUrl || config.lidUrl
         );
         activeSetupPromise = p;
         await p;
@@ -945,7 +1166,7 @@ export async function handleIncomingMessage(msg) {
       }
 
       case 'SET_LANGUAGE': {
-        const p = setupLanguage(msg.language, msg.modelUrl, msg.vocabUrl, undefined, undefined, msg.headUrl);
+        const p = setupLanguage(msg.language, msg.modelUrl, msg.vocabUrl, undefined, undefined, msg.headUrl, msg.lidUrl);
         activeSetupPromise = p;
         await p;
         break;
@@ -953,6 +1174,14 @@ export async function handleIncomingMessage(msg) {
 
       case 'SET_DENOISE': {
         denoiseEnabled = Boolean(msg.enabled);
+        break;
+      }
+
+      case 'SET_CODE_SWITCH': {
+        codeSwitchEn = Boolean(msg.enabled);
+        if (codeSwitchEn && currentLanguage !== 'en' && currentLanguage !== 'auto' && (!multiHeads.en || !multiVocabs.en)) {
+          ensureMultiHeadsInWorker([currentLanguage, 'en'], activeModelTier === 'mobile').catch(() => {});
+        }
         break;
       }
 
@@ -991,14 +1220,18 @@ export async function handleIncomingMessage(msg) {
             await streamingSession.push(chunk);
           }
           const finalRes = await streamingSession.finish();
+          const outLang = finalRes.language || currentLanguage;
           workerState = 'READY';
           postWorkerMessage({
             type: 'FINAL',
             text: finalRes.text,
             committed: finalRes.text,
             volatile: '',
-            iast: currentLanguage === 'sa' ? (finalRes.iast ?? devanagariToIast(finalRes.text)) : undefined,
-            language: currentLanguage,
+            iast: outLang === 'sa' ? (finalRes.iast ?? devanagariToIast(finalRes.text)) : undefined,
+            language: outLang,
+            languageConfidence: finalRes.languageConfidence,
+            languageProbabilities: finalRes.languageProbabilities,
+            englishSpans: finalRes.englishSpans,
             durationMs: finalRes.durationMs,
             inferenceMs: finalRes.inferenceMs,
             rtf: finalRes.rtf,
@@ -1009,13 +1242,16 @@ export async function handleIncomingMessage(msg) {
         } else {
           const partial = await streamingSession.push(chunk);
           if (partial) {
+            const pLang = partial.detectedLanguage || currentLanguage;
             postWorkerMessage({
               type: 'PARTIAL',
               text: partial.text,
               committed: partial.committed,
               volatile: partial.volatile,
-              iast: currentLanguage === 'sa' ? devanagariToIast(partial.text) : undefined,
-              language: currentLanguage,
+              iast: pLang === 'sa' ? devanagariToIast(partial.text) : undefined,
+              language: pLang,
+              detectedLanguage: partial.detectedLanguage,
+              languageConfidence: partial.languageConfidence,
               rtf: partial.rtf,
               snrDb: lastEstimatedSnrDb,
               durationMs: partial.durationMs,
@@ -1046,14 +1282,18 @@ export async function handleIncomingMessage(msg) {
         }
 
         const finalRes = await streamingSession.finish();
+        const outLang = finalRes.language || currentLanguage;
         workerState = 'READY';
         postWorkerMessage({
           type: 'FINAL',
           text: finalRes.text,
           committed: finalRes.text,
           volatile: '',
-          iast: currentLanguage === 'sa' ? (finalRes.iast ?? devanagariToIast(finalRes.text)) : undefined,
-          language: currentLanguage,
+          iast: outLang === 'sa' ? (finalRes.iast ?? devanagariToIast(finalRes.text)) : undefined,
+          language: outLang,
+          languageConfidence: finalRes.languageConfidence,
+          languageProbabilities: finalRes.languageProbabilities,
+          englishSpans: finalRes.englishSpans,
           durationMs: finalRes.durationMs,
           inferenceMs: finalRes.inferenceMs,
           rtf: finalRes.rtf,
@@ -1164,7 +1404,7 @@ function dispatchIncomingMessage(msg) {
   if (msg.type === 'INIT' || msg.type === 'SET_LANGUAGE') {
     pendingWorkQueue.length = 0;
     handleIncomingMessage(msg);
-  } else if (msg.type === 'SET_DENOISE') {
+  } else if (msg.type === 'SET_DENOISE' || msg.type === 'SET_CODE_SWITCH') {
     handleIncomingMessage(msg);
   } else {
     if (msg.type === 'RESET') {

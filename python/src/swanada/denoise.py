@@ -108,6 +108,8 @@ def enhance_speech_with_telemetry(
     n_samples = len(arr)
     if n_samples == 0:
         return DenoiseTelemetry(arr.copy(), 0.0, -100.0, 0.0, False)
+    if not np.all(np.isfinite(arr)):
+        arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=-1.0).astype(np.float32)
 
     dc_mean = float(np.mean(arr))
     raw_rms = float(np.sqrt(np.mean(arr * arr)))
@@ -137,9 +139,9 @@ def enhance_speech_with_telemetry(
     # Sub-85 Hz bins (0..2 at 16 kHz / 512) detect 50/60 Hz mains hum and HVAC/wind rumble
     k_lf_max = max(2, round(85 * STFT_N / sr))
     lf_frame_rms = np.sqrt(np.sum(int_power[:, :k_lf_max + 1], axis=1))
-    lf_p30 = float(np.percentile(lf_frame_rms, 30))
+    lf_p15 = float(np.percentile(lf_frame_rms, 15))
     lf_mean = float(np.mean(lf_frame_rms))
-    has_hum_or_rumble = has_dc_offset or (lf_p30 > 0.0075 and (lf_mean / (ac_rms + 1e-9)) > 0.16)
+    has_hum_or_rumble = has_dc_offset or (lf_p15 > 0.0085 and (lf_mean / (ac_rms + 1e-9)) > 0.16)
 
     if has_hum_or_rumble:
         work = _apply_biquad(zero_mean, _design_highpass_biquad(high_pass_hz, sr))
@@ -178,23 +180,31 @@ def enhance_speech_with_telemetry(
     e_noise_15 = max(1e-12, float(speech_energy[idx15]))
     mod_snr_db = max(0.0, min(60.0, 10.0 * math.log10((e_speech_90 + 1e-12) / e_noise_15)))
 
-    # Spectral Flatness Measure (Wiener entropy) + High-Frequency Floor distinguish broadband noise from harmonic speech
+    # Spectral Flatness Measure (Wiener entropy) + Quiet-Frame Floor distinguish broadband noise from harmonic speech
     hf_rms = np.sqrt(np.sum(int_power[:, k_hf_min:k_hf_max + 1], axis=1))
     hf_p25 = float(np.percentile(hf_rms, 25))
     sub_bins = int_power[:, max(8, k_min):k_hf_max + 1] + 1e-18
     frame_sfm = np.exp(np.mean(np.log(sub_bins), axis=1)) / np.mean(sub_bins, axis=1)
-    sfm_p30 = float(np.percentile(frame_sfm, 30))
+    mid_high_rms = np.sqrt(np.sum(int_power[:, 3:], axis=1))
+    quiet_rel_idx = order[:n_quiet] - i_start
+    quiet_sfm = float(np.mean(frame_sfm[quiet_rel_idx]))
+    quiet_rms = float(np.mean(mid_high_rms[quiet_rel_idx]))
 
     upper_half = order[interior_count // 2:]
     avg_formant_ratio = float(np.mean(speech_energy[upper_half] / (total_energy[upper_half] + 1e-12)))
+    upper_sfm = float(np.mean(frame_sfm[upper_half - i_start]))
+    speech_rms_90 = math.sqrt(e_speech_90 * norm_scale)
 
-    # Stationary Non-Speech Gate: pure unmodulated background hiss/buzz
+    # Stationary & Sub-Formant Non-Speech Gate: pure unmodulated background hiss, mains hum, HVAC rumble, or thermal floor
     if (
         non_speech_gate
         and num_frames >= 10
-        and mod_snr_db < 2.2
         and ac_rms < 0.025
-        and avg_formant_ratio < 0.52
+        and (
+            (mod_snr_db < 2.2 and avg_formant_ratio < 0.52)
+            or (speech_rms_90 < 0.0018 and (mod_snr_db < 4.5 or upper_sfm > 0.30))
+            or avg_formant_ratio < 0.08
+        )
     ):
         return DenoiseTelemetry(
             np.zeros_like(arr),
@@ -204,16 +214,14 @@ def enhance_speech_with_telemetry(
             False,
         )
 
-    # Determine whether genuine broadband/colored background noise is present.
-    # Require >= 300ms (4800 samples) so a single clean syllable is never mistaken for stationary noise.
-    quiet_rms_p15 = float(np.sqrt(np.sum(int_power[np.argsort(np.sum(int_power[:, 3:], axis=1))[int(interior_count * 0.15)], 3:])))
+    # Determine whether genuine broadband/colored background noise is present in the quietest 20% frames.
+    # Require >= 300ms (4800 samples) and broadband flatness (quiet_sfm > 0.24) so soft harmonic speech is preserved untouched.
     has_broadband_noise = (
         n_samples >= 4800
         and mod_snr_db < clean_bypass_snr_db
-        and (
-            (hf_p25 > 0.0024 and sfm_p30 > 0.032)
-            or (n_samples >= 12000 and mod_snr_db < 22.0 and quiet_rms_p15 > 0.0045 and sfm_p30 > 0.022)
-        )
+        and quiet_sfm > 0.24
+        and quiet_rms > 0.0065
+        and (hf_p25 > 0.0024 or (n_samples >= 12000 and mod_snr_db < 22.0))
     )
 
     if not has_broadband_noise:

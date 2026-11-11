@@ -27,7 +27,7 @@ MODELS_DIR = REPO_ROOT / "models"
 
 def test_hf_manifest_builder() -> None:
     manifest = build_manifest(MODELS_DIR)
-    assert manifest["version"] == "1.0.0"
+    assert manifest["version"] == "1.1.0"
     assert "preprocessor.onnx" in manifest["files"]
     assert "onnx/swanada_sa_ctc_int8.onnx" in manifest["files"]
     assert "vocabularies/sa_vocab.json" in manifest["files"]

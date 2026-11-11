@@ -7,12 +7,33 @@ export type SupportedLanguage =
   | 'sa' | 'en' | 'hi' | 'kn' | 'mr' | 'bn'
   | 'ta' | 'te' | 'ml' | 'gu' | 'pa' | 'or';
 
+export type LanguageSelection = SupportedLanguage | 'auto';
+
 export type ExecutionProvider = 'wasm' | 'webgpu';
 
 export type ModelTier = 'auto' | 'mobile' | 'studio';
 
+export interface CodeSwitchSpan {
+  word: string;
+  startChar: number;
+  endChar: number;
+}
+
+export interface LanguageDetectionResult {
+  language: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+  usedNeuralLid: boolean;
+}
+
+export interface CodeSwitchDecodeResult {
+  text: string;
+  tokens: string[];
+  englishSpans: CodeSwitchSpan[];
+}
+
 export interface SwanadaConfig {
-  language?: SupportedLanguage;
+  language?: LanguageSelection;
   modelTier?: ModelTier;
   modelPath?: string;
   modelDir?: string;
@@ -25,6 +46,10 @@ export interface SwanadaConfig {
   vocabPath?: string;
   /** Enable multi-stage background noise cancellation & speech enhancement (default: true) */
   denoise?: boolean;
+  /** Preserve genuine English code-mixed words in Latin script during Indic transcription */
+  codeSwitchEn?: boolean;
+  /** Optional custom path/URL to compact `lid.bin` (`SLID` v1) neural Auto-LID head */
+  lidHeadPath?: string;
 }
 
 export interface SwanadaEngineConfig extends SwanadaConfig {}
@@ -36,7 +61,11 @@ export interface TranscriptionResult {
   inferenceMs: number;
   rtf: number;
   tokens: string[];
+  iast?: string;
   snrDb?: number;
+  languageConfidence?: number;
+  languageProbabilities?: Record<string, number>;
+  englishSpans?: CodeSwitchSpan[];
 }
 
 export interface DecodedAudio {
@@ -91,10 +120,15 @@ export declare function resolveEffectiveModelTier(tier?: ModelTier): 'mobile' | 
 export declare class AcousticEngine {
   static create(config?: SwanadaConfig): Promise<AcousticEngine>;
   getModelTier(): 'mobile' | 'studio';
-  transcribe(audio: Float32Array): Promise<TranscriptionResult>;
+  detectLanguage(audio: Float32Array): Promise<LanguageDetectionResult>;
+  transcribe(
+    audio: Float32Array,
+    options?: { isPartial?: boolean; codeSwitchEn?: boolean; forcedLanguage?: string }
+  ): Promise<TranscriptionResult>;
   warmup(): Promise<void>;
   release(): Promise<void>;
   getVocab(): string[];
+  getVocabForLanguage(lang: string): string[];
   loadVocabulary(modelDirOrVocabPath?: string): Promise<void>;
   loadAcousticModel(modelPathOrUrl: string): Promise<void>;
   loadPreprocessorModel(prepPathOrUrl: string): Promise<void>;
@@ -114,11 +148,16 @@ export declare class Swanada {
   readonly engine: AcousticEngine;
   static create(config?: SwanadaConfig): Promise<Swanada>;
   static transliterateIast(text: string): string;
-  transcribe(audio: Float32Array | ArrayBuffer | Uint8Array | string): Promise<TranscriptionResult>;
+  detectLanguage(audio: Float32Array | ArrayBuffer | Uint8Array | string): Promise<LanguageDetectionResult>;
+  transcribe(
+    audio: Float32Array | ArrayBuffer | Uint8Array | string,
+    options?: { codeSwitchEn?: boolean }
+  ): Promise<TranscriptionResult>;
   warmup(): Promise<void>;
   createStream(options?: StreamSessionOptions): SwanadaStream;
   stream(options?: StreamSessionOptions): SwanadaStream;
   release(): Promise<void>;
+  dispose(): Promise<void>;
 }
 
 export interface LanguageMeta {
@@ -239,6 +278,8 @@ export interface StreamingTranscript {
   durationMs: number;
   inferenceMs: number;
   rtf: number;
+  detectedLanguage?: string;
+  languageConfidence?: number;
 }
 
 export interface StreamingDecoderOptions extends CTCDecodeOptions {
@@ -327,21 +368,30 @@ export declare function configureWasmEnvironment(ort: any, userThreads?: number,
 
 export interface SwanadaWorkerConfig {
   workerUrl?: string | URL;
-  language?: SupportedLanguage;
+  language?: LanguageSelection;
+  modelTier?: ModelTier;
   modelUrl?: string;
+  headUrl?: string;
+  lidUrl?: string;
   vocabUrl?: string;
   executionProvider?: ExecutionProvider;
   numThreads?: number;
   wasmPaths?: string;
   cacheName?: string;
+  denoise?: boolean;
+  codeSwitchEn?: boolean;
 }
 
 export declare class SwanadaWorkerClient {
   constructor(config?: SwanadaWorkerConfig);
   init(config: SwanadaWorkerConfig): Promise<any>;
   whenReady(): Promise<any>;
-  setLanguage(language: SupportedLanguage, options?: any): Promise<void>;
+  setLanguage(language: LanguageSelection, options?: any): Promise<void>;
+  setDenoise(enabled: boolean): void;
+  setCodeSwitchEn(enabled: boolean): void;
   pushAudio(chunk: Float32Array, isFinal?: boolean): void;
+  startStream(): void;
+  finishStream(): Promise<TranscriptionResult & { iast?: string }>;
   transcribe(pcm: Float32Array): Promise<TranscriptionResult & { iast?: string }>;
   reset(): void;
   on(event: string, handler: Function): () => void;
@@ -350,5 +400,26 @@ export declare class SwanadaWorkerClient {
 
 export declare function handleIncomingMessage(data: any, postMessage: (msg: any) => void): Promise<void>;
 export declare function getWorkerState(): any;
+
+export declare const LID_LANGUAGES: readonly SupportedLanguage[];
+export declare function parseLidHeadBytes(buffer: ArrayBuffer | Uint8Array): any;
+export declare function serializeLidHeadBytes(weights: any): Uint8Array;
+export declare function predictNeuralLidLogProbs(weights: any, hidden: Float32Array, timeSteps: number): Record<string, number>;
+export declare function detectLanguageFromHidden(
+  hidden: Float32Array,
+  timeSteps: number,
+  heads: Record<string, { weight: Float32Array; bias: Float32Array }>,
+  vocabs: Record<string, string[]>,
+  lidWeights?: any
+): { result: LanguageDetectionResult; cachedLogits: Record<string, Float32Array> };
+export declare function decodeBilingualCodeswitch(
+  logitsIndic: Float32Array,
+  timeSteps: number,
+  vocabIndic: string[],
+  langIndic: string,
+  logitsEn: Float32Array,
+  vocabEn: string[],
+  isPartial?: boolean
+): CodeSwitchDecodeResult;
 
 export default Swanada;

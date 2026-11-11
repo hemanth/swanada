@@ -4,14 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Swanada: In-Browser 16 kHz Multilingual Speech-to-Text Studio</title>
-  <meta name="description" content="Swanada v1.4.0: Sub-second in-browser 16 kHz multilingual streaming speech-to-text for Classical Sanskrit, Indian English, and 10 Indic languages via ONNX/WASM with zero server dependencies." />
+  <meta name="description" content="Swanada v1.1.0: Sub-second in-browser 16 kHz multilingual streaming speech-to-text across Classical Sanskrit, English, and 10 Indic languages with <1 ms 12-Way Auto-LID, 25.4 MiB Mobile + 177.4 MiB Studio ONNX/WASM, 5.35% held-out CER, and 0% churn." />
   <link rel="canonical" href="https://hemanth.github.io/swanada/" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Swanada" />
   <meta property="og:locale" content="en_US" />
   <meta property="og:url" content="https://hemanth.github.io/swanada/" />
   <meta property="og:title" content="Swanada · Sub-Second In-Browser 16 kHz STT for Sanskrit &amp; 11 Languages" />
-  <meta property="og:description" content="Stream 16 kHz speech-to-text privately in-browser across Classical Sanskrit, Indian English, and 10 Indian languages. Shared 178 MB Conformer INT8 + 515 KB per-language CTC heads, 5.53% CER, 0% churn." />
+  <meta property="og:description" content="Stream 16 kHz speech-to-text privately in-browser across Classical Sanskrit, English, and 10 Indian languages. Dual-tier 25.4 MiB Mobile + 177.4 MiB Studio Conformer INT8, 100% 12-way Auto-LID, 5.35% CER, 0% churn." />
   <meta property="og:image" content="https://hemanth.github.io/swanada/og-image.jpg?v=1.4.0" />
   <meta property="og:image:secure_url" content="https://hemanth.github.io/swanada/og-image.jpg?v=1.4.0" />
   <meta property="og:image:type" content="image/jpeg" />
@@ -20,7 +20,7 @@
   <meta property="og:image:alt" content="Swanada 16 kHz In-Browser Streaming STT Studio across 12 Languages" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Swanada · Sub-Second In-Browser 16 kHz STT for Sanskrit &amp; 11 Languages" />
-  <meta name="twitter:description" content="Stream 16 kHz speech-to-text privately in-browser across Classical Sanskrit, Indian English, and 10 Indian languages. Shared 178 MB Conformer INT8 + 515 KB per-language CTC heads, 5.53% CER, 0% churn." />
+  <meta name="twitter:description" content="Stream 16 kHz speech-to-text privately in-browser across Classical Sanskrit, English, and 10 Indian languages. Dual-tier 25.4 MiB Mobile + 177.4 MiB Studio Conformer INT8, 100% 12-way Auto-LID, 5.35% CER, 0% churn." />
   <meta name="twitter:image" content="https://hemanth.github.io/swanada/og-image.jpg?v=1.4.0" />
   <meta name="twitter:image:alt" content="Swanada 16 kHz In-Browser Streaming STT Studio across 12 Languages" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23121210'/%3E%3Cpath d='M7 16h3l2.5-7 4 14 3.5-10 2.5 3H25' fill='none' stroke='%23fbfaf7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
@@ -330,7 +330,7 @@
       color: var(--ok);
     }
 
-    /* 12-Language Selector Tabs */
+    /* 12-Language Selector Tabs + 12-Way Auto-LID */
     .lang-tabs {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -347,6 +347,22 @@
       transition: all 0.15s ease;
       font-family: var(--sans);
     }
+    .lang-btn.auto-detect-btn {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      border-style: solid;
+      border-color: var(--line-strong);
+      margin-bottom: 2px;
+    }
+    .lang-btn.auto-detect-btn .lang-name {
+      margin-top: 0;
+      font-family: var(--mono);
+      font-size: 11px;
+      opacity: 0.85;
+    }
     .lang-btn:hover {
       border-color: var(--line-strong);
       background: #eeebe1;
@@ -355,6 +371,12 @@
       background: var(--ink);
       color: #ffffff;
       border-color: var(--ink);
+    }
+    u.en-codemix {
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 4px;
+      text-decoration-color: var(--signal);
     }
     .lang-code {
       font-family: var(--mono);
@@ -701,10 +723,14 @@
       <!-- Column 1: Input & Controls -->
       <div class="panel">
         <div class="panel-title">
-          <span>Target Language (12 Indic)</span>
+          <span>Target Language (Auto-LID + 12 Indic)</span>
           <span id="activeLangCode" style="color: var(--ink)">sa</span>
         </div>
         <div class="lang-tabs" id="langTabs">
+          <div class="lang-btn auto-detect-btn" data-lang="auto" title="Zero-cost (<1 ms) 12-way Automatic Language Identification over shared Conformer encoder">
+            <div class="lang-code">AUTO</div>
+            <div class="lang-name">Detect Any of 12 Languages · &lt;1 ms</div>
+          </div>
           <div class="lang-btn active" data-lang="sa">
             <div class="lang-code">sa</div>
             <div class="lang-name">Sanskrit</div>
@@ -757,7 +783,10 @@
 
         <div class="panel-title">
           <span>Audio Input Mode</span>
-          <button type="button" class="copy-btn copied" id="denoiseBtn" title="Toggle multi-stage 80Hz HPF + 50/60Hz Hum Notch + Ephraim-Malah Spectral Wiener Noise Cancellation" aria-pressed="true">ANC + Wiener: ON</button>
+          <span class="transcript-actions">
+            <button type="button" class="copy-btn" id="codeSwitchBtn" title="Frame-level bilingual Indic + English Latin code-switching decoder" aria-pressed="false">+EN Latin: OFF</button>
+            <button type="button" class="copy-btn copied" id="denoiseBtn" title="Toggle multi-stage 80Hz HPF + 50/60Hz Hum Notch + Ephraim-Malah Spectral Wiener Noise Cancellation" aria-pressed="true">ANC + Wiener: ON</button>
+          </span>
         </div>
         <div class="input-section">
           <div class="mic-row">
@@ -860,40 +889,40 @@
 
       <pre class="snippet" id="snippetJs"><code><span class="tok-kw">import</span> { <span class="tok-typ">Swanada</span> } <span class="tok-kw">from</span> <span class="tok-str">'swanada'</span>;
 
-<span class="tok-com">// 1. Streaming transcription with two-zone partials</span>
-<span class="tok-kw">const</span> stt = <span class="tok-kw">await</span> <span class="tok-typ">Swanada</span>.<span class="tok-fn">create</span>({ language: <span class="tok-str">'sa'</span>, numThreads: <span class="tok-num">4</span> });
+<span class="tok-com">// 12-Way Auto-LID (&lt;1 ms) + Bilingual Indic+English Code-Switching + Streaming</span>
+<span class="tok-kw">const</span> stt = <span class="tok-kw">await</span> <span class="tok-typ">Swanada</span>.<span class="tok-fn">create</span>({ language: <span class="tok-str">'auto'</span>, codeSwitchEn: <span class="tok-kw">true</span>, numThreads: <span class="tok-num">4</span> });
 <span class="tok-kw">const</span> stream = stt.<span class="tok-fn">createStream</span>();
 
-stream.<span class="tok-fn">on</span>(<span class="tok-str">'partial'</span>, ({ committed, volatile }) =&gt; {
-  console.<span class="tok-fn">log</span>(<span class="tok-str">'Committed:'</span>, committed, <span class="tok-str">'Volatile:'</span>, volatile);
+stream.<span class="tok-fn">on</span>(<span class="tok-str">'partial'</span>, ({ committed, volatile, detectedLanguage }) =&gt; {
+  console.<span class="tok-fn">log</span>(<span class="tok-str">`[${detectedLanguage || 'auto'}]`</span>, committed, volatile);
 });
 
 <span class="tok-kw">await</span> stream.<span class="tok-fn">push</span>(audioChunk16k);
 <span class="tok-kw">const</span> result = <span class="tok-kw">await</span> stream.<span class="tok-fn">finish</span>();
-console.<span class="tok-fn">log</span>(<span class="tok-str">'Final:'</span>, result.text, <span class="tok-str">'IAST:'</span>, <span class="tok-typ">Swanada</span>.<span class="tok-fn">transliterateIast</span>(result.text));</code></pre>
+console.<span class="tok-fn">log</span>(<span class="tok-str">'Lang:'</span>, result.language, <span class="tok-str">'Final:'</span>, result.text);</code></pre>
 
-      <pre class="snippet" id="snippetNode" style="display: none;"><code><span class="tok-kw">import</span> fs <span class="tok-kw">from</span> <span class="tok-str">'node:fs'</span>;
-<span class="tok-kw">import</span> { <span class="tok-typ">Swanada</span>, parseWav } <span class="tok-kw">from</span> <span class="tok-str">'swanada'</span>;
+      <pre class="snippet" id="snippetNode" style="display: none;"><code><span class="tok-kw">import</span> { <span class="tok-typ">Swanada</span> } <span class="tok-kw">from</span> <span class="tok-str">'swanada'</span>;
 
-<span class="tok-kw">const</span> stt = <span class="tok-kw">await</span> <span class="tok-typ">Swanada</span>.<span class="tok-fn">create</span>({ language: <span class="tok-str">'kn'</span> });
+<span class="tok-kw">const</span> stt = <span class="tok-kw">await</span> <span class="tok-typ">Swanada</span>.<span class="tok-fn">create</span>({ language: <span class="tok-str">'auto'</span>, codeSwitchEn: <span class="tok-kw">true</span> });
 <span class="tok-kw">const</span> result = <span class="tok-kw">await</span> stt.<span class="tok-fn">transcribe</span>(<span class="tok-str">'audio.wav'</span>);
-console.<span class="tok-fn">log</span>(result.text);</code></pre>
+console.<span class="tok-fn">log</span>(result.language, result.languageConfidence, result.text);</code></pre>
 
       <pre class="snippet" id="snippetPython" style="display: none;"><code><span class="tok-kw">from</span> swanada <span class="tok-kw">import</span> Swanada
 
-stt = Swanada.<span class="tok-fn">create</span>(language=<span class="tok-str">"hi"</span>)
+stt = Swanada.<span class="tok-fn">create</span>(language=<span class="tok-str">"auto"</span>, code_switch_en=<span class="tok-kw">True</span>)
 result = stt.<span class="tok-fn">transcribe</span>(<span class="tok-str">"speech_16k.wav"</span>)
-<span class="tok-fn">print</span>(result.text)</code></pre>
+<span class="tok-fn">print</span>(result.language, result.language_confidence, result.text)</code></pre>
 
-      <pre class="snippet" id="snippetCli" style="display: none;"><code><span class="tok-com"># CLI file and streaming transcription</span>
+      <pre class="snippet" id="snippetCli" style="display: none;"><code><span class="tok-com"># 12-Way Auto-LID, Bilingual Code-Switching, Sanskrit IAST &amp; Streaming</span>
+swanada speech.wav -l auto --code-switch-en --json
 swanada recitation.wav -l sa --iast
-cat stream.wav | swanada -l kn --stream --json</code></pre>
+cat stream.wav | swanada -l auto --stream --json</code></pre>
     </div>
 
     <!-- Footer -->
     <footer>
       <div>
-        <span>Swanada v1.0.0 · Apache 2.0 / MIT · </span>
+        <span>Swanada v1.1.0 · Apache 2.0 / MIT · </span>
         <a href="./models_manifest.json" target="_blank">models_manifest.json</a> · 
         <a href="./llms.txt" target="_blank">llms.txt</a>
       </div>
@@ -905,7 +934,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.6.0';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.7.0';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -948,7 +977,9 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     let activeWakeLock = null;
     let isRecording = false;
     let denoiseEnabled = true;
+    let codeSwitchEnabled = false;
     let activeLanguage = 'sa';
+    let lastDetectedLanguage = null;
     let currentFullTranscript = '';
     let currentIastTranscript = '';
     let oscilloscopeData = new Float32Array(512);
@@ -966,6 +997,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     const waveCanvas = document.getElementById('waveCanvas');
     const sampleRateLabel = document.getElementById('sampleRateLabel');
     const snrBadge = document.getElementById('snrBadge');
+    const codeSwitchBtn = document.getElementById('codeSwitchBtn');
     const denoiseBtn = document.getElementById('denoiseBtn');
     const committedText = document.getElementById('committedText');
     const volatileText = document.getElementById('volatileText');
@@ -1039,10 +1071,41 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       );
     }
 
+    function escapeHtmlText(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function renderCommittedWithCodeSwitch(el, text, englishSpans) {
+      if (!englishSpans || !Array.isArray(englishSpans) || englishSpans.length === 0) {
+        if (el.textContent !== text || el.childElementCount > 0) {
+          el.textContent = text;
+        }
+        return;
+      }
+      let cursor = 0;
+      let html = '';
+      for (const sp of englishSpans) {
+        const s = typeof sp.startChar === 'number' ? sp.startChar : sp.start_char;
+        const e = typeof sp.endChar === 'number' ? sp.endChar : sp.end_char;
+        if (typeof s !== 'number' || typeof e !== 'number' || s < cursor || e > text.length || s >= e) {
+          continue;
+        }
+        html += escapeHtmlText(text.slice(cursor, s));
+        html += `<u class="en-codemix" title="Code-switched English word">${escapeHtmlText(text.slice(s, e))}</u>`;
+        cursor = e;
+      }
+      html += escapeHtmlText(text.slice(cursor));
+      el.innerHTML = html;
+    }
+
     function syncCopyButtons() {
       const hasTranscript = currentFullTranscript.trim().length > 0;
       copyTranscriptBtn.disabled = !hasTranscript;
-      if (activeLanguage === 'sa' && currentIastTranscript.trim().length > 0) {
+      const effectiveLang = activeLanguage === 'auto' ? lastDetectedLanguage : activeLanguage;
+      if (effectiveLang === 'sa' && currentIastTranscript.trim().length > 0) {
         copyIastBtn.style.display = 'inline-flex';
         copyIastBtn.disabled = false;
       } else {
@@ -1171,6 +1234,14 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     // Preset evaluation utterances
     const PRESETS = {
+      auto: [
+        { title: "Auto · Sanskrit", text: "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति", sampleLang: "sa" },
+        { title: "Auto · Hindi", text: "अपने हेडमास्टर साहब ही को देखो", sampleLang: "hi" },
+        { title: "Auto · Kannada", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ", sampleLang: "kn" },
+        { title: "Auto · Tamil", text: "அதோ கலங்கரை விளக்கமும் தெரிகிறது", sampleLang: "ta" },
+        { title: "Auto · English", text: "The king was troubled with jealousy.", sampleLang: "en" },
+        { title: "Auto · Bengali", text: "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে", sampleLang: "bn" },
+      ],
       sa: [{ title: "Subhashita", text: "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति" }],
       hi: [{ title: "Conversational", text: "अपने हेडमास्टर साहब ही को देखो" }],
       kn: [{ title: "Conversational", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ" }],
@@ -1354,6 +1425,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
       volatileText.textContent = '';
       currentFullTranscript = '';
       currentIastTranscript = '';
+      lastDetectedLanguage = null;
+      if (activeLanguage === 'auto') {
+        activeLangCode.textContent = 'auto';
+      }
       iastBox.textContent = '';
       iastBox.style.display = 'none';
       tokenRibbon.innerHTML = '';
@@ -1367,12 +1442,12 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         const chip = document.createElement('div');
         chip.className = 'chip';
         chip.innerHTML = `<strong>${item.title}:</strong> ${item.text}`;
-        chip.addEventListener('click', () => playAndStreamPreset(lang));
+        chip.addEventListener('click', () => playAndStreamPreset(lang, item.sampleLang || lang));
         presetChips.appendChild(chip);
       });
     }
 
-    async function playAndStreamPreset(lang) {
+    async function playAndStreamPreset(lang, sampleLang = lang) {
       try {
         // Unlock Web Audio synchronously inside user tap gesture (required on iOS Safari/WebKit)
         unlockAudioContextSync();
@@ -1399,9 +1474,9 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
         if (lang === 'sa') {
           iastBox.style.display = 'block';
         }
-        liveBadge.textContent = 'Streaming...';
+        liveBadge.textContent = lang === 'auto' ? 'Auto-Detecting...' : 'Streaming...';
 
-        const sampleUrl = `./samples/${lang}.wav`;
+        const sampleUrl = `./samples/${sampleLang}.wav`;
         const res = await fetch(sampleUrl);
         if (!res.ok) throw new Error(`Could not load audio sample from ${sampleUrl}`);
         const arrayBuf = await res.arrayBuffer();
@@ -1510,7 +1585,7 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.6.0',
+              workerUrl: './stt-worker.mjs?v=1.7.0',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -1576,14 +1651,21 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
                 nextCommitted && typeof data.text === 'string' && data.text.startsWith(nextCommitted)
                   ? data.text.slice(nextCommitted.length)
                   : (data.volatile ? (nextCommitted ? ' ' + data.volatile : data.volatile) : '');
-              if (committedText.textContent !== nextCommitted) {
-                committedText.textContent = nextCommitted;
-              }
+              renderCommittedWithCodeSwitch(committedText, nextCommitted, data.englishSpans);
               if (volatileText.textContent !== nextVolatile) {
                 volatileText.textContent = nextVolatile;
               }
               currentFullTranscript = (data.text || (nextCommitted + nextVolatile)).trim();
-              if (activeLanguage === 'sa' && currentFullTranscript) {
+              const pLang = data.detectedLanguage || data.language || activeLanguage;
+              if (activeLanguage === 'auto' && pLang && pLang !== 'auto') {
+                lastDetectedLanguage = pLang;
+                const confPct = typeof data.languageConfidence === 'number'
+                  ? ` · ${Math.round(data.languageConfidence * 100)}%`
+                  : '';
+                activeLangCode.textContent = `auto → ${pLang.toUpperCase()}${confPct}`;
+                liveBadge.textContent = `Streaming [${pLang.toUpperCase()}]...`;
+              }
+              if ((activeLanguage === 'sa' || pLang === 'sa') && currentFullTranscript) {
                 currentIastTranscript = data.iast || transliterateIast(currentFullTranscript);
                 iastBox.style.display = 'block';
                 if (iastBox.textContent !== currentIastTranscript) {
@@ -1603,14 +1685,20 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             workerClient.on('final', (data) => {
               placeholder.style.display = 'none';
               const finalText = (data.text || currentFullTranscript || '').trim();
-              if (committedText.textContent !== finalText) {
-                committedText.textContent = finalText;
-              }
+              renderCommittedWithCodeSwitch(committedText, finalText, data.englishSpans);
               if (volatileText.textContent !== '') {
                 volatileText.textContent = '';
               }
               currentFullTranscript = finalText;
-              if (activeLanguage === 'sa' && finalText) {
+              const fLang = data.language || lastDetectedLanguage || activeLanguage;
+              if (activeLanguage === 'auto' && fLang && fLang !== 'auto') {
+                lastDetectedLanguage = fLang;
+                const confPct = typeof data.languageConfidence === 'number'
+                  ? ` · ${Math.round(data.languageConfidence * 100)}%`
+                  : '';
+                activeLangCode.textContent = `auto → ${fLang.toUpperCase()}${confPct}`;
+              }
+              if ((activeLanguage === 'sa' || fLang === 'sa') && finalText) {
                 currentIastTranscript = data.iast || transliterateIast(finalText);
                 iastBox.style.display = 'block';
                 if (iastBox.textContent !== currentIastTranscript) {
@@ -1631,7 +1719,10 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
               if (typeof data.snrDb === 'number' && data.snrDb > 0) snrBadge.textContent = `SNR ${Math.round(data.snrDb)}dB`;
               if (data.durationMs) durationVal.textContent = (data.durationMs / 1000).toFixed(2) + 's';
               if (data.inferenceMs) latencyVal.textContent = Math.round(data.inferenceMs) + 'ms';
-              liveBadge.textContent = 'Completed';
+              liveBadge.textContent =
+                activeLanguage === 'auto' && fLang && fLang !== 'auto'
+                  ? `Completed [${fLang.toUpperCase()}]`
+                  : 'Completed';
 
               // Populate token ribbon
               tokenRibbon.innerHTML = '';
@@ -1651,16 +1742,21 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
           // - Studio (Desktop): 177.4 MiB `sushrota_sanskrit_ctc_int8.onnx` + `heads/<lang>.bin`
           const encoderUrl = useMobileTier
             ? (isLocalDevHost()
-                ? '../models/onnx_mobile/swanada_mobile_ctc_int8.onnx?v=1.6.0'
-                : `${HF_MOBILE_MODEL_BASE}/swanada_mobile_ctc_int8.onnx?v=1.6.0`)
+                ? '../models/onnx_mobile/swanada_mobile_ctc_int8.onnx?v=1.7.0'
+                : `${HF_MOBILE_MODEL_BASE}/swanada_mobile_ctc_int8.onnx?v=1.7.0`)
             : (isLocalDevHost()
-                ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0'
-                : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx?v=1.5.0`);
-          const headUrl = useMobileTier
-            ? `./heads_mobile/${lang}.bin?v=1.6.0`
-            : (lang === 'en' ? './heads/en.bin?v=1.5.4' : `./heads/${lang}.bin?v=1.5.0`);
+                ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.7.0'
+                : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx?v=1.7.0`);
+          const headUrl = lang === 'auto'
+            ? undefined
+            : (useMobileTier
+                ? `./heads_mobile/${lang}.bin?v=1.7.0`
+                : `./heads/${lang}.bin?v=1.7.0`);
           const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
-          const vocabUrl = `./vocabularies/${vocabFile}?v=1.5.0`;
+          const vocabUrl = lang === 'auto' ? undefined : `./vocabularies/${vocabFile}?v=1.7.0`;
+          const lidUrl = lang === 'auto'
+            ? (useMobileTier ? './heads_mobile/lid.bin?v=1.7.0' : './heads/lid.bin?v=1.7.0')
+            : undefined;
 
           await workerClient.init({
             language: lang,
@@ -1668,6 +1764,8 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
             modelUrl: encoderUrl,
             headUrl,
             vocabUrl,
+            lidUrl,
+            codeSwitchEn: codeSwitchEnabled,
           });
 
           if (myEpoch !== uiInitEpoch) return;
@@ -2012,6 +2110,22 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
     }
 
     // Setup Event Listeners
+    if (codeSwitchBtn) {
+      codeSwitchBtn.addEventListener('click', () => {
+        codeSwitchEnabled = !codeSwitchEnabled;
+        codeSwitchBtn.setAttribute('aria-pressed', String(codeSwitchEnabled));
+        codeSwitchBtn.textContent = codeSwitchEnabled ? '+EN Latin: ON' : '+EN Latin: OFF';
+        if (codeSwitchEnabled) {
+          codeSwitchBtn.classList.add('copied');
+        } else {
+          codeSwitchBtn.classList.remove('copied');
+        }
+        if (workerClient && typeof workerClient.setCodeSwitchEn === 'function') {
+          workerClient.setCodeSwitchEn(codeSwitchEnabled);
+        }
+      });
+    }
+
     denoiseBtn.addEventListener('click', () => {
       denoiseEnabled = !denoiseEnabled;
       denoiseBtn.setAttribute('aria-pressed', String(denoiseEnabled));
@@ -2107,7 +2221,16 @@ cat stream.wav | swanada -l kn --stream --json</code></pre>
 
     // Boot Studio
     initCanvas();
-    initEngine('sa');
+    const initialLang = (urlParams.get('lang') || 'sa').toLowerCase();
+    const validBootLangs = new Set(['auto', 'sa', 'en', 'hi', 'kn', 'mr', 'bn', 'ta', 'te', 'ml', 'gu', 'pa', 'or']);
+    const bootLang = validBootLangs.has(initialLang) ? initialLang : 'sa';
+    if (urlParams.get('codeswitch') === '1' && codeSwitchBtn) {
+      codeSwitchBtn.click();
+    }
+    document.querySelectorAll('.lang-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.lang === bootLang);
+    });
+    initEngine(bootLang);
   </script>
 </body>
 </html>

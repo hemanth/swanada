@@ -103,10 +103,12 @@ def extract_log_mel_features(
     if sr != SAMPLE_RATE:
         raise ValueError(f"extract_log_mel_features expects 16000 Hz, got {sr} Hz")
 
-    pcm = pcm.astype(np.float32)
+    pcm = np.asarray(pcm, dtype=np.float32)
     N = len(pcm)
     if N == 0:
         return np.zeros((1, N_MELS, 0), dtype=np.float32), 0
+    if not np.all(np.isfinite(pcm)):
+        pcm = np.nan_to_num(pcm, nan=0.0, posinf=1.0, neginf=-1.0).astype(np.float32)
 
     T = N // HOP_LENGTH
     num_frames = T + 1

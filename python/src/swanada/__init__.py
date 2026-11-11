@@ -39,6 +39,17 @@ from .engine import (
     AcousticEngine,
     TranscriptionResult,
 )
+from .lid import (
+    LID_LANGUAGES,
+    LanguageDetectionResult,
+    CodeSwitchSpan,
+    CodeSwitchDecodeResult,
+    NeuralLIDWeights,
+    parse_lid_head_bytes,
+    serialize_lid_head_bytes,
+    detect_language_from_hidden,
+    decode_bilingual_codeswitch,
+)
 from .core import (
     Swanada,
 )
@@ -99,4 +110,13 @@ __all__ = [
     "is_special_token",
     "CTCDecodeResult",
     "CTCGreedyDecoder",
+    "LID_LANGUAGES",
+    "LanguageDetectionResult",
+    "CodeSwitchSpan",
+    "CodeSwitchDecodeResult",
+    "NeuralLIDWeights",
+    "parse_lid_head_bytes",
+    "serialize_lid_head_bytes",
+    "detect_language_from_hidden",
+    "decode_bilingual_codeswitch",
 ]

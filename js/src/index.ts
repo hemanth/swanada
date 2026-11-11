@@ -18,10 +18,12 @@ import { SwanadaAudioCapture } from './audio/audio-capture.ts';
 import { SwanadaWorkerClient } from './worker/client.ts';
 import type {
   SupportedLanguage,
+  LanguageSelection,
   ExecutionProvider,
   SwanadaEngineConfig,
   TranscriptionResult,
 } from './models/types.ts';
+import type { LanguageDetectionResult } from './decoder/lid.ts';
 
 export type SwanadaConfig = SwanadaEngineConfig;
 export type { StreamSessionOptions };
@@ -57,36 +59,48 @@ export class Swanada {
     return transliterateIast(text);
   }
 
-  /**
-   * Transcribes audio from Float32Array PCM, ArrayBuffer (WAV), Uint8Array / Buffer (WAV), or string (URL / File path in Node).
-   */
-  async transcribe(audio: Float32Array | ArrayBuffer | Uint8Array | string): Promise<TranscriptionResult> {
-    let pcm: Float32Array;
-
+  private async resolvePcm16k(audio: Float32Array | ArrayBuffer | Uint8Array | string): Promise<Float32Array> {
     if (audio instanceof Float32Array) {
-      pcm = audio;
-    } else if (audio instanceof ArrayBuffer) {
-      const decoded = await decodeAndResampleBrowser(audio, 16000);
-      pcm = decoded;
-    } else if (typeof Uint8Array !== 'undefined' && audio instanceof Uint8Array) {
+      return audio;
+    }
+    if (audio instanceof ArrayBuffer) {
+      return decodeAndResampleBrowser(audio, 16000);
+    }
+    if (typeof Uint8Array !== 'undefined' && audio instanceof Uint8Array) {
       const parsed = parseWav(audio);
-      pcm = resamplePcm(parsed.pcm, parsed.sampleRate, 16000);
-    } else if (typeof audio === 'string') {
+      return resamplePcm(parsed.pcm, parsed.sampleRate, 16000);
+    }
+    if (typeof audio === 'string') {
       if (typeof process !== 'undefined' && process.versions?.node) {
         const fs = await import('node:fs');
         const buf = fs.readFileSync(audio);
         const parsed = parseWav(buf);
-        pcm = resamplePcm(parsed.pcm, parsed.sampleRate, 16000);
-      } else {
-        const res = await fetch(audio);
-        const arrayBuf = await res.arrayBuffer();
-        pcm = await decodeAndResampleBrowser(arrayBuf, 16000);
+        return resamplePcm(parsed.pcm, parsed.sampleRate, 16000);
       }
-    } else {
-      throw new TypeError(`Unsupported audio input type: ${typeof audio}`);
+      const res = await fetch(audio);
+      const arrayBuf = await res.arrayBuffer();
+      return decodeAndResampleBrowser(arrayBuf, 16000);
     }
+    throw new TypeError(`Unsupported audio input type: ${typeof audio}`);
+  }
 
-    return this.engine.transcribe(pcm);
+  /**
+   * Detects spoken language across all 12 supported languages.
+   */
+  async detectLanguage(audio: Float32Array | ArrayBuffer | Uint8Array | string): Promise<LanguageDetectionResult> {
+    const pcm = await this.resolvePcm16k(audio);
+    return this.engine.detectLanguage(pcm);
+  }
+
+  /**
+   * Transcribes audio from Float32Array PCM, ArrayBuffer (WAV), Uint8Array / Buffer (WAV), or string (URL / File path in Node).
+   */
+  async transcribe(
+    audio: Float32Array | ArrayBuffer | Uint8Array | string,
+    options?: { codeSwitchEn?: boolean }
+  ): Promise<TranscriptionResult> {
+    const pcm = await this.resolvePcm16k(audio);
+    return this.engine.transcribe(pcm, options);
   }
 
   /**
@@ -131,6 +145,10 @@ export class Swanada {
   }
 
   async release(): Promise<void> {
+    await this.engine.release();
+  }
+
+  async dispose(): Promise<void> {
     await this.engine.release();
   }
 }

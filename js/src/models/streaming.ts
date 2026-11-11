@@ -5,7 +5,7 @@
  */
 
 import { AcousticEngine } from './engine.ts';
-import { StreamingCTCDecoder } from '../decoder/streaming.ts';
+import { StreamingCTCDecoder, formatEnDisplay } from '../decoder/streaming.ts';
 import type { StreamingTranscript } from '../decoder/streaming.ts';
 import type { TranscriptionResult } from './types.ts';
 import { normalizeIndicText } from '../decoder/normalizer.ts';
@@ -35,6 +35,11 @@ export class StreamingAcousticEngine {
   private hasUntranscribedTail: boolean = false;
   private pendingTurnFlush: boolean = false;
   private lastPartialTranscript: StreamingTranscript | null = null;
+  private isAutoLanguage: boolean = false;
+  private detectedLanguage: string | undefined = undefined;
+  private languageConfidence: number | undefined = undefined;
+  private languageLocked: boolean = false;
+  private fullRecordingPcm: Float32Array = new Float32Array(0);
 
   get audioBuffer(): Float32Array {
     return this.audioBuffer;
@@ -68,6 +73,41 @@ export class StreamingAcousticEngine {
     this.leftContextSamples = options?.leftContextSamples ?? 25600; // 1,600 ms overlap guarantees committed tail stays in window
     this.maxBufferSamples = options?.maxBufferSamples ?? 61440; // 3,840 ms window cap
     this.vadSilenceThreshold = options?.vadSilenceThreshold ?? 0.005;
+    this.isAutoLanguage = ((engine as any)?.config?.language === 'auto');
+  }
+
+  private async transcribeStreamWindow(evalBuffer: Float32Array, isPartial: boolean): Promise<TranscriptionResult> {
+    if (!this.isAutoLanguage) {
+      return isPartial
+        ? (this.engine as any).transcribe(evalBuffer, { isPartial: true })
+        : (this.engine as any).transcribe(evalBuffer);
+    }
+    if (this.languageLocked && this.detectedLanguage) {
+      return (this.engine as any).transcribe(evalBuffer, {
+        isPartial,
+        forcedLanguage: this.detectedLanguage,
+      });
+    }
+    const res: TranscriptionResult = await (this.engine as any).transcribe(evalBuffer, { isPartial });
+    if (res.language && res.language !== 'auto') {
+      if (this.detectedLanguage !== res.language) {
+        this.detectedLanguage = res.language;
+        const newVocab =
+          typeof (this.engine as any).getVocabForLanguage === 'function'
+            ? (this.engine as any).getVocabForLanguage(res.language)
+            : (this.engine as any).getVocab?.() || [];
+        this.decoder = new StreamingCTCDecoder(newVocab, {
+          trailTokens: 3,
+          requireStabilityOnWordBoundary: true,
+        });
+        this.baseCommittedTokens = [];
+      }
+      this.languageConfidence = res.languageConfidence;
+      if (evalBuffer.length >= 24000 && (res.languageConfidence ?? 0) >= 0.78) {
+        this.languageLocked = true;
+      }
+    }
+    return res;
   }
 
   on(event: 'partial', cb: (res: StreamingTranscript) => void): this;
@@ -120,7 +160,7 @@ export class StreamingAcousticEngine {
           const evalBuf = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
             ? this.audioBuffer.slice(-this.maxBufferSamples)
             : this.audioBuffer;
-          const tailRes = await (this.engine as any).transcribe(evalBuf);
+          const tailRes = await this.transcribeStreamWindow(evalBuf, false);
           if (tailRes?.tokens?.length > 0) {
             if (this.pendingTurnFlush) {
               this.promotePendingTurn();
@@ -166,6 +206,22 @@ export class StreamingAcousticEngine {
 
   async push(chunk: Float32Array): Promise<StreamingTranscript | void> {
     if (this.isFinished || chunk.length === 0) return;
+    const cap = this.isAutoLanguage ? 960000 : this.maxBufferSamples;
+    if (this.isAutoLanguage || !this.isWindowSliding) {
+      if (this.fullRecordingPcm.length + chunk.length <= cap) {
+        const mergedFull = new Float32Array(this.fullRecordingPcm.length + chunk.length);
+        mergedFull.set(this.fullRecordingPcm, 0);
+        mergedFull.set(chunk, this.fullRecordingPcm.length);
+        this.fullRecordingPcm = mergedFull;
+      } else if (this.isAutoLanguage) {
+        const mergedFull = new Float32Array(this.fullRecordingPcm.length + chunk.length);
+        mergedFull.set(this.fullRecordingPcm, 0);
+        mergedFull.set(chunk, this.fullRecordingPcm.length);
+        this.fullRecordingPcm = mergedFull.slice(-cap);
+      } else {
+        this.fullRecordingPcm = new Float32Array(0);
+      }
+    }
     this.totalAudioSamples += chunk.length;
     const durationMs = (this.totalAudioSamples / 16000) * 1000;
 
@@ -221,6 +277,24 @@ export class StreamingAcousticEngine {
       this.consecutiveSilentSamples += chunk.length;
       if (this.consecutiveSilentSamples >= this.pauseThresholdSamples) {
         await this.segmentTurnOnPause(durationMs);
+        if (
+          this.pendingTurnFlush &&
+          this.consecutiveSilentSamples >= Math.max(this.pauseThresholdSamples, 16000)
+        ) {
+          this.promotePendingTurn();
+          if (this.decoder.getCommittedText()) {
+            this.lastPartialTranscript = {
+              text: this.decoder.getCommittedText(),
+              committed: this.decoder.getCommittedText(),
+              volatile: '',
+              isFinal: false,
+              tokens: this.decoder.getCommittedTokens(),
+              durationMs,
+              inferenceMs: 0,
+              rtf: 0,
+            };
+          }
+        }
         return;
       }
       return;
@@ -268,6 +342,7 @@ export class StreamingAcousticEngine {
     nextBuf.set(this.audioBuffer, 0);
     nextBuf.set(chunk, this.audioBuffer.length);
     this.audioBuffer = nextBuf;
+    this.samplesSinceLastInference += chunk.length;
 
     // Allow initial chunk emission starting at 100ms (1600 samples)
     if (this.audioBuffer.length < 1600) {
@@ -281,7 +356,7 @@ export class StreamingAcousticEngine {
         : this.audioBuffer;
 
       const startInference = performance.now();
-      const res = await (this.engine as any).transcribe(evalBuffer, { isPartial: true });
+      const res = await this.transcribeStreamWindow(evalBuffer, true);
       const inferenceMs = performance.now() - startInference;
       this.samplesSinceLastInference = 0;
       this.hasUntranscribedTail = false;
@@ -314,11 +389,15 @@ export class StreamingAcousticEngine {
         globalTokens = [...committed, ...prevHyp.slice(committed.length)];
       }
 
-      const commitMinSamples = (this.decoder as any).isEnglish ? 28800 : 34000;
+      const commitMinSamples = Math.max(32000, this.maxBufferSamples - 8000);
       const allowCommit =
         !this.pendingTurnFlush && (this.isWindowSliding || this.audioBuffer.length >= commitMinSamples);
 
       const st = this.decoder.update(globalTokens, false, durationMs, inferenceMs, allowCommit);
+      if (this.isAutoLanguage) {
+        st.detectedLanguage = this.detectedLanguage;
+        st.languageConfidence = this.languageConfidence;
+      }
       this.lastPartialTranscript = st;
 
       if (this.listeners.token.length > 0 && res.tokens.length > 0) {
@@ -364,11 +443,42 @@ export class StreamingAcousticEngine {
       this.pendingChunk = new Float32Array(0);
     }
 
+    if (this.isAutoLanguage && this.fullRecordingPcm.length >= 400) {
+      const fullPcm = this.fullRecordingPcm;
+      const fullRes: TranscriptionResult = await (this.engine as any).transcribe(fullPcm, { isPartial: false });
+      fullRes.durationMs = durationMs;
+      fullRes.rtf = durationMs > 0 ? fullRes.inferenceMs / durationMs : 0;
+      this.audioBuffer = new Float32Array(0);
+      this.pendingChunk = new Float32Array(0);
+      this.fullRecordingPcm = new Float32Array(0);
+      this.detectedLanguage = undefined;
+      this.languageConfidence = undefined;
+      this.languageLocked = false;
+      this.totalAudioSamples = 0;
+      this.consecutiveSilentSamples = 0;
+      this.baseCommittedTokens = [];
+      this.isWindowSliding = false;
+      this.samplesSinceLastInference = 0;
+      this.hasUntranscribedTail = false;
+      this.pendingTurnFlush = false;
+      this.lastPartialTranscript = null;
+      this.decoder.reset();
+      for (const cb of this.listeners.final) {
+        try { cb(fullRes); } catch (e) { this.emitError(e); }
+      }
+      return fullRes;
+    }
+
     // Run final full-utterance closure decode when active audio buffer has speech
     if (this.audioBuffer.length >= 400) {
-      const evalBuffer = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
-        ? this.audioBuffer.slice(-this.maxBufferSamples)
-        : this.audioBuffer;
+      const evalBuffer =
+        !this.isWindowSliding &&
+        this.baseCommittedTokens.length === 0 &&
+        this.fullRecordingPcm.length >= this.audioBuffer.length
+          ? this.fullRecordingPcm
+          : this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples
+            ? this.audioBuffer.slice(-this.maxBufferSamples)
+            : this.audioBuffer;
       const tailRes = await (this.engine as any).transcribe(evalBuffer);
       if (tailRes?.tokens?.length > 0 || !(this.decoder as any).lastHypTokens?.length) {
         if (this.pendingTurnFlush && tailRes?.tokens?.length > 0) {
@@ -585,6 +695,10 @@ export class StreamingAcousticEngine {
   reset(): void {
     this.audioBuffer = new Float32Array(0);
     this.pendingChunk = new Float32Array(0);
+    this.fullRecordingPcm = new Float32Array(0);
+    this.detectedLanguage = undefined;
+    this.languageConfidence = undefined;
+    this.languageLocked = false;
     this.totalAudioSamples = 0;
     this.consecutiveSilentSamples = 0;
     this.baseCommittedTokens = [];

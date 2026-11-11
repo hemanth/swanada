@@ -4,20 +4,29 @@
  * and zero-copy Transferable ArrayBuffer dispatching.
  */
 
-import type { SupportedLanguage, ExecutionProvider, ModelTier, TranscriptionResult } from '../models/types.ts';
+import type {
+  SupportedLanguage,
+  LanguageSelection,
+  ExecutionProvider,
+  ModelTier,
+  TranscriptionResult,
+} from '../models/types.ts';
+import type { CodeSwitchSpan } from '../decoder/lid.ts';
 
 export interface SwanadaWorkerConfig {
   workerUrl?: string | URL;
-  language?: SupportedLanguage;
+  language?: LanguageSelection;
   modelTier?: ModelTier;
   modelUrl?: string;
   headUrl?: string;
+  lidUrl?: string;
   vocabUrl?: string;
   executionProvider?: ExecutionProvider;
   numThreads?: number;
   wasmPaths?: string;
   cacheName?: string;
   denoise?: boolean;
+  codeSwitchEn?: boolean;
 }
 
 export interface WorkerProgressEvent {
@@ -33,6 +42,10 @@ export interface WorkerPartialEvent {
   committed?: string;
   volatile?: string;
   iast?: string;
+  language?: string;
+  detectedLanguage?: string;
+  languageConfidence?: number;
+  englishSpans?: CodeSwitchSpan[];
   rtf: number;
   snrDb?: number;
   durationMs?: number;
@@ -42,7 +55,7 @@ export interface WorkerPartialEvent {
 }
 
 export interface WorkerReadyEvent {
-  language: SupportedLanguage;
+  language: LanguageSelection;
   executionProvider: ExecutionProvider;
   numThreads: number;
   fromCache: boolean;
@@ -62,7 +75,7 @@ export class SwanadaWorkerClient {
   private readyPromise: Promise<WorkerReadyEvent>;
   private readyResolve!: (value: WorkerReadyEvent) => void;
   private readyReject!: (reason?: any) => void;
-  private expectedLanguage: SupportedLanguage | null = null;
+  private expectedLanguage: LanguageSelection | null = null;
   private finalResolve: ((result: TranscriptionResult & { iast?: string }) => void) | null = null;
   private finalReject: ((reason?: any) => void) | null = null;
   private isTerminated = false;
@@ -140,6 +153,10 @@ export class SwanadaWorkerClient {
             committed: msg.committed ?? '',
             volatile: msg.volatile ?? '',
             iast: msg.iast,
+            language: msg.language,
+            detectedLanguage: msg.detectedLanguage,
+            languageConfidence: msg.languageConfidence,
+            englishSpans: msg.englishSpans,
             rtf: msg.rtf,
             snrDb: msg.snrDb,
             durationMs: msg.durationMs,
@@ -160,6 +177,9 @@ export class SwanadaWorkerClient {
             rtf: msg.rtf,
             snrDb: msg.snrDb,
             tokens: msg.tokens,
+            languageConfidence: msg.languageConfidence,
+            languageProbabilities: msg.languageProbabilities,
+            englishSpans: msg.englishSpans,
           };
           this.emit('final', result);
           if (this.finalResolve) {
@@ -209,7 +229,7 @@ export class SwanadaWorkerClient {
    */
   async init(config: SwanadaWorkerConfig): Promise<WorkerReadyEvent> {
     if (this.isTerminated) throw new Error('Cannot initialize terminated worker.');
-    const targetLang = (config.language || 'sa') as SupportedLanguage;
+    const targetLang = (config.language || 'sa') as LanguageSelection;
     this.expectedLanguage = targetLang;
     const prevResolve = this.readyResolve;
     this.readyPromise = new Promise<WorkerReadyEvent>((resolve, reject) => {
@@ -227,11 +247,13 @@ export class SwanadaWorkerClient {
       modelTier: config.modelTier,
       modelUrl: config.modelUrl,
       headUrl: config.headUrl,
+      lidUrl: config.lidUrl,
       vocabUrl: config.vocabUrl,
       executionProvider: config.executionProvider || 'wasm',
       numThreads: config.numThreads,
       wasmPaths: config.wasmPaths,
       cacheName: config.cacheName,
+      codeSwitchEn: Boolean(config.codeSwitchEn),
     });
     return this.readyPromise;
   }
@@ -247,8 +269,8 @@ export class SwanadaWorkerClient {
    * Changes the active language model.
    */
   async setLanguage(
-    language: SupportedLanguage,
-    options: { modelUrl?: string; headUrl?: string; vocabUrl?: string } = {}
+    language: LanguageSelection,
+    options: { modelUrl?: string; headUrl?: string; lidUrl?: string; vocabUrl?: string } = {}
   ): Promise<WorkerReadyEvent> {
     this.expectedLanguage = language;
     const prevResolve = this.readyResolve;
@@ -266,9 +288,22 @@ export class SwanadaWorkerClient {
       language,
       modelUrl: options.modelUrl,
       headUrl: options.headUrl,
+      lidUrl: options.lidUrl,
       vocabUrl: options.vocabUrl,
     });
     return this.readyPromise;
+  }
+
+  /**
+   * Toggles bilingual Indic + English Latin code-switching in the worker.
+   */
+  setCodeSwitchEn(enabled: boolean): void {
+    if (!this.isTerminated) {
+      this.worker.postMessage({
+        type: 'SET_CODE_SWITCH',
+        enabled: Boolean(enabled),
+      });
+    }
   }
 
   /**

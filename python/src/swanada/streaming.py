@@ -20,7 +20,13 @@ def _is_en_vocab(vocab: Union[List[str], dict]) -> bool:
 def _format_en_display(text: str) -> str:
     if not text:
         return text
-    out = re.sub(r"^[a-z]", lambda m: m.group(0).upper(), text)
+    out = re.sub(r"([a-zA-Z])([0-9])", r"\1 \2", text)
+    out = re.sub(
+        r"([0-9])([a-zA-Z]{2,})\b",
+        lambda m: m.group(0) if m.group(2).lower() in ("st", "nd", "rd", "th") else f"{m.group(1)} {m.group(2)}",
+        out,
+    )
+    out = re.sub(r"^[a-z]", lambda m: m.group(0).upper(), out)
     out = re.sub(r"([.?!]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), out)
     out = re.sub(r"\bi(?=(?:['’](?:m|ve|ll|d))?\b)", "I", out)
     return out
@@ -36,6 +42,8 @@ class StreamingTranscript:
     duration_ms: float
     inference_ms: float
     rtf: float
+    detected_language: Optional[str] = None
+    language_confidence: Optional[float] = None
 
 
 class StreamingCTCDecoder:
@@ -342,6 +350,10 @@ class SwanadaStream:
 
         self.audio_buffer = np.zeros(0, dtype=np.float32)
         self.pending_chunk = np.zeros(0, dtype=np.float32)
+        self._full_recording_pcm = np.zeros(0, dtype=np.float32)
+        self._detected_language = None
+        self._language_confidence = None
+        self._language_locked = False
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0
@@ -354,6 +366,11 @@ class SwanadaStream:
         self.push_count: int = 0
         self.last_transcript: Optional[StreamingTranscript] = None
         self.has_untranscribed_tail: bool = False
+        self._is_auto_language: bool = getattr(engine, "language", "sa") == "auto"
+        self._detected_language: Optional[str] = None
+        self._language_confidence: Optional[float] = None
+        self._language_locked: bool = False
+        self._full_recording_pcm = np.zeros(0, dtype=np.float32)
         self.listeners_partial: List[Callable[[StreamingTranscript], None]] = []
         self.listeners_final: List[Callable[[TranscriptionResult], None]] = []
         self.listeners_error: List[Callable[[Exception], None]] = []
@@ -461,6 +478,27 @@ class SwanadaStream:
         self.pending_turn_flush = False
 
     def _transcribe_buffer(self, buf: np.ndarray, is_partial: bool = False) -> TranscriptionResult:
+        if self._is_auto_language:
+            if self._language_locked and self._detected_language:
+                return self.engine.transcribe(
+                    buf, is_partial=is_partial, forced_language=self._detected_language
+                )
+            res = self.engine.transcribe(buf, is_partial=is_partial)
+            if res.language and res.language != "auto":
+                if self._detected_language != res.language:
+                    self._detected_language = res.language
+                    multi_vocabs = getattr(self.engine, "_multi_vocabs", {})
+                    new_vocab = multi_vocabs.get(res.language, self.engine.vocab)
+                    self.decoder = StreamingCTCDecoder(
+                        new_vocab,
+                        trail_tokens=3,
+                        require_stability_on_word_boundary=True,
+                    )
+                    self.base_committed_tokens.clear()
+                self._language_confidence = res.language_confidence
+                if len(buf) >= 24000 and (res.language_confidence or 0.0) >= 0.78:
+                    self._language_locked = True
+            return res
         if is_partial and getattr(self.engine, "_supports_is_partial", False):
             return self.engine.transcribe(buf, is_partial=True)
         return self.engine.transcribe(buf)
@@ -525,36 +563,13 @@ class SwanadaStream:
     def _segment_turn_on_pause(self, duration_ms: float) -> bool:
         did_infer = False
         if len(self.audio_buffer) >= 4800:
-            need_tail_infer = (
-                (self.has_untranscribed_tail or not self.decoder.last_hyp_tokens)
-                and (
-                    self.total_audio_samples <= 48000
-                    or self.infer_interval_samples == 0
-                    or self.samples_since_last_inference >= max(self.infer_interval_samples, 38400)
-                )
-            )
+            need_tail_infer = self.has_untranscribed_tail or not self.decoder.last_hyp_tokens
             if need_tail_infer:
                 try:
-                    use_tail_slice = (
-                        self.is_window_sliding
-                        or (
-                            self.chunk_size_samples <= 1600
-                            and len(self.decoder.committed_tokens) - len(self.base_committed_tokens) >= 6
-                            and len(self.audio_buffer) > 40000
-                        )
-                    )
                     eval_buf = (
-                        self.audio_buffer[-36000:]
-                        if (
-                            not self.is_window_sliding
-                            and use_tail_slice
-                            and len(self.audio_buffer) > 36000
-                        )
-                        else (
-                            self.audio_buffer[-self.max_buffer_samples:]
-                            if (self.is_window_sliding and len(self.audio_buffer) > self.max_buffer_samples)
-                            else self.audio_buffer
-                        )
+                        self.audio_buffer[-self.max_buffer_samples:]
+                        if (self.is_window_sliding and len(self.audio_buffer) > self.max_buffer_samples)
+                        else self.audio_buffer
                     )
                     tail_res = self._transcribe_buffer(eval_buf, is_partial=True)
                     did_infer = True
@@ -562,7 +577,7 @@ class SwanadaStream:
                         if self.pending_turn_flush:
                             self._promote_pending_turn()
                         committed = list(self.decoder.committed_tokens)
-                        if not use_tail_slice:
+                        if not self.is_window_sliding:
                             global_tokens = self._align_growing_window(
                                 committed,
                                 self.base_committed_tokens + tail_res.tokens,
@@ -608,6 +623,8 @@ class SwanadaStream:
                 duration_ms=duration_ms,
                 inference_ms=0.0,
                 rtf=(self.last_transcript.inference_ms / duration_ms) if duration_ms > 0 else 0.0,
+                detected_language=self._detected_language if self._is_auto_language else None,
+                language_confidence=self._language_confidence if self._is_auto_language else None,
             )
         comm_txt = self.decoder.committed_text
         return StreamingTranscript(
@@ -619,6 +636,8 @@ class SwanadaStream:
             duration_ms=duration_ms,
             inference_ms=0.0,
             rtf=0.0,
+            detected_language=self._detected_language if self._is_auto_language else None,
+            language_confidence=self._language_confidence if self._is_auto_language else None,
         )
 
     def push(self, chunk: np.ndarray) -> Optional[StreamingTranscript]:
@@ -626,6 +645,19 @@ class SwanadaStream:
             return None
 
         chunk_float = chunk.astype(np.float32)
+        cap_full = 960000 if self._is_auto_language else self.max_buffer_samples
+        if self._is_auto_language or not self.is_window_sliding:
+            if len(self._full_recording_pcm) + len(chunk_float) <= cap_full:
+                self._full_recording_pcm = (
+                    np.concatenate([self._full_recording_pcm, chunk_float])
+                    if len(self._full_recording_pcm) > 0
+                    else chunk_float.copy()
+                )
+            elif self._is_auto_language:
+                merged = np.concatenate([self._full_recording_pcm, chunk_float])
+                self._full_recording_pcm = merged[-cap_full:]
+            else:
+                self._full_recording_pcm = np.zeros(0, dtype=np.float32)
         chunk_len = len(chunk_float)
         self.total_audio_samples += chunk_len
         self.push_count += 1
@@ -669,6 +701,22 @@ class SwanadaStream:
             self.consecutive_silent_samples += chunk_len
             if self.consecutive_silent_samples >= self.pause_threshold_samples:
                 self._segment_turn_on_pause(duration_ms)
+                if (
+                    self.pending_turn_flush
+                    and self.consecutive_silent_samples >= max(self.pause_threshold_samples, 16000)
+                ):
+                    self._promote_pending_turn()
+                    if self.decoder.committed_text:
+                        self.last_transcript = StreamingTranscript(
+                            text=self.decoder.committed_text,
+                            committed=self.decoder.committed_text,
+                            volatile="",
+                            is_final=False,
+                            tokens=list(self.decoder.committed_tokens),
+                            duration_ms=duration_ms,
+                            inference_ms=0.0,
+                            rtf=0.0,
+                        )
             if self.total_audio_samples < 1600:
                 return None
             return self._cached_or_empty_transcript(duration_ms)
@@ -723,13 +771,11 @@ class SwanadaStream:
         if (
             effective_interval > 0
             and self.last_transcript is not None
+            and len(self.audio_buffer) <= self.max_buffer_samples
             and (not self.pending_turn_flush or self.total_audio_samples > 64000)
             and self.samples_since_last_inference < effective_interval
         ):
             self.has_untranscribed_tail = True
-            if len(self.audio_buffer) > self.max_buffer_samples:
-                self.audio_buffer = self.audio_buffer[-self.left_context_samples:]
-                self.is_window_sliding = True
             st = StreamingTranscript(
                 text=self.last_transcript.text,
                 committed=self.last_transcript.committed,
@@ -747,22 +793,10 @@ class SwanadaStream:
                     self._emit_error(e)
             return st
 
-        use_partial_tail_slice = (
-            self.is_window_sliding
-            or (
-                self.chunk_size_samples <= 1600
-                and len(self.decoder.committed_tokens) - len(self.base_committed_tokens) >= 6
-                and len(self.audio_buffer) > 40000
-            )
-        )
         eval_buf = (
-            self.audio_buffer[-36000:]
-            if (use_partial_tail_slice and len(self.audio_buffer) > 36000)
-            else (
-                self.audio_buffer[-self.max_buffer_samples:]
-                if (self.is_window_sliding and len(self.audio_buffer) > self.max_buffer_samples)
-                else self.audio_buffer
-            )
+            self.audio_buffer[-self.max_buffer_samples:]
+            if (self.is_window_sliding and len(self.audio_buffer) > self.max_buffer_samples)
+            else self.audio_buffer
         )
 
         t0 = time.perf_counter()
@@ -778,7 +812,7 @@ class SwanadaStream:
         if self.pending_turn_flush and not res.tokens:
             last_hyp = list(self.decoder.last_hyp_tokens)
             global_tokens = last_hyp if len(last_hyp) > len(committed) else committed
-        elif not use_partial_tail_slice:
+        elif not self.is_window_sliding:
             window_tokens = self.base_committed_tokens + res.tokens
             global_tokens = self._align_growing_window(
                 committed, window_tokens, len(self.base_committed_tokens)
@@ -797,11 +831,14 @@ class SwanadaStream:
         ):
             global_tokens = committed + prev_hyp[len(committed):]
 
-        commit_min_samples = 28800 if self.decoder._is_english else 34000
+        commit_min_samples = max(32000, self.max_buffer_samples - 8000)
         allow_commit = (not self.pending_turn_flush) and (
             self.is_window_sliding or len(self.audio_buffer) >= commit_min_samples
         )
         st = self.decoder.update(global_tokens, False, duration_ms, inference_ms, allow_commit=allow_commit)
+        if self._is_auto_language:
+            st.detected_language = self._detected_language
+            st.language_confidence = self._language_confidence
         self.last_transcript = st
 
         for cb in self.listeners_partial:
@@ -827,13 +864,49 @@ class SwanadaStream:
                 self.has_untranscribed_tail = True
             self.pending_chunk = np.zeros(0, dtype=np.float32)
 
+        if self._is_auto_language and len(self._full_recording_pcm) >= 400:
+            full_pcm = self._full_recording_pcm
+            result = self.engine.transcribe(full_pcm, is_partial=False)
+            result.duration_ms = duration_ms
+            result.rtf = (result.inference_ms / duration_ms) if duration_ms > 0 else 0.0
+            self.audio_buffer = np.zeros(0, dtype=np.float32)
+            self.pending_chunk = np.zeros(0, dtype=np.float32)
+            self._full_recording_pcm = np.zeros(0, dtype=np.float32)
+            self._detected_language = None
+            self._language_confidence = None
+            self._language_locked = False
+            self.total_audio_samples = 0
+            self.consecutive_silent_chunks = 0
+            self.consecutive_silent_samples = 0
+            self.base_committed_tokens.clear()
+            self.is_window_sliding = False
+            self.samples_since_last_inference = 0
+            self.pending_turn_flush = False
+            self.push_count = 0
+            self.last_transcript = None
+            self.has_untranscribed_tail = False
+            self.decoder.reset()
+            for cb in self.listeners_final:
+                try:
+                    cb(result)
+                except Exception as e:
+                    self._emit_error(e)
+            return result
+
         # Run final full-utterance closure decode when active audio buffer has speech
         if len(self.audio_buffer) >= 400:
-            eval_buf = (
-                self.audio_buffer[-self.max_buffer_samples:]
-                if (self.is_window_sliding and len(self.audio_buffer) > self.max_buffer_samples)
-                else self.audio_buffer
-            )
+            if (
+                not self.is_window_sliding
+                and not self.base_committed_tokens
+                and len(self._full_recording_pcm) >= len(self.audio_buffer)
+            ):
+                eval_buf = self._full_recording_pcm
+            else:
+                eval_buf = (
+                    self.audio_buffer[-self.max_buffer_samples:]
+                    if (self.is_window_sliding and len(self.audio_buffer) > self.max_buffer_samples)
+                    else self.audio_buffer
+                )
             tail_res = self._transcribe_buffer(eval_buf, is_partial=False)
             if (tail_res and tail_res.tokens) or not self.decoder.last_hyp_tokens:
                 if self.pending_turn_flush and tail_res and tail_res.tokens:
@@ -863,6 +936,10 @@ class SwanadaStream:
         # Free buffer memory immediately
         self.audio_buffer = np.zeros(0, dtype=np.float32)
         self.pending_chunk = np.zeros(0, dtype=np.float32)
+        self._full_recording_pcm = np.zeros(0, dtype=np.float32)
+        self._detected_language = None
+        self._language_confidence = None
+        self._language_locked = False
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0
@@ -895,6 +972,10 @@ class SwanadaStream:
         """Reset stream session state for fresh streaming without re-instantiating."""
         self.audio_buffer = np.zeros(0, dtype=np.float32)
         self.pending_chunk = np.zeros(0, dtype=np.float32)
+        self._full_recording_pcm = np.zeros(0, dtype=np.float32)
+        self._detected_language = None
+        self._language_confidence = None
+        self._language_locked = False
         self.total_audio_samples = 0
         self.consecutive_silent_chunks = 0
         self.consecutive_silent_samples = 0

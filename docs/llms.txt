@@ -1,29 +1,31 @@
-# Swanada (स्वनद) — In-Browser 16 kHz Multilingual Speech-to-Text
+# Swanada (स्वनद) — In-Browser 16 kHz Multilingual Speech-to-Text + 12-Way Auto-LID
 
-> Sub-second client-side streaming & batch speech-to-text for Classical Sanskrit (`sa`), Indian English (`en`), and 10 Indic languages (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) powered by INT8 Conformer-CTC ONNX + WebAssembly SIMD with zero server dependencies.
+> Sub-second client-side streaming & batch speech-to-text for Classical Sanskrit (`sa`), Indian English (`en`), and 10 Indic languages (`hi`, `kn`, `mr`, `bn`, `ta`, `te`, `ml`, `gu`, `pa`, `or`) with `< 1 ms` 12-Way Automatic Language Identification (`language: 'auto'`) and Voronoi `+EN` Latin code-switching, powered by INT8 Conformer-CTC ONNX + WebAssembly SIMD with zero server dependencies.
 
-- Live Studio: https://hemanth.github.io/swanada/
+- Live Studio (Cloudflare Edge): https://h3manth.com/ai/swanada/
+- Live Studio (GitHub Pages): https://hemanth.github.io/swanada/
 - Source Repository: https://github.com/hemanth/swanada
-- Model Weights & Vocabularies: https://huggingface.co/gnumanth/swanada
+- Model Weights, CTC Heads & Auto-LID Heads: https://huggingface.co/gnumanth/swanada
 
-## Supported Languages (12)
+## Supported Languages (12 + `auto`)
+- `auto` — `< 1 ms` 12-Way Automatic Language Detection (`lid.bin`, `396 KiB`, `100.0%` Studio / `95.4%` Mobile unseen test accuracy)
 - `sa` — Classical Sanskrit (Devanagari + deterministic Roman IAST transliteration)
-- `en` — Indian English
-- `hi` — Hindi
-- `kn` — Kannada
-- `mr` — Marathi
-- `bn` — Bengali
-- `ta` — Tamil
-- `te` — Telugu
-- `ml` — Malayalam
-- `gu` — Gujarati
-- `pa` — Punjabi
-- `or` — Odia
+- `en` — Indian & Global English (`5.90%` LibriSpeech test-clean LB-CER, `9.42%` held-out WER)
+- `hi` — Hindi (`13.53%` FLEURS WER vs Shruti `19.92%`)
+- `kn` — Kannada (`4.27%` FLEURS LB-CER, `20.92%` WER vs Shruti `33.10%`)
+- `mr` — Marathi (`26.55%` FLEURS WER vs Shruti `29.90%`)
+- `bn` — Bengali (`5.13%` FLEURS LB-CER, `20.14%` WER vs Shruti `29.90%`)
+- `ta` — Tamil (`8.83%` FLEURS LB-CER, `36.93%` WER vs Shruti `38.50%`)
+- `te` — Telugu (`8.00%` FLEURS LB-CER, `28.63%` WER vs Shruti `38.00%`)
+- `ml` — Malayalam (`5.51%` FLEURS LB-CER, `26.86%` WER vs Shruti `36.00%`)
+- `gu` — Gujarati (`5.63%` FLEURS LB-CER, `20.50%` WER vs Shruti `27.90%`)
+- `pa` — Punjabi (`6.76%` FLEURS LB-CER, `20.23%` WER vs Shruti `29.30%`)
+- `or` — Odia (`7.15%` FLEURS LB-CER, `27.47%` WER vs Shruti `39.50%`)
 
 ## Key Capabilities
 - Capability-routed Dual-Tier Acoustic Architecture:
-  - **Mobile Tier (`< 30 MB`)**: Shared `25.4 MiB` (`26.6 MB`) INT8 Conformer-Small encoder (`swanada_mobile_ctc_int8.onnx`) + twelve `515 KB` linear CTC heads (`heads_mobile/<lang>.bin`) — `5.0x` faster single-thread WASM SIMD on phones and fits inside iOS Safari's `~50 MB` `CacheStorage` quota across all 12 languages.
-  - **Studio Tier (Desktop)**: Shared `177.4 MiB` INT8 Conformer-Large encoder (`sushrota_sanskrit_ctc_int8.onnx`) + twelve `515 KB` linear CTC heads (`heads/<lang>.bin`).
-- Real-time in-browser streaming via `AudioWorklet` (anti-aliased 16 kHz resampling) + `Web Worker` (`onnxruntime-web` WASM SIMD) with two-zone (`committed` + `volatile`) prefix-locked CTC decoding (`0.00%` pause churn).
-- Offline persistence via browser `CacheStorage` + `IndexedDB` (`swanada-onnx-v1.0.0`).
-- Multi-runtime API parity across Browser ESM, Node.js CJS/ESM, Python (`swanada`), and CLI (`swanada --tier mobile|studio|auto`).
+  - **Mobile Tier (`< 30 MB`)**: Shared `25.35 MiB` (`26.6 MB`) INT8 Conformer-Small encoder (`swanada_mobile_ctc_int8.onnx`) + twelve `515 KB` linear CTC heads (`heads_mobile/<lang>.bin`) + `396 KB` `lid.bin` (`31.8 MiB` / `33.3 MB` total across all 12 languages — `10.7x` smaller than Shruti's `356.2 MB`).
+  - **Studio Tier (Desktop)**: Shared `177.4 MiB` INT8 Conformer-Large encoder (`sushrota_sanskrit_ctc_int8.onnx`) + twelve `515 KB` linear CTC heads (`heads/<lang>.bin`) + `396 KB` `lid.bin` (`24.18%` 10-Indic FLEURS Mean WER, beating Shruti's `32.20%` on `10/10` languages).
+- Zero-hallucination non-speech formant & modulation gate (`0` words invented across 100 silent/hum/rumble/click clips).
+- Real-time in-browser streaming via `AudioWorklet` + `Web Worker` (`onnxruntime-web` WASM SIMD) with `28.6 ms` median TTFT and `0.00%` committed-prefix churn.
+- Multi-runtime API parity across Browser ESM, Node.js CJS/ESM, Python (`swanada`), and CLI (`swanada -l auto --code-switch-en --tier mobile|studio|auto`).

@@ -65,6 +65,14 @@ const ctcSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'ctc.ts')
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
 
+const lidSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'lid.ts'), 'utf8'))
+  .replace(/import .*? from '\.\/ctc\.ts';/g, '')
+  .replace(/import .*? from '\.\/en_lexicon\.ts';/g, '')
+  .replace(/import .*? from '\.\/indic_lexicon\.ts';/g, '')
+  .replace(/import .*? from '\.\/normalizer\.ts';/g, '')
+  .replace(/import type .*?;/g, '')
+  .replace(/^export /gm, '');
+
 const streamingDecoderSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'decoder', 'streaming.ts'), 'utf8'))
   .replace(/import .*? from '\.\/normalizer\.ts';/g, '')
   .replace(/import type .*?;/g, '')
@@ -75,11 +83,12 @@ const cacheSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'cache.t
   .replace(/^export /gm, '');
 
 const engineSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'engine.ts'), 'utf8'))
-  .replace(/import .*? from '\.\.\/audio\/frontend\.ts';/g, '')
-  .replace(/import .*? from '\.\.\/audio\/denoise\.ts';/g, '')
-  .replace(/import .*? from '\.\.\/decoder\/ctc\.ts';/g, '')
-  .replace(/import .*? from '\.\/cache\.ts';/g, '')
-  .replace(/import type .*?;/g, '')
+  .replace(/import .*? from '\.\.\/audio\/frontend\.ts';/gs, '')
+  .replace(/import .*? from '\.\.\/audio\/denoise\.ts';/gs, '')
+  .replace(/import .*? from '\.\.\/decoder\/ctc\.ts';/gs, '')
+  .replace(/import .*? from '\.\.\/decoder\/lid\.ts';/gs, '')
+  .replace(/import .*? from '\.\/cache\.ts';/gs, '')
+  .replace(/import type .*?;/gs, '')
   .replace(/^export /gm, '');
 
 const streamingEngineSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'streaming.ts'), 'utf8'))
@@ -125,7 +134,7 @@ const indexSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'index.ts'), 'utf8
   .replace(/import .*? from '\.\/tokenizers\/index\.ts';/g, '')
   .replace(/import .*? from '\.\/audio\/audio-capture\.ts';/g, '')
   .replace(/import .*? from '\.\/worker\/client\.ts';/g, '')
-  .replace(/import type .*?;/g, '')
+  .replace(/import type .*?;/gs, '')
   .replace(/export \* from .*?;/g, '')
   .replace(/^export /gm, '');
 
@@ -162,6 +171,15 @@ export {
   decodeCTC,
   decodeCTCTokens,
   CTCGreedyDecoder,
+  LID_LANGUAGES,
+  SLID_VERSION,
+  parseLidHeadBytes,
+  serializeLidHeadBytes,
+  predictNeuralLidLogProbs,
+  predictLidLogProbs,
+  scoreCtcHeadEvidence,
+  detectLanguageFromHidden,
+  decodeBilingualCodeswitch,
   StreamingCTCDecoder,
   StreamingAcousticEngine,
   SwanadaStreamSession,
@@ -198,6 +216,7 @@ ${indicLexiconSrc}
 ${normalizerSrc}
 ${enLexiconSrc}
 ${ctcSrc}
+${lidSrc}
 ${streamingDecoderSrc}
 ${cacheSrc}
 ${engineSrc}
@@ -247,6 +266,7 @@ ${indicLexiconSrc}
 ${normalizerSrc}
 ${enLexiconSrc}
 ${ctcSrc}
+${lidSrc}
 ${streamingDecoderSrc}
 ${cacheSrc}
 ${cjsEngineSrc}
@@ -291,6 +311,15 @@ module.exports = {
   decodeCTC,
   decodeCTCTokens,
   CTCGreedyDecoder,
+  LID_LANGUAGES,
+  SLID_VERSION,
+  parseLidHeadBytes,
+  serializeLidHeadBytes,
+  predictNeuralLidLogProbs,
+  predictLidLogProbs,
+  scoreCtcHeadEvidence,
+  detectLanguageFromHidden,
+  decodeBilingualCodeswitch,
   StreamingCTCDecoder,
   StreamingAcousticEngine,
   SwanadaStreamSession,

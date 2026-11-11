@@ -19,6 +19,7 @@ _BRAHMIC_PRIMARY_MATRA_CLASS = (
 )
 
 _BRAHMIC_VIRAMA_CLASS = "\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D"
+_BRAHMIC_ANUSVARA_CLASS = "\u0901\u0902\u0981\u0982\u0A01\u0A02\u0A70\u0A81\u0A82\u0B01\u0B02\u0B82\u0C01\u0C02\u0C81\u0C82\u0D01\u0D02"
 
 _BRAHMIC_INDEP_VOWEL_CLASS = (
     "\u0904-\u0914\u0960-\u0961"
@@ -36,6 +37,7 @@ _BRAHMIC_LATERAL_CONSONANTS = "\u0CB3\u0B33\u0C33"
 
 _RE_COLLIDING_MATRAS = re.compile(f"([{_BRAHMIC_PRIMARY_MATRA_CLASS}])[{_BRAHMIC_PRIMARY_MATRA_CLASS}]+")
 _RE_MATRA_THEN_VIRAMA = re.compile(f"([{_BRAHMIC_PRIMARY_MATRA_CLASS}])[{_BRAHMIC_VIRAMA_CLASS}]+")
+_RE_ANUSVARA_THEN_VIRAMA = re.compile(f"([{_BRAHMIC_ANUSVARA_CLASS}])[{_BRAHMIC_VIRAMA_CLASS}]+")
 _RE_INDEP_VOWEL_ILLEGAL_MARK = re.compile(
     f"([{_BRAHMIC_INDEP_VOWEL_CLASS}])([{_BRAHMIC_PRIMARY_MATRA_CLASS}{_BRAHMIC_VIRAMA_CLASS}]+)"
 )
@@ -119,6 +121,7 @@ def repair_brahmic_orthography(nfc_text: str, lang: str = "") -> str:
     """Repair colliding dependent vowel signs, duplicate ligatures, and orthographic defects."""
     text = _RE_COLLIDING_MATRAS.sub(r"\1", nfc_text)
     text = _RE_MATRA_THEN_VIRAMA.sub(r"\1", text)
+    text = _RE_ANUSVARA_THEN_VIRAMA.sub(r"\1", text)
     text = _RE_INDEP_VOWEL_ILLEGAL_MARK.sub(
         lambda m: m.group(0) if m.group(1) == "\u0985" and m.group(2).startswith("\u09CD") else m.group(1),
         text,

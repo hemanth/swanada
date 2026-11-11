@@ -218,7 +218,11 @@ function stripTrailingApostrophes(word: string): string {
 
 function formatEnCtcDisplay(text: string): string {
   if (!text) return text;
-  let out = text.replace(/^[a-z]/, (ch) => ch.toUpperCase());
+  let out = text.replace(/([a-zA-Z])([0-9])/g, '$1 $2');
+  out = out.replace(/([0-9])([a-zA-Z]{2,})\b/g, (m, d: string, w: string) =>
+    /^(?:st|nd|rd|th)$/i.test(w) ? m : `${d} ${w}`
+  );
+  out = out.replace(/^[a-z]/, (ch) => ch.toUpperCase());
   out = out.replace(/([.?!]\s+)([a-z])/g, (_m, p1, p2) => p1 + p2.toUpperCase());
   out = out.replace(/\bi(?=(?:['’](?:m|ve|ll|d))?\b)/g, 'I');
   return out;
@@ -248,8 +252,8 @@ function ctcIsPlausibleEnOov(word: string): boolean {
 
 function ctcScoreKnownEnWord(clean: string): number {
   const wlen = clean.length;
-  if (wlen <= 2) return 0.70;
-  return Math.min(3.05, 0.70 + 0.34 * wlen);
+  if (wlen <= 2) return 0.25;
+  return Math.min(2.20, 0.25 + 0.24 * (wlen - 2));
 }
 
 function extendEnLexicalState(
@@ -278,7 +282,7 @@ function extendEnLexicalState(
       const nextWord = cw + lc;
       if (ip && !isEnPrefix(nextWord, prefixes, words)) {
         ip = false;
-        sc -= 2.35;
+        sc -= 0.95;
       }
       cw = nextWord;
     } else {
@@ -290,10 +294,10 @@ function extendEnLexicalState(
         if (clean.length > 0) {
           if (isEnWord(clean, words)) {
             sc += ctcScoreKnownEnWord(clean);
-          } else if (ctcIsPlausibleEnOov(clean)) {
-            sc += ip ? -3.40 : -2.75;
+          } else if (ctcIsPlausibleEnOov(clean) && clean.length >= 4) {
+            sc += ip ? -1.15 : -0.55;
           } else {
-            sc += ip ? -4.35 : -2.85;
+            sc += ip ? -2.80 : -2.10;
           }
         }
         cw = '';
@@ -316,15 +320,15 @@ function finalizeEnLexicalScore(
   if (clean.length === 0) return lmScore;
   if (isEnWord(clean, words)) {
     if (isPartial) {
-      return lmScore + (clean.length >= 4 ? 0.65 : 0.20);
+      return lmScore + (clean.length >= 4 ? 0.50 : 0.15);
     }
     return lmScore + ctcScoreKnownEnWord(clean);
   }
   if (inPrefix) return lmScore;
-  if (ctcIsPlausibleEnOov(clean)) {
-    return lmScore - 2.75;
+  if (ctcIsPlausibleEnOov(clean) && clean.length >= 4) {
+    return lmScore - 0.55;
   }
-  return lmScore - 2.85;
+  return lmScore - 2.10;
 }
 
 function beamDecodeCTC(

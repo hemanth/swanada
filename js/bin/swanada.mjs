@@ -25,12 +25,13 @@ Positional Arguments:
   <input.wav>              Input WAV audio file or '-' for stdin pipe
 
 Options:
-  -l, --language, --lang   Language code: sa | en | hi | kn | mr | bn | ta | te | ml | gu | pa | or (default: sa)
+  -l, --language, --lang   Language code: auto | sa | en | hi | kn | mr | bn | ta | te | ml | gu | pa | or (default: sa)
   -m, --model-dir, --model Custom model directory containing ONNX weights and vocabularies
   -o, --output, --out      Output text file path (default: stdout)
   --json                   Emit structured JSON with text, durationMs, inferenceMs, rtf, and tokens
   --stream                 Simulate chunk-by-chunk streaming transcription (320ms / 5120 samples)
   --iast                   Transliterate Classical Sanskrit output to Roman IAST with Vedic accents
+  --code-switch-en         Keep genuine English code-mixed words in Latin script during Indic transcription
   --tier <tier>            Model tier: studio (177 MiB) | mobile (25 MiB) | auto (default: studio)
   --threads <n>            Number of inference execution threads (default: 4)
   -h, --help               Display this help text and exit
@@ -61,6 +62,7 @@ async function main() {
   let jsonOutput = false;
   let streamMode = false;
   let iastMode = false;
+  let codeSwitchEn = false;
   let modelTier = 'studio';
   let threads = 4;
   let inputPath = null;
@@ -83,6 +85,8 @@ async function main() {
       streamMode = true;
     } else if (a === '--iast') {
       iastMode = true;
+    } else if (a === '--code-switch-en') {
+      codeSwitchEn = true;
     } else if (a === '-' || !a.startsWith('-')) {
       inputPath = a;
     } else {
@@ -93,8 +97,8 @@ async function main() {
   }
 
   language = (language || '').toLowerCase().trim();
-  if (!SUPPORTED_LANGUAGES.includes(language)) {
-    console.error(`Error: Unsupported language '${language}'. Supported languages: ${SUPPORTED_LANGUAGES.join(', ')}`);
+  if (language !== 'auto' && !SUPPORTED_LANGUAGES.includes(language)) {
+    console.error(`Error: Unsupported language '${language}'. Supported languages: auto, ${SUPPORTED_LANGUAGES.join(', ')}`);
     process.exit(1);
   }
 
@@ -154,15 +158,18 @@ async function main() {
   // Initialize Swanada
   let transcriber;
   try {
-    const config = { language, numThreads: threads, modelTier };
+    const config = { language, numThreads: threads, modelTier, codeSwitchEn };
     if (modelDir) {
       const resolvedDir = path.resolve(modelDir);
       if (fs.existsSync(resolvedDir) && fs.statSync(resolvedDir).isDirectory()) {
         const isMob = modelTier === 'mobile';
         const sub = isMob ? 'onnx_mobile' : 'onnx';
-        const modelNames = isMob
-          ? [`swanada_mobile_${language}_ctc_int8.onnx`, ...(language === 'sa' ? ['swanada_mobile_ctc_int8.onnx'] : [])]
-          : [`swanada_${language}_ctc_int8.onnx`, ...(language === 'sa' ? ['sushrota_sanskrit_ctc_int8.onnx'] : [])];
+        const seedLang = language === 'auto' ? 'sa' : language;
+        const modelNames = language === 'auto'
+          ? (isMob ? ['swanada_mobile_ctc_int8.onnx', 'swanada_mobile_sa_ctc_int8.onnx'] : ['sushrota_sanskrit_ctc_int8.onnx', 'swanada_sa_ctc_int8.onnx'])
+          : (isMob
+              ? [`swanada_mobile_${seedLang}_ctc_int8.onnx`, ...(seedLang === 'sa' ? ['swanada_mobile_ctc_int8.onnx'] : [])]
+              : [`swanada_${seedLang}_ctc_int8.onnx`, ...(seedLang === 'sa' ? ['sushrota_sanskrit_ctc_int8.onnx'] : [])]);
         let foundModel = null;
         for (const mn of modelNames) {
           const c1 = path.join(resolvedDir, sub, mn);
@@ -173,8 +180,8 @@ async function main() {
         if (foundModel) {
           config.modelPath = foundModel;
         }
-        const vocabNames = [`${language}_vocab.json`];
-        if (language === 'sa') vocabNames.push('sanskrit_vocab.json');
+        const vocabNames = [`${seedLang}_vocab.json`];
+        if (seedLang === 'sa') vocabNames.push('sanskrit_vocab.json');
         let foundVocab = null;
         for (const vn of vocabNames) {
           const v1 = path.join(resolvedDir, 'vocabularies', vn);
@@ -222,7 +229,7 @@ async function main() {
   }
 
   let finalTranscript = result.text;
-  if (iastMode && language === 'sa' && finalTranscript) {
+  if (iastMode && result.language === 'sa' && finalTranscript) {
     finalTranscript = Swanada.transliterateIast(finalTranscript);
   }
 
@@ -237,6 +244,13 @@ async function main() {
     rtf: Number(result.rtf.toFixed(4)),
     tokens: result.tokens || [],
     mode,
+    ...(result.languageConfidence !== undefined
+      ? {
+          languageConfidence: Number(result.languageConfidence.toFixed(4)),
+          language_confidence: Number(result.languageConfidence.toFixed(4)),
+        }
+      : {}),
+    ...(result.englishSpans?.length ? { englishSpans: result.englishSpans } : {}),
   };
 
   const outputContent = jsonOutput ? JSON.stringify(formattedJson, null, 2) + '\n' : finalTranscript + '\n';

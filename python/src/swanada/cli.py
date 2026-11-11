@@ -37,7 +37,13 @@ def parse_cli_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--lang",
         dest="language",
         default="sa",
-        help="Target language code: sa | en | hi | kn | mr | bn | ta | te | ml | gu | pa | or (default: sa)",
+        help="Target language code: auto | sa | en | hi | kn | mr | bn | ta | te | ml | gu | pa | or (default: sa)",
+    )
+    parser.add_argument(
+        "--code-switch-en",
+        action="store_true",
+        dest="code_switch_en",
+        help="Keep genuine English code-mixed words in Latin script during Indic transcription",
     )
     parser.add_argument(
         "-m",
@@ -100,7 +106,7 @@ def parse_cli_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def result_to_dict(result: TranscriptionResult, mode: str = "batch", text_override: Optional[str] = None) -> Dict[str, Any]:
     transcript_text = text_override if text_override is not None else result.text
-    return {
+    payload: Dict[str, Any] = {
         "text": transcript_text,
         "language": result.language,
         "durationMs": float(result.duration_ms),
@@ -111,15 +117,24 @@ def result_to_dict(result: TranscriptionResult, mode: str = "batch", text_overri
         "tokens": list(result.tokens),
         "mode": mode,
     }
+    if result.language_confidence is not None:
+        payload["languageConfidence"] = round(float(result.language_confidence), 4)
+        payload["language_confidence"] = round(float(result.language_confidence), 4)
+    if result.english_spans:
+        payload["englishSpans"] = [
+            {"word": s.word, "startChar": s.start_char, "endChar": s.end_char}
+            for s in result.english_spans
+        ]
+    return payload
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_cli_args(argv)
 
     lang = args.language.lower().strip()
-    if lang not in SUPPORTED_LANGUAGES:
+    if lang != "auto" and lang not in SUPPORTED_LANGUAGES:
         sys.stderr.write(
-            f"Error: Unsupported language '{lang}'. Supported languages: {', '.join(sorted(SUPPORTED_LANGUAGES))}\n"
+            f"Error: Unsupported language '{lang}'. Supported languages: auto, {', '.join(sorted(SUPPORTED_LANGUAGES))}\n"
         )
         return 1
 
@@ -150,7 +165,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Initialize Engine
     try:
         model_dir = Path(args.model_dir) if args.model_dir else None
-        stt = Swanada.create(language=lang, model_dir=model_dir, num_threads=args.threads, tier=args.tier)
+        stt = Swanada.create(
+            language=lang,
+            model_dir=model_dir,
+            num_threads=args.threads,
+            tier=args.tier,
+            code_switch_en=args.code_switch_en,
+        )
     except Exception as e:
         sys.stderr.write(f"Error initializing Swanada engine: {e}\n")
         return 2
@@ -177,7 +198,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             mode = "batch"
 
         final_text = result.text
-        if args.iast_mode and lang == "sa" and final_text:
+        if args.iast_mode and result.language == "sa" and final_text:
             final_text = Swanada.transliterate_iast(final_text)
 
     except Exception as e:
