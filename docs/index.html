@@ -1235,21 +1235,30 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
     // Preset evaluation utterances
     const PRESETS = {
       auto: [
-        { title: "Auto · Sanskrit", text: "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति", sampleLang: "sa" },
-        { title: "Auto · Kanglish (+EN)", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ · The king was troubled with jealousy.", sampleLang: "kanglish", enableCodeSwitch: true },
+        { title: "Auto · Sanskrit (Madhvācārya)", text: "स्वतन्त्रमस्वतन्त्रं च द्विविधं तत्त्वमिष्यते · हरिः सर्वोत्तमः", sampleLang: "sa_madhva" },
+        { title: "Auto · English", text: "Speak naturally in twelve languages with zero cloud servers.", sampleLang: "en_clean" },
+        { title: "Auto · Kanglish (+EN)", text: "ಈ ಹೊಸ ಅಪ್ಲಿಕೇಶನ್ ತುಂಬಾ ಚೆನ್ನಾಗಿದೆ · It works completely offline on my phone.", sampleLang: "kanglish", enableCodeSwitch: true },
         { title: "Auto · Hindi", text: "अपने हेडमास्टर साहब ही को देखो", sampleLang: "hi" },
         { title: "Auto · Kannada", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ", sampleLang: "kn" },
         { title: "Auto · Tamil", text: "அதோ கலங்கரை விளக்கமும் தெரிகிறது", sampleLang: "ta" },
-        { title: "Auto · English", text: "The king was troubled with jealousy.", sampleLang: "en" },
         { title: "Auto · Bengali", text: "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে", sampleLang: "bn" },
       ],
-      sa: [{ title: "Subhashita", text: "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति" }],
+      sa: [
+        { title: "Subhashita", text: "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति" },
+        { title: "Madhvācārya · Tattvasaṅkhyānam", text: "स्वतन्त्रमस्वतन्त्रं च द्विविधं तत्त्वमिष्यते · हरिः सर्वोत्तमः", sampleLang: "sa_madhva" },
+      ],
       hi: [{ title: "Conversational", text: "अपने हेडमास्टर साहब ही को देखो" }],
-      kn: [{ title: "Conversational", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ" }],
+      kn: [
+        { title: "Conversational", text: "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ" },
+        { title: "Kanglish (+EN)", text: "ಈ ಹೊಸ ಅಪ್ಲಿಕೇಶನ್ ತುಂಬಾ ಚೆನ್ನಾಗಿದೆ · It works completely offline on my phone.", sampleLang: "kanglish", enableCodeSwitch: true },
+      ],
       ta: [{ title: "Conversational", text: "அதோ கலங்கரை விளக்கமும் தெரிகிறது" }],
       te: [{ title: "Conversational", text: "నాకు కూడా ప్రయాణం చేయటం చదవటం ఇష్టం" }],
       ml: [{ title: "Conversational", text: "ഉമ്മായ്ക്കതിൽ പരിപൂർണവിശ്വാസമുണ്ട്" }],
-      en: [{ title: "Literature", text: "The king was troubled with jealousy." }],
+      en: [
+        { title: "On-Device STT", text: "Speak naturally in twelve languages with zero cloud servers.", sampleLang: "en_clean" },
+        { title: "Literature", text: "The king was troubled with jealousy." },
+      ],
       mr: [{ title: "Conversational", text: "हो आणखीही काही आहे" }],
       bn: [{ title: "Conversational", text: "সেজন্য যেন আবার দাদার উপর অভিমান করে বসিনে" }],
       gu: [{ title: "Conversational", text: "જો એવું હોય તો હું બસથી જઈશ" }],
@@ -1277,8 +1286,8 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
     }
 
     function streamPcmToWorker(pcm, rateMultiplier = 1) {
-      const minChunkSize = isMobileDevice ? 2400 : 1600; // 150ms mobile / 100ms desktop
-      const maxSliceSamples = isMobileDevice ? 5600 : 16000; // Cap per-step jump so mobile renders smooth progressive partials
+      const minChunkSize = useMobileTier ? 2400 : 1600; // 150ms mobile tier / 100ms studio tier
+      const maxSliceSamples = useMobileTier ? 5600 : 16000; // Cap per-step jump on 25MB mobile tier; 1.0s real-time cap on Studio tier
       let offset = 0;
       const total = pcm.length;
       const streamStartMs = performance.now();
@@ -1445,6 +1454,10 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
         chip.innerHTML = `<strong>${item.title}:</strong> ${item.text}`;
         chip.addEventListener('click', () => {
           if (item.enableCodeSwitch && !codeSwitchEnabled && codeSwitchBtn) {
+            window.__autoToggledCodeSwitch = true;
+            codeSwitchBtn.click();
+          } else if (!item.enableCodeSwitch && codeSwitchEnabled && window.__autoToggledCodeSwitch && codeSwitchBtn) {
+            window.__autoToggledCodeSwitch = false;
             codeSwitchBtn.click();
           }
           playAndStreamPreset(lang, item.sampleLang || lang);

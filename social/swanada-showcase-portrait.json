@@ -1,0 +1,80 @@
+{
+  "url": "https://h3manth.com/ai/swanada/?lang=auto&tier=studio",
+  "audioDir": "/Users/lika/labs/swanada/docs/samples",
+  "outMp4": "/Users/lika/labs/swanada/social/swanada-showcase-portrait.mp4",
+  "canvas": "1080x1350",
+  "theme": {
+    "appBg": "#fbfaf7",
+    "stageBg": "#f3f0e8",
+    "ink": "#121210",
+    "muted": "#57554f",
+    "accent": "#b44324",
+    "accentSoft": "rgba(29, 99, 64, 0.07)",
+    "borderHairline": "#dad6cb",
+    "bezelStyle": "studio",
+    "fontHeadline": "'Playfair Display', Georgia, serif",
+    "fontBody": "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+    "fontMono": "'Geist Mono', ui-monospace, SFMono-Regular, monospace",
+    "fontLinks": [
+      "https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Noto+Serif+Devanagari:wght@500;600&family=Playfair+Display:ital,wght@0,600;0,700;1,500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+    ]
+  },
+  "copy": {
+    "brand": "Swanada स्वनद",
+    "eyebrow": "SANSKRIT · ENGLISH · KANGLISH · 12-LANG STT",
+    "headlineLines": [
+      "Mix languages.",
+      "Switch scripts.",
+      "Zero cloud."
+    ],
+    "bullets": [
+      "<1 ms 12-way Auto-LID (100% Studio, 95.4% Mobile) + live Kanglish +EN & IAST.",
+      "5.35% held-out CER · 24.18% 10-Indic FLEURS WER (beats Shruti 32.20% on 10/10).",
+      "25.4 MiB Mobile & 177.4 MiB Studio WASM, 28.6 ms TTFT, 0.00% prefix churn."
+    ],
+    "ctaText": "Try Swanada live",
+    "footerMuted": "Eval: 1,600 unseen FLEURS + OpenASR + Sanskrit clips (B=1,000 CI) · 5.90% LibriClean CER · 0.021x CPU RTF.",
+    "footerBold": "0/100 silent hallucinations · Python, Node & Browser WASM SIMD · 100% offline · MIT Open Source."
+  },
+  "steps": [
+    {
+      "action": "eval",
+      "script": "(() => { Element.prototype.scrollIntoView = function() {}; const origFetch = window.fetch.bind(window); window.fetch = async (...args) => { const reqUrl = typeof args[0] === 'string' ? args[0] : (args[0]?.url || ''); const res = await origFetch(...args); const m = reqUrl.match(/\\/samples\\/([a-z0-9_-]+)\\.wav/i); if (m) { try { const buf = await res.clone().arrayBuffer(); const dur = Math.max(0.2, (buf.byteLength - 44) / 32000); const sample = m[1]; const startMs = Math.max(0, performance.now() - window.__recStartMs + 45); window.__audioEvents.push({ sample, cardId: '0', srcFile: sample + '.wav', dur, startMs, endMs: null }); } catch (_) {} } return res; }; })()"
+    },
+    {
+      "action": "eval",
+      "script": "new Promise((resolve) => { const t0 = Date.now(); const check = () => (window.__swanadaReady || Date.now() - t0 > 45000) ? resolve() : setTimeout(check, 60); check(); })"
+    },
+    { "action": "wait", "ms": 900 },
+    { "action": "eval", "script": "window.__smoothScrollVertical(500 - window.scrollY, 520)" },
+    { "action": "wait", "ms": 260 },
+    { "action": "tap", "selector": "#presetChips .chip:nth-child(1)" },
+    { "action": "wait", "ms": 220 },
+    { "action": "eval", "script": "window.__smoothScrollVertical(1195 - window.scrollY, 520)" },
+    {
+      "action": "eval",
+      "script": "new Promise((resolve) => { const t0 = Date.now(); const check = () => { const b = (document.getElementById('liveBadge')?.textContent || '').toUpperCase(); if (b.startsWith('COMPLETED') || Date.now() - t0 > 26000) resolve(); else setTimeout(check, 60); }; setTimeout(check, 600); })"
+    },
+    { "action": "wait", "ms": 2500 },
+    { "action": "eval", "script": "window.__smoothScrollVertical(500 - window.scrollY, 520)" },
+    { "action": "wait", "ms": 260 },
+    { "action": "tap", "selector": "#presetChips .chip:nth-child(2)" },
+    { "action": "wait", "ms": 220 },
+    { "action": "eval", "script": "window.__smoothScrollVertical(1195 - window.scrollY, 520)" },
+    {
+      "action": "eval",
+      "script": "new Promise((resolve) => { const t0 = Date.now(); const check = () => { const b = (document.getElementById('liveBadge')?.textContent || '').toUpperCase(); if (b.startsWith('COMPLETED') || Date.now() - t0 > 26000) resolve(); else setTimeout(check, 60); }; setTimeout(check, 600); })"
+    },
+    { "action": "wait", "ms": 2400 },
+    { "action": "eval", "script": "window.__smoothScrollVertical(500 - window.scrollY, 520)" },
+    { "action": "wait", "ms": 260 },
+    { "action": "tap", "selector": "#presetChips .chip:nth-child(3)" },
+    { "action": "wait", "ms": 220 },
+    { "action": "eval", "script": "window.__smoothScrollVertical(1195 - window.scrollY, 520)" },
+    {
+      "action": "eval",
+      "script": "new Promise((resolve) => { const t0 = Date.now(); const check = () => { const b = (document.getElementById('liveBadge')?.textContent || '').toUpperCase(); if (b.startsWith('COMPLETED') || Date.now() - t0 > 26000) resolve(); else setTimeout(check, 60); }; setTimeout(check, 600); })"
+    },
+    { "action": "wait", "ms": 2600 }
+  ]
+}
