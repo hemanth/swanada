@@ -154,7 +154,8 @@ async function main() {
     const postLoadState = await page.evaluate(() => ({
       ready: Boolean(window.__swanadaReady),
       loadedLang: window.__swanadaLoadedLang,
-      langBtnCount: document.querySelectorAll('.lang-btn').length,
+      langBtnCount: document.querySelectorAll('.lang-btn[data-lang]:not([data-lang="auto"])').length,
+      hasAutoLidTab: Boolean(document.querySelector('.lang-btn.auto-detect-btn[data-lang="auto"]')),
       hasWorker: Boolean(window.__swanadaWorkerClient),
       statusText: document.getElementById('statusText')?.textContent || '',
     }));
@@ -162,6 +163,7 @@ async function main() {
     assert.equal(postLoadState.ready, true);
     assert.equal(postLoadState.loadedLang, 'sa');
     assert.equal(postLoadState.langBtnCount, 12, 'Expected all 12 language tabs in playground UI');
+    assert.equal(postLoadState.hasAutoLidTab, true, 'Expected 12-way Auto-LID tab in playground UI');
     assert.ok(postLoadState.statusText.includes('(SA)'));
     console.log('Step 2 Passed: Cold engine initialization and language tabs verified.');
 
