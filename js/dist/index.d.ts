@@ -44,6 +44,7 @@ export interface SwanadaConfig {
   wasmPaths?: string;
   cacheStorageName?: string;
   vocabPath?: string;
+  headPath?: string;
   /** Enable multi-stage background noise cancellation & speech enhancement (default: true) */
   denoise?: boolean;
   /** Preserve genuine English code-mixed words in Latin script during Indic transcription */
@@ -436,7 +437,11 @@ export declare function transcribeMultilangSegments(
   lidWeights: any,
   fallbackVocab: string[],
   useCodeSwitch: boolean,
-  sampleRate?: number
+  sampleRate?: number,
+  projectEnDecode?: (
+    hidden: Float32Array,
+    timeSteps: number
+  ) => { logits: Float32Array; vocab: string[] } | null
 ): Promise<{
   text: string;
   language: string;
@@ -445,5 +450,38 @@ export declare function transcribeMultilangSegments(
   languageProbabilities: Record<string, number>;
   englishSpans?: CodeSwitchSpan[];
 } | null>;
+
+export declare const SENH_VERSION: number;
+export interface AdapterBlockWeights {
+  dilation: number;
+  ln1Gamma: Float32Array;
+  ln1Beta: Float32Array;
+  wIn: Float32Array;
+  bIn: Float32Array;
+  dwWeight: Float32Array;
+  dwBias: Float32Array;
+  ln2Gamma: Float32Array;
+  ln2Beta: Float32Array;
+  wOut: Float32Array;
+  bOut: Float32Array;
+}
+export interface EnglishAdapterWeights {
+  dModel: number;
+  dInner: number;
+  kernelSize: number;
+  numClasses: number;
+  blocks: AdapterBlockWeights[];
+  lnOutGamma: Float32Array;
+  lnOutBeta: Float32Array;
+  wCtc: Float32Array;
+  bCtc: Float32Array;
+}
+export declare function isEnAdapterBytes(raw: ArrayBuffer | Uint8Array): boolean;
+export declare function parseEnAdapterBytes(raw: ArrayBuffer | Uint8Array): EnglishAdapterWeights;
+export declare function forwardEnAdapter(
+  weights: EnglishAdapterWeights,
+  hidden: Float32Array,
+  timeSteps: number
+): Float32Array;
 
 export default Swanada;

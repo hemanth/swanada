@@ -196,7 +196,7 @@ function logAddExp(a: number, b: number): number {
 }
 
 function isEnglishSentencePieceVocab(vocabList: string[]): boolean {
-  if (vocabList.length < 200) return false;
+  if (vocabList.length < 64) return false;
   const end = Math.min(vocabList.length, 12);
   for (let idx = 2; idx < end; idx++) {
     const tok = vocabList[idx] || '';
@@ -605,7 +605,7 @@ export function decodeCTC(
 
   if (
     Array.isArray(vocab) &&
-    vocab.length >= 200 &&
+    vocab.length >= 64 &&
     blankId === 0 &&
     collapseRepeats &&
     numClasses === vocab.length

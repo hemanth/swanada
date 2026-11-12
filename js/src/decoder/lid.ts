@@ -901,7 +901,7 @@ function extractCtcWordSpans(
   timeSteps: number,
   vocab: string[]
 ): Array<{ text: string; startFrame: number; endFrame: number }> {
-  const numClasses = 257;
+  const numClasses = timeSteps > 0 ? Math.floor(logits.length / timeSteps) : vocab.length;
   const vlen = vocab.length;
   const rawSpans: Array<{ text: string; startFrame: number; endFrame: number }> = [];
   let curChars: string[] = [];
@@ -983,9 +983,13 @@ function extractCtcWordSpans(
   return words;
 }
 
-function spanConditionalCertainty(logits: Float32Array, startFrame: number, endFrame: number): number {
-  const numClasses = 257;
-  if (endFrame <= startFrame) return -10.0;
+function spanConditionalCertainty(
+  logits: Float32Array,
+  numClasses: number,
+  startFrame: number,
+  endFrame: number
+): number {
+  if (endFrame <= startFrame || numClasses <= 1) return -10.0;
   let sumPeak = 0;
   let used = 0;
   for (let t = startFrame; t < endFrame; t++) {
@@ -1019,10 +1023,11 @@ export function decodeBilingualCodeswitch(
   vocabEn: string[],
   isPartial: boolean = false
 ): CodeSwitchDecodeResult {
-  const numClasses = 257;
+  const numClassesIndic = timeSteps > 0 ? Math.floor(logitsIndic.length / timeSteps) : vocabIndic.length;
+  const numClassesEn = timeSteps > 0 ? Math.floor(logitsEn.length / timeSteps) : vocabEn.length;
   const baseRes = decodeCTC(
     logitsIndic,
-    [timeSteps, numClasses],
+    [timeSteps, numClassesIndic],
     vocabIndic,
     isPartial ? { isPartial: true } : undefined
   );
@@ -1045,7 +1050,7 @@ export function decodeBilingualCodeswitch(
 
   const enRes = decodeCTC(
     logitsEn,
-    [timeSteps, numClasses],
+    [timeSteps, numClassesEn],
     vocabEn,
     isPartial ? { isPartial: true } : undefined
   );
@@ -1163,8 +1168,8 @@ export function decodeBilingualCodeswitch(
     const f1 = Math.min(timeSteps, Math.max(rE1, indSpans[hi - 1].endFrame) + 2);
     if (f1 - f0 < 3) return false;
 
-    const certInd = spanConditionalCertainty(logitsIndic, f0, f1);
-    const certEn = spanConditionalCertainty(logitsEn, f0, f1);
+    const certInd = spanConditionalCertainty(logitsIndic, numClassesIndic, f0, f1);
+    const certEn = spanConditionalCertainty(logitsEn, numClassesEn, f0, f1);
     const anyCore = indWordsSlice.some((w) => {
       const wc = w.replace(INDIC_STRIP_PUNCT_RE, '');
       return wc ? core.has(wc) : false;
@@ -1245,8 +1250,8 @@ export function decodeBilingualCodeswitch(
     const s0 = Math.max(prevEnd, sp.startFrame - 1);
     const s1 = Math.min(nextStart, sp.endFrame + 1);
     if (s1 - s0 < 3) continue;
-    const subSlice = logitsEn.subarray(s0 * numClasses, s1 * numClasses);
-    const enSubRes = decodeCTC(subSlice, [s1 - s0, numClasses], vocabEn, { isPartial: true });
+    const subSlice = logitsEn.subarray(s0 * numClassesEn, s1 * numClassesEn);
+    const enSubRes = decodeCTC(subSlice, [s1 - s0, numClassesEn], vocabEn, { isPartial: true });
     const subEnWords = enSubRes.text
       .trim()
       .split(/\s+/)
@@ -1259,8 +1264,8 @@ export function decodeBilingualCodeswitch(
         if (isPhoneticLoanwordMatch(wClean, candW)) {
           const { endsVirama } = countIndicSyllablesAndVirama(wClean);
           const m2 = endsVirama ? -0.42 : -0.05;
-          const certInd = spanConditionalCertainty(logitsIndic, s0, s1);
-          const certEn = spanConditionalCertainty(logitsEn, s0, s1);
+          const certInd = spanConditionalCertainty(logitsIndic, numClassesIndic, s0, s1);
+          const certEn = spanConditionalCertainty(logitsEn, numClassesEn, s0, s1);
           if (certEn >= -0.82 && certEn >= certInd + m2) {
             replacements.set(idx, { hi: idx + 1, enList: [candW] });
             usedInd.add(idx);
@@ -1269,8 +1274,8 @@ export function decodeBilingualCodeswitch(
           canonicalConsonantSkeletonEn(candW).length >= 2 &&
           scoreIndicWord(wClean, langIndic, core, ext) <= 0.05
         ) {
-          const certInd = spanConditionalCertainty(logitsIndic, s0, s1);
-          const certEn = spanConditionalCertainty(logitsEn, s0, s1);
+          const certInd = spanConditionalCertainty(logitsIndic, numClassesIndic, s0, s1);
+          const certEn = spanConditionalCertainty(logitsEn, numClassesEn, s0, s1);
           if (certEn >= certInd + 0.28 && certEn > -0.35) {
             replacements.set(idx, { hi: idx + 1, enList: [candW] });
             usedInd.add(idx);
@@ -1461,7 +1466,9 @@ export async function transcribeMultilangSegments(
   lidWeights: NeuralLIDWeights | null,
   fallbackVocab: string[],
   useCodeSwitch: boolean,
-  sampleRate: number = 16000
+  sampleRate: number = 16000,
+  projectEnDecode?: (hidden: Float32Array, timeSteps: number) => { logits: Float32Array; vocab: string[] } | null,
+  projectLangDecode?: (lang: string, hidden: Float32Array, timeSteps: number) => Promise<{ logits: Float32Array; vocab: string[] } | null> | { logits: Float32Array; vocab: string[] } | null
 ): Promise<{
   text: string;
   language: string;
@@ -1620,25 +1627,45 @@ export async function transcribeMultilangSegments(
     }
     if (mSteps <= 0) continue;
 
-    let lg2d = mCached[run.lang];
-    if (!lg2d && multiHeads[run.lang]) {
-      lg2d = projectHead(mHidden, mSteps, multiHeads[run.lang].weight, multiHeads[run.lang].bias);
+    let lg2d: Float32Array | undefined;
+    let segVocab = multiVocabs[run.lang] || fallbackVocab;
+    if (projectLangDecode) {
+      const langDec = await projectLangDecode(run.lang, mHidden, mSteps);
+      if (langDec) {
+        lg2d = langDec.logits;
+        segVocab = langDec.vocab;
+      }
+    } else if (run.lang === 'en' && projectEnDecode) {
+      const enDec = projectEnDecode(mHidden, mSteps);
+      if (enDec) {
+        lg2d = enDec.logits;
+        segVocab = enDec.vocab;
+      }
+    }
+    if (!lg2d) {
+      lg2d = mCached[run.lang];
+      if (!lg2d && multiHeads[run.lang]) {
+        lg2d = projectHead(mHidden, mSteps, multiHeads[run.lang].weight, multiHeads[run.lang].bias);
+      }
     }
     if (!lg2d) continue;
-    const segVocab = multiVocabs[run.lang] || fallbackVocab;
 
     let segText = '';
     let segTokens: string[] = [];
     const segSpans: CodeSwitchSpan[] = [];
 
-    if (useCodeSwitch && run.lang !== 'en' && multiHeads.en && multiVocabs.en) {
-      const enLogits = mCached.en || projectHead(mHidden, mSteps, multiHeads.en.weight, multiHeads.en.bias);
-      const cs = decodeBilingualCodeswitch(lg2d, mSteps, segVocab, run.lang, enLogits, multiVocabs.en, false);
+    if (useCodeSwitch && run.lang !== 'en' && (projectEnDecode || (multiHeads.en && multiVocabs.en))) {
+      const enDec = projectEnDecode ? projectEnDecode(mHidden, mSteps) : null;
+      const enLogits = enDec
+        ? enDec.logits
+        : mCached.en || projectHead(mHidden, mSteps, multiHeads.en.weight, multiHeads.en.bias);
+      const enVocab = enDec ? enDec.vocab : multiVocabs.en;
+      const cs = decodeBilingualCodeswitch(lg2d, mSteps, segVocab, run.lang, enLogits, enVocab, false);
       segText = cs.text;
       segTokens = cs.tokens;
       segSpans.push(...cs.englishSpans);
     } else {
-      const dec = decodeCTC(lg2d, [mSteps, 257], segVocab);
+      const dec = decodeCTC(lg2d, [mSteps, Math.floor(lg2d.length / mSteps)], segVocab);
       segText = dec.text;
       segTokens = dec.tokens;
       if (run.lang === 'en' && distinctLangs.size >= 2 && segText) {

@@ -14,7 +14,7 @@ MODELS_DIR = REPO_ROOT / "models"
 
 CANONICAL_PRESETS = {
     "sa": "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति",
-    "en": "The king was troubled with jelcy",
+    "en": "The king was troubled with jealousy",
     "hi": "अपने हेडमास्टर साहब घी को देखो",
     "kn": "ಹಾಗಾಗಿ ಬ್ಯಾಂಕ್ ಇದ್ನ ಸ್ಥಗಿತಗೊಳ್ಸಿದೆ",
     "mr": "हो आणखीही काही आहे",

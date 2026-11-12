@@ -49,13 +49,13 @@ Both video deliverables are strictly compliant with **LinkedIn**, **X / Twitter*
 
 The live mobile viewport on the right demonstrates three end-to-end speech recognition scenarios on `docs/index.html` (running Conformer-CTC in WASM SIMD):
 
-1. **Auto-LID & Sanskrit Recitation** (`sa_madhva.wav`):
-   - Sri Madhvacharya: *"स्वतन्त्रमस्वतन्त्रं च द्विवಿधं तत्त्वमिष्यते"*
+1. **Auto-LID & Sanskrit Recitation** (`sa_madhva.wav`, synthesized with `ninada`):
+   - Sri Madhvacharya (*Pramāṇalakṣaṇam*): *"प्रज्ञापूर्वकव्यापारवत्त्वं जीवत्वम्"*
    - Dynamic 12-way language detection (<1 ms neural SLID head)
-   - Real-time Roman IAST transliteration box (*"svatantramasvatantraṃ ca dvividhaṃ tattvamiṣyate"*)
-2. **Indian English Speech Recognition** (`en_clean.wav`):
+   - Real-time Roman IAST transliteration box (*"prajñāpūrvakavyāpāravattvaṃ jīvatvam"*)
+2. **English Speech Recognition** (`en_clean.wav`, synthesized with `ninada`):
    - Fast, clean Latin transcription with real-time waveform trace
-3. **Bilingual Code-Switching in Kanglish** (`kanglish.wav`):
+3. **Bilingual Code-Switching in Kanglish** (`kanglish.wav`, synthesized with `ninada`):
    - Mixed Kannada + English: *"ಈ ಹೊಸ ಅಪ್ಲಿಕೇಶನ್ ತುಂಬಾ ಚೆನ್ನಾಗಿದೆ It works completely offline on my phone."*
    - Automatic preservation of fused Brahmic suffixes
    - English borrowings underlined in terracotta (`u.en-codemix`)

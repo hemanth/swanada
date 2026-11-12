@@ -30,7 +30,7 @@ export interface StreamingDecoderOptions extends NormalizeOptions {
 }
 
 function isEnVocab(vocab: string[] | Record<number, string>): boolean {
-  if (!Array.isArray(vocab) || vocab.length < 200) return false;
+  if (!Array.isArray(vocab) || vocab.length < 64) return false;
   const end = Math.min(vocab.length, 12);
   for (let idx = 2; idx < end; idx++) {
     const tok = vocab[idx] || '';

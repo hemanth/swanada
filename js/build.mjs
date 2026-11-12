@@ -82,6 +82,10 @@ const cacheSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'cache.t
   .replace(/import type .*?;/g, '')
   .replace(/^export /gm, '');
 
+const enAdapterSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'en_adapter.ts'), 'utf8'))
+  .replace(/import type .*?;/g, '')
+  .replace(/^export /gm, '');
+
 const engineSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'engine.ts'), 'utf8'))
   .replace(/import .*? from '\.\.\/audio\/frontend\.ts';/gs, '')
   .replace(/import .*? from '\.\.\/audio\/denoise\.ts';/gs, '')
@@ -89,6 +93,7 @@ const engineSrc = stripTypes(fs.readFileSync(path.join(srcDir, 'models', 'engine
   .replace(/import .*? from '\.\.\/tokenizers\/iast\.ts';/gs, '')
   .replace(/import .*? from '\.\.\/decoder\/lid\.ts';/gs, '')
   .replace(/import .*? from '\.\/cache\.ts';/gs, '')
+  .replace(/import .*? from '\.\/en_adapter\.ts';/gs, '')
   .replace(/import type .*?;/gs, '')
   .replace(/^export /gm, '');
 
@@ -195,6 +200,10 @@ export {
   IDB_STORE_NAME,
   isValidOnnxBuffer,
   loadModelAsset,
+  SENH_VERSION,
+  isEnAdapterBytes,
+  parseEnAdapterBytes,
+  forwardEnAdapter,
   getOrt,
   configureWasmEnvironment,
   resolveEffectiveModelTier,
@@ -222,6 +231,7 @@ ${ctcSrc}
 ${lidSrc}
 ${streamingDecoderSrc}
 ${cacheSrc}
+${enAdapterSrc}
 ${engineSrc}
 ${streamingEngineSrc}
 ${registrySrc}
@@ -272,6 +282,7 @@ ${ctcSrc}
 ${lidSrc}
 ${streamingDecoderSrc}
 ${cacheSrc}
+${enAdapterSrc}
 ${cjsEngineSrc}
 ${streamingEngineSrc}
 ${registrySrc}
@@ -337,6 +348,10 @@ module.exports = {
   IDB_STORE_NAME,
   isValidOnnxBuffer,
   loadModelAsset,
+  SENH_VERSION,
+  isEnAdapterBytes,
+  parseEnAdapterBytes,
+  forwardEnAdapter,
   getOrt,
   configureWasmEnvironment,
   resolveEffectiveModelTier,

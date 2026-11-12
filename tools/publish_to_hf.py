@@ -298,7 +298,9 @@ def build_manifest(models_dir: Path) -> Dict[str, Any]:
     scan_targets.extend((models_dir / "onnx_mobile").glob("*.onnx") if (models_dir / "onnx_mobile").exists() else [])
     scan_targets.extend((models_dir / "onnx_mobile" / "heads").glob("*") if (models_dir / "onnx_mobile" / "heads").exists() else [])
     scan_targets.extend((models_dir / "heads").glob("*.bin") if (models_dir / "heads").exists() else [])
+    scan_targets.extend((models_dir / "heads").glob("*.json") if (models_dir / "heads").exists() else [])
     scan_targets.extend((models_dir / "heads_mobile").glob("*.bin") if (models_dir / "heads_mobile").exists() else [])
+    scan_targets.extend((models_dir / "heads_mobile").glob("*.json") if (models_dir / "heads_mobile").exists() else [])
     scan_targets.extend((models_dir / "vocabularies").glob("*.json") if (models_dir / "vocabularies").exists() else [])
 
     for p in sorted(scan_targets):
@@ -402,8 +404,8 @@ def main() -> None:
         dst_dir = models_dir / dst_sub
         if src_dir.exists():
             dst_dir.mkdir(parents=True, exist_ok=True)
-            for bin_file in sorted(src_dir.glob("*.bin")):
-                shutil.copy2(bin_file, dst_dir / bin_file.name)
+            for asset_file in sorted(list(src_dir.glob("*.bin")) + list(src_dir.glob("*.json"))):
+                shutil.copy2(asset_file, dst_dir / asset_file.name)
 
     # 1. Validate local assets
     validate_local_assets(models_dir)

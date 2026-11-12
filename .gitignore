@@ -41,6 +41,7 @@ models/heads_mobile/
 *.parquet
 tools/.en_accent_cal_cache/
 bench/.slang_accent_cache/
+bench/.open_bench_cache/
 bench/*_results*.json
 bench/results.json
 temp_*

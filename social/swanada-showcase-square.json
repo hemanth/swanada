@@ -29,7 +29,7 @@
     ],
     "bullets": [
       "<1 ms 12-way Auto-LID (100% Studio, 95.4% Mobile) + live Kanglish +EN & IAST.",
-      "5.35% held-out CER · 24.18% 10-Indic FLEURS WER (beats Shruti 32.20% on 10/10).",
+      "5.35% held-out CER · #1 on 10/10 Indic FLEURS languages (24.18% mean WER).",
       "25.4 MiB Mobile & 177.4 MiB Studio WASM, 28.6 ms TTFT, 0.00% prefix churn."
     ],
     "ctaText": "Try Swanada live",

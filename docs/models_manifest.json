@@ -6,6 +6,10 @@
       "size_bytes": 2666,
       "sha256": "435a8e954e82daf2f0213079a43bc2f16fcfb1d7dd21d54c90861e732652ea74"
     },
+    "heads/adapters.json": {
+      "size_bytes": 27,
+      "sha256": "f855db06ebb6b45e3bcd96ff9d4838f424a83d790607103de7373f546bd03134"
+    },
     "heads/bn.bin": {
       "size_bytes": 527364,
       "sha256": "55da8d75cbdad4073a09212123c8bafe99ddee32c73d42edb77a05e4590d9249"
@@ -13,6 +17,10 @@
     "heads/en.bin": {
       "size_bytes": 527364,
       "sha256": "476aed48d9f5e7a46040c4806ef47bb2ce40f455c7f6a2e422bb0f7bad7bc09e"
+    },
+    "heads/en_adapter.bin": {
+      "size_bytes": 4094012,
+      "sha256": "9bcb61e5be9cc1f9d900f828e581055458e29d9d147dec1f930e777c746de2f4"
     },
     "heads/gu.bin": {
       "size_bytes": 527364,
@@ -25,6 +33,10 @@
     "heads/kn.bin": {
       "size_bytes": 527364,
       "sha256": "96564316af49f118fb8609143e73dc3601ea632d83510a7a50167b92ae20e940"
+    },
+    "heads/kn_adapter.bin": {
+      "size_bytes": 2980664,
+      "sha256": "9d048ad684f1ca861f1c5a80761425879f61aa06a9a1775f6f2d2306da9a034c"
     },
     "heads/lid.bin": {
       "size_bytes": 405324,
@@ -54,9 +66,17 @@
       "size_bytes": 527364,
       "sha256": "40e5dd80a3e56e44e4e186a60f07e83d41f6e940f195e5d898558b95d69f5a55"
     },
+    "heads/ta_adapter.bin": {
+      "size_bytes": 2980664,
+      "sha256": "f7576966fe31e7744fec6c45bf63c7311fb8ecaa5c58db886567fd931477de77"
+    },
     "heads/te.bin": {
       "size_bytes": 527364,
       "sha256": "8ac2b24f4d2fbf4ad31c84a7c900e0cf70f91d83eaa77a8b5ecc8c23ad196e4b"
+    },
+    "heads_mobile/adapters.json": {
+      "size_bytes": 11,
+      "sha256": "e2800373045b01c8baf468341ce1391785ee0a089a725319157feca7bb7c62ab"
     },
     "heads_mobile/bn.bin": {
       "size_bytes": 527364,
@@ -65,6 +85,10 @@
     "heads_mobile/en.bin": {
       "size_bytes": 527364,
       "sha256": "f685d952f6c67ab352dc526ee2c019e58c5d21f91ef382efbf0b94d6b072ef4e"
+    },
+    "heads_mobile/en_adapter.bin": {
+      "size_bytes": 4094012,
+      "sha256": "c11da6dea634a61c97445e2ab2cae2cba821b8763d82f8885076f55836b70bbc"
     },
     "heads_mobile/gu.bin": {
       "size_bytes": 527364,
@@ -109,6 +133,14 @@
     "heads_mobile/te.bin": {
       "size_bytes": 527364,
       "sha256": "a0929e8ce540cb623faf465ecc98b8a00b496cc9c67cc8294f34415338eab091"
+    },
+    "onnx/heads/adapters.json": {
+      "size_bytes": 27,
+      "sha256": "f855db06ebb6b45e3bcd96ff9d4838f424a83d790607103de7373f546bd03134"
+    },
+    "onnx/heads/en_adapter.bin": {
+      "size_bytes": 4094012,
+      "sha256": "9bcb61e5be9cc1f9d900f828e581055458e29d9d147dec1f930e777c746de2f4"
     },
     "onnx/heads/head_bn.onnx": {
       "size_bytes": 527780,
@@ -206,9 +238,17 @@
       "size_bytes": 527364,
       "sha256": "f796217ff0fdc18984cabb196f44b631af9c1aad06f6282370cd887df1c59193"
     },
+    "onnx/heads/kn_adapter.bin": {
+      "size_bytes": 2980664,
+      "sha256": "9d048ad684f1ca861f1c5a80761425879f61aa06a9a1775f6f2d2306da9a034c"
+    },
     "onnx/heads/lid.bin": {
       "size_bytes": 405324,
       "sha256": "0d44fc78286e393d0bb07a17ac8d18d742704889588b4cbb9b9d946c1cf595cc"
+    },
+    "onnx/heads/ta_adapter.bin": {
+      "size_bytes": 2980664,
+      "sha256": "f7576966fe31e7744fec6c45bf63c7311fb8ecaa5c58db886567fd931477de77"
     },
     "onnx/sushrota_sanskrit_ctc_int8.onnx": {
       "size_bytes": 185992342,
@@ -261,6 +301,14 @@
     "onnx/swanada_te_ctc_int8.onnx": {
       "size_bytes": 185992342,
       "sha256": "913c56011fba79d477c6279b1a75d85fb667d784f3f30f71bc996b9162f2770e"
+    },
+    "onnx_mobile/heads/adapters.json": {
+      "size_bytes": 11,
+      "sha256": "e2800373045b01c8baf468341ce1391785ee0a089a725319157feca7bb7c62ab"
+    },
+    "onnx_mobile/heads/en_adapter.bin": {
+      "size_bytes": 4094012,
+      "sha256": "c11da6dea634a61c97445e2ab2cae2cba821b8763d82f8885076f55836b70bbc"
     },
     "onnx_mobile/heads/head_bn.onnx": {
       "size_bytes": 527780,
@@ -373,6 +421,10 @@
     "vocabularies/bn_vocab.json": {
       "size_bytes": 3098,
       "sha256": "2c7f203a8e20815e65934402a71af8907cdc14c439207227592a83cf28e76d51"
+    },
+    "vocabularies/en_bpe_vocab.json": {
+      "size_bytes": 1219,
+      "sha256": "bc2704be6a909c11b383765d5c2b54b5a0356b12e26a545bbf0d9873e2e0701b"
     },
     "vocabularies/en_vocab.json": {
       "size_bytes": 2850,

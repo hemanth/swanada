@@ -39,6 +39,13 @@ from .engine import (
     AcousticEngine,
     TranscriptionResult,
 )
+from .en_adapter import (
+    AdapterBlockWeights,
+    EnglishAdapterWeights,
+    load_en_adapter,
+    parse_en_adapter_bytes,
+    serialize_en_adapter_bytes,
+)
 from .lid import (
     LID_LANGUAGES,
     LanguageDetectionResult,
@@ -78,6 +85,11 @@ __all__ = [
     "StreamingTranscript",
     "TranscriptionResult",
     "AcousticEngine",
+    "AdapterBlockWeights",
+    "EnglishAdapterWeights",
+    "load_en_adapter",
+    "parse_en_adapter_bytes",
+    "serialize_en_adapter_bytes",
     "REGISTRY",
     "Vocabulary",
     "LanguageMeta",

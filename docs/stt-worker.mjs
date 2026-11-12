@@ -21,7 +21,7 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 let swanadaMod = null;
 try {
   const isHttp = typeof location !== 'undefined' && /^https?:/.test(location.protocol || '');
-  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.8.0' : './swanada.mjs');
+  swanadaMod = await import(isHttp ? './swanada.mjs?v=1.9.0' : './swanada.mjs');
 } catch {
   try {
     swanadaMod = await import('../js/dist/index.mjs');
@@ -43,6 +43,9 @@ const parseLidHeadBytes = swanadaMod.parseLidHeadBytes;
 const detectLanguageFromHidden = swanadaMod.detectLanguageFromHidden;
 const decodeBilingualCodeswitch = swanadaMod.decodeBilingualCodeswitch;
 const transcribeMultilangSegments = swanadaMod.transcribeMultilangSegments;
+const isEnAdapterBytes = swanadaMod.isEnAdapterBytes;
+const parseEnAdapterBytes = swanadaMod.parseEnAdapterBytes;
+const forwardEnAdapter = swanadaMod.forwardEnAdapter;
 
 let workerState = 'UNINITIALIZED';
 let denoiseEnabled = true;
@@ -52,9 +55,14 @@ let ort = null;
 let currentLanguage = 'sa';
 let activeSession = null;
 let activeHead = null; // { weight: Float32Array(257*512), bias: Float32Array(257) } | null
+let activeEnAdapter = null; // EnglishAdapterWeights | null
 let activeVocab = [];
 let multiHeads = {};   // Record<lang, { weight, bias }>
 let multiVocabs = {};  // Record<lang, string[]>
+let langAdapters = {}; // Record<lang, { adapter: EnglishAdapterWeights, vocab: string[] }>
+let availableAdaptersByTier = {}; // Record<'studio'|'mobile', Set<string>>
+let enAdapter = null;  // EnglishAdapterWeights | null (SENH v2)
+let enAdapterVocab = []; // string[] (129 BPE pieces)
 let lidWeights = null; // NeuralLIDWeights | null
 let ctcDecoder = null;
 let executionProvider = 'wasm';
@@ -69,6 +77,7 @@ let sharedEncoderThreads = 1;
 
 // Per-language head & monolithic fallback caches
 const headCache = new Map();
+const enAdapterCache = new Map();
 const sessionCache = new Map();
 const languageUrlHistory = new Map();
 let streamingSession = null;
@@ -566,7 +575,12 @@ function buildStreamingEngineForActiveLanguage(lang, vocab) {
   const engineAdapter = {
     config: { language: lang },
     getVocab: () => vocab,
-    getVocabForLanguage: (lg) => multiVocabs[lg] || vocab,
+    getVocabForLanguage: (lg) =>
+      langAdapters[lg] && langAdapters[lg].vocab.length > 0
+        ? langAdapters[lg].vocab
+        : lg === 'en' && enAdapter && enAdapterVocab.length > 0
+          ? enAdapterVocab
+          : (multiVocabs[lg] || vocab),
     transcribe: async (pcm, opts) => runAcousticInference(pcm, opts),
   };
   return new StreamingAcousticEngine(engineAdapter, vocab, {
@@ -574,6 +588,211 @@ function buildStreamingEngineForActiveLanguage(lang, vocab) {
     maxBufferSamples: 61440,
     vadSilenceThreshold: 0.005,
   });
+}
+
+async function getAvailableAdaptersSet(isMobileTier) {
+  const tierKey = isMobileTier ? 'mobile' : 'studio';
+  if (availableAdaptersByTier[tierKey]) {
+    return availableAdaptersByTier[tierKey];
+  }
+  const headsDir = isMobileTier ? './heads_mobile' : './heads';
+  if (typeof process !== 'undefined' && process.versions?.node) {
+    try {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const found = new Set();
+      const folderName = isMobileTier ? 'heads_mobile' : 'heads';
+      const onnxFolder = isMobileTier ? 'onnx_mobile' : 'onnx';
+      for (const lg of LID_LANGUAGES) {
+        if (lg === 'sa') continue;
+        for (const cand of [
+          path.resolve(process.cwd(), 'docs', folderName, `${lg}_adapter.bin`),
+          path.resolve(process.cwd(), '..', 'docs', folderName, `${lg}_adapter.bin`),
+          path.resolve(process.cwd(), 'models', onnxFolder, 'heads', `${lg}_adapter.bin`),
+          path.resolve(process.cwd(), '..', 'models', onnxFolder, 'heads', `${lg}_adapter.bin`),
+        ]) {
+          if (fs.existsSync(cand) && fs.statSync(cand).size > 4096) {
+            found.add(lg);
+            break;
+          }
+        }
+      }
+      availableAdaptersByTier[tierKey] = found;
+      return found;
+    } catch {}
+  }
+  try {
+    const manifestUrl = resolveRelativeWorkerUrl(`${headsDir}/adapters.json?v=1.9.1`);
+    const res = await fetch(manifestUrl);
+    if (res.ok) {
+      const arr = await res.json();
+      if (Array.isArray(arr)) {
+        const s = new Set(arr.map(String));
+        availableAdaptersByTier[tierKey] = s;
+        return s;
+      }
+    }
+  } catch {}
+  const empty = new Set();
+  availableAdaptersByTier[tierKey] = empty;
+  return empty;
+}
+
+async function loadEnAdapterOptional(adapterUrlOrPath, lang = 'en') {
+  if (!isEnAdapterBytes || !parseEnAdapterBytes || !adapterUrlOrPath) return null;
+  if (enAdapterCache.has(adapterUrlOrPath)) {
+    return enAdapterCache.get(adapterUrlOrPath);
+  }
+  try {
+    let arrayBuf = null;
+    if (typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open(cacheStorageName);
+        const matched =
+          (await cache.match(adapterUrlOrPath)) ||
+          (await cache.match(adapterUrlOrPath, { ignoreSearch: true }));
+        if (matched && matched.ok) {
+          arrayBuf = await matched.arrayBuffer();
+        }
+      } catch {}
+    }
+    if (!arrayBuf && typeof process !== 'undefined' && process.versions?.node) {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const cleanPath = adapterUrlOrPath.split('?')[0];
+      const onnxDir = cleanPath.includes('mobile') ? 'onnx_mobile' : 'onnx';
+      for (const cand of [
+        cleanPath,
+        path.resolve(process.cwd(), cleanPath),
+        path.resolve(process.cwd(), 'docs', cleanPath.replace(/^\.\//, '')),
+        path.resolve(process.cwd(), '..', 'docs', cleanPath.replace(/^\.\//, '')),
+        path.resolve(process.cwd(), 'models', onnxDir, 'heads', `${lang}_adapter.bin`),
+        path.resolve(process.cwd(), '..', 'models', onnxDir, 'heads', `${lang}_adapter.bin`),
+      ]) {
+        if (fs.existsSync(cand)) {
+          const buf = fs.readFileSync(cand);
+          const u8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+          if (isEnAdapterBytes(u8)) {
+            const parsed = parseEnAdapterBytes(u8);
+            enAdapterCache.set(adapterUrlOrPath, parsed);
+            return parsed;
+          }
+        }
+      }
+      return null;
+    }
+    if (!arrayBuf) {
+      const fetchUrl = resolveRelativeWorkerUrl(adapterUrlOrPath);
+      const res = await fetch(fetchUrl);
+      if (!res.ok) return null;
+      if (typeof caches !== 'undefined') {
+        try {
+          const cache = await caches.open(cacheStorageName);
+          cache.put(adapterUrlOrPath, res.clone()).catch(() => {});
+        } catch {}
+      }
+      arrayBuf = await res.arrayBuffer();
+    }
+    if (arrayBuf && isEnAdapterBytes(arrayBuf)) {
+      const parsed = parseEnAdapterBytes(arrayBuf);
+      enAdapterCache.set(adapterUrlOrPath, parsed);
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureLangAdapterInWorker(lang, isMobileTier, explicitAdapterUrl, explicitVocabUrl) {
+  if (lang === 'sa') return null;
+  if (langAdapters[lang] && langAdapters[lang].vocab.length > 0 && !explicitAdapterUrl) {
+    return langAdapters[lang];
+  }
+  if (!explicitAdapterUrl) {
+    const avail = await getAvailableAdaptersSet(isMobileTier);
+    if (!avail.has(lang)) return null;
+  }
+  const headsDir = isMobileTier ? './heads_mobile' : './heads';
+  const adapterUrl = explicitAdapterUrl || `${headsDir}/${lang}_adapter.bin?v=1.9.1`;
+  const ad = await loadEnAdapterOptional(adapterUrl, lang);
+  if (!ad) return null;
+  let vArr = null;
+  if (multiVocabs[lang] && multiVocabs[lang].length === ad.numClasses && !explicitVocabUrl) {
+    vArr = multiVocabs[lang];
+  } else {
+    const vCandidates = lang === 'en'
+      ? [
+          explicitVocabUrl,
+          './vocabularies/en_bpe_vocab.json?v=1.9.1',
+          './models/vocabularies/en_bpe_vocab.json',
+          './vocabularies/en_vocab.json?v=1.7.0',
+        ]
+      : [
+          explicitVocabUrl,
+          `./vocabularies/${lang}_vocab.json?v=1.7.0`,
+          `./models/vocabularies/${lang}_vocab.json`,
+        ];
+    for (const vu of vCandidates) {
+      if (!vu) continue;
+      try {
+        const candV = await loadVocab(vu);
+        if (Array.isArray(candV) && candV.length === ad.numClasses) {
+          vArr = candV;
+          break;
+        }
+      } catch {}
+    }
+  }
+  if (!vArr) return null;
+  langAdapters[lang] = { adapter: ad, vocab: vArr };
+  if (lang === 'en') {
+    enAdapter = ad;
+    enAdapterVocab = vArr;
+  }
+  return langAdapters[lang];
+}
+
+async function ensureEnAdapterInWorker(isMobileTier, explicitAdapterUrl, explicitVocabUrl) {
+  return ensureLangAdapterInWorker('en', isMobileTier, explicitAdapterUrl, explicitVocabUrl);
+}
+
+function computeLangDecodeInWorker(lang, hidden, timeSteps, cachedLogits) {
+  const entry = langAdapters[lang];
+  if (
+    entry &&
+    entry.vocab.length === entry.adapter.numClasses &&
+    typeof forwardEnAdapter === 'function'
+  ) {
+    return {
+      logits: forwardEnAdapter(entry.adapter, hidden, timeSteps),
+      vocab: entry.vocab,
+    };
+  }
+  if (
+    lang === 'en' &&
+    enAdapter &&
+    enAdapterVocab.length === enAdapter.numClasses &&
+    typeof forwardEnAdapter === 'function'
+  ) {
+    return {
+      logits: forwardEnAdapter(enAdapter, hidden, timeSteps),
+      vocab: enAdapterVocab,
+    };
+  }
+  if (multiHeads[lang] && (multiVocabs[lang] || activeVocab.length > 0)) {
+    return {
+      logits:
+        (cachedLogits && cachedLogits[lang]) ||
+        projectLinearHead(hidden, timeSteps, multiHeads[lang].weight, multiHeads[lang].bias),
+      vocab: multiVocabs[lang] || activeVocab,
+    };
+  }
+  return null;
+}
+
+function computeEnDecodeInWorker(hidden, timeSteps, cachedLogits) {
+  return computeLangDecodeInWorker('en', hidden, timeSteps, cachedLogits);
 }
 
 async function loadLidHeadOptional(lidUrlOrPath) {
@@ -625,8 +844,8 @@ async function loadLidHeadOptional(lidUrlOrPath) {
 async function ensureMultiHeadsInWorker(langs, isMobileTier, lidUrl) {
   const headsDir = isMobileTier ? './heads_mobile' : './heads';
   const versionSuffix = isMobileTier ? '?v=1.7.0' : '?v=1.7.0';
-  await Promise.all(
-    langs.map(async (lg) => {
+  await Promise.all([
+    ...langs.map(async (lg) => {
       if (!multiVocabs[lg]) {
         const vFile = lg === 'sa' ? 'sanskrit_vocab.json' : `${lg}_vocab.json`;
         try {
@@ -638,8 +857,9 @@ async function ensureMultiHeadsInWorker(langs, isMobileTier, lidUrl) {
       if (!multiHeads[lg]) {
         multiHeads[lg] = await loadLinearHead(lg, `${headsDir}/${lg}.bin${versionSuffix}`);
       }
-    })
-  );
+    }),
+    ...(langs.includes('en') ? [ensureEnAdapterInWorker(isMobileTier)] : []),
+  ]);
   if (langs.length > 2 && !lidWeights) {
     lidWeights = await loadLidHeadOptional(lidUrl || `${headsDir}/lid.bin${versionSuffix}`);
   }
@@ -650,11 +870,15 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
   workerState = 'INITIALIZING';
 
   const isMobileTier = activeModelTier === 'mobile';
+  activeEnAdapter = null;
+  langAdapters = {};
+  enAdapter = null;
+  enAdapterVocab = [];
   multiHeads = {};
   multiVocabs = {};
   lidWeights = null;
 
-  // 12-Way Auto-LID Mode: Shared Encoder + All 12 `515 KB` Heads + Optional `lid.bin`
+  // 12-Way Auto-LID Mode: Shared Encoder + All 12 `515 KB` Heads + Optional `lid.bin` + SENH v2 English Adapter
   if (lang === 'auto') {
     const effectiveEncoderUrl =
       modelUrl ||
@@ -686,16 +910,24 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     return;
   }
 
+  const availAdapters = lang !== 'sa' ? await getAvailableAdaptersSet(isMobileTier) : new Set();
+  const langHasShippedAdapter = availAdapters.has(lang);
+
   const tierLangKey = `${activeModelTier}:${lang}`;
   const prevUrls = languageUrlHistory.get(tierLangKey);
   const resolvedModelUrl = modelUrl || prevUrls?.modelUrl;
+  const defaultVocabFile =
+    lang === 'sa' ? 'sanskrit_vocab.json' :
+    (lang === 'en' && langHasShippedAdapter) ? 'en_bpe_vocab.json' :
+    `${lang}_vocab.json`;
   const resolvedVocabUrl =
     vocabUrl ||
     prevUrls?.vocabUrl ||
-    (sharedEncoderSession
-      ? `./vocabularies/${lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`}`
-      : undefined);
-  const defaultSharedHead = isMobileTier ? `./heads_mobile/${lang}.bin` : `./heads/${lang}.bin`;
+    (sharedEncoderSession ? `./vocabularies/${defaultVocabFile}` : undefined);
+  const defaultHeadFile = langHasShippedAdapter ? `${lang}_adapter.bin` : `${lang}.bin`;
+  const defaultSharedHead = isMobileTier
+    ? `./heads_mobile/${defaultHeadFile}`
+    : `./heads/${defaultHeadFile}`;
   const resolvedHeadUrl =
     headUrl || prevUrls?.headUrl || (sharedEncoderSession ? defaultSharedHead : undefined);
   if (resolvedModelUrl || resolvedVocabUrl || resolvedHeadUrl) {
@@ -710,13 +942,80 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     resolvedVocabUrl ||
     `./models/vocabularies/${lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`}`;
 
-  // Fast path: Shared Encoder (25 MiB Mobile OR 177 MiB Studio) + 515 KB per-language linear CTC head
+  // Fast path: Shared Encoder (25 MiB Mobile OR 177 MiB Studio) + SENH v2 Language Adapter OR 515 KB linear CTC head
   if (resolvedHeadUrl) {
     const effectiveEncoderUrl =
       resolvedModelUrl ||
       (isMobileTier
         ? './models/onnx_mobile/swanada_mobile_ctc_int8.onnx'
         : './models/onnx/sushrota_sanskrit_ctc_int8.onnx');
+    const cleanResolvedHead = resolvedHeadUrl.split('?')[0];
+    const wantsLangAdapter =
+      lang !== 'sa' && (cleanResolvedHead.endsWith('_adapter.bin') || langHasShippedAdapter);
+
+    if (wantsLangAdapter) {
+      const explicitAdUrl = cleanResolvedHead.endsWith('_adapter.bin') ? resolvedHeadUrl : undefined;
+      const explicitVocUrl =
+        lang === 'en' && effectiveVocabUrl.includes('en_bpe_vocab')
+          ? effectiveVocabUrl
+          : (lang !== 'en' ? effectiveVocabUrl : undefined);
+      const [encInfo, adPair] = await Promise.all([
+        ensureSharedEncoderSession(effectiveEncoderUrl, userThreads, wasmPaths),
+        ensureLangAdapterInWorker(lang, isMobileTier, explicitAdUrl, explicitVocUrl),
+        ...(codeSwitchEn && lang !== 'en' ? [ensureMultiHeadsInWorker([lang, 'en'], isMobileTier)] : []),
+      ]);
+      if (myEpoch !== latestSetupEpoch) return;
+      if (adPair) {
+        currentLanguage = lang;
+        activeSession = encInfo.session;
+        activeHead = null;
+        activeEnAdapter = adPair.adapter;
+        activeVocab = adPair.vocab;
+        ctcDecoder = new CTCGreedyDecoder(activeVocab);
+        streamingSession = buildStreamingEngineForActiveLanguage(lang, activeVocab);
+        workerState = 'READY';
+        postWorkerMessage({
+          type: 'READY',
+          language: lang,
+          modelTier: activeModelTier,
+          executionProvider,
+          numThreads: encInfo.threads,
+          fromCache: encInfo.fromCache,
+        });
+        return;
+      }
+      // Graceful fallback to legacy 257-token <lang>.bin if <lang>_adapter.bin is unavailable
+      const fallbackHeadUrl = isMobileTier ? `./heads_mobile/${lang}.bin?v=1.7.0` : `./heads/${lang}.bin?v=1.7.0`;
+      const fallbackVocabUrl = `./vocabularies/${lang}_vocab.json?v=1.7.0`;
+      let fbVocab;
+      try {
+        fbVocab = await loadVocab(fallbackVocabUrl);
+      } catch {
+        fbVocab = await loadVocab(`./models/vocabularies/${lang}_vocab.json`);
+      }
+      const fbHead = await loadLinearHead(lang, fallbackHeadUrl);
+      if (myEpoch !== latestSetupEpoch) return;
+      currentLanguage = lang;
+      activeSession = encInfo.session;
+      activeHead = fbHead;
+      activeEnAdapter = null;
+      activeVocab = fbVocab;
+      multiHeads[lang] = fbHead;
+      multiVocabs[lang] = fbVocab;
+      ctcDecoder = new CTCGreedyDecoder(activeVocab);
+      streamingSession = buildStreamingEngineForActiveLanguage(lang, activeVocab);
+      workerState = 'READY';
+      postWorkerMessage({
+        type: 'READY',
+        language: lang,
+        modelTier: activeModelTier,
+        executionProvider,
+        numThreads: encInfo.threads,
+        fromCache: encInfo.fromCache,
+      });
+      return;
+    }
+
     const [encInfo, vocab, head] = await Promise.all([
       ensureSharedEncoderSession(effectiveEncoderUrl, userThreads, wasmPaths),
       loadVocab(effectiveVocabUrl),
@@ -732,6 +1031,7 @@ async function setupLanguage(lang, modelUrl, vocabUrl, userThreads, wasmPaths, h
     currentLanguage = lang;
     activeSession = encInfo.session;
     activeHead = head;
+    activeEnAdapter = null;
     activeVocab = vocab;
     multiHeads[lang] = head;
     multiVocabs[lang] = vocab;
@@ -986,7 +1286,14 @@ async function runAcousticInference(pcm, decodeOpts) {
       lidWeights,
       activeVocab,
       Boolean(codeSwitchEn),
-      16000
+      16000,
+      (segHidden, segSteps) => computeEnDecodeInWorker(segHidden, segSteps),
+      async (segLang, segHidden, segSteps) => {
+        if (segLang !== 'sa' && !langAdapters[segLang]) {
+          await ensureLangAdapterInWorker(segLang, activeModelTier === 'mobile');
+        }
+        return computeLangDecodeInWorker(segLang, segHidden, segSteps);
+      }
     );
     if (multiRes) {
       const elapsedMs = performance.now() - startMs;
@@ -1052,7 +1359,10 @@ async function runAcousticInference(pcm, decodeOpts) {
       length: lenTensor,
     });
 
-    if (outputs.layer_norm_84 && (currentLanguage === 'auto' || activeHead || codeSwitchEn)) {
+    if (
+      outputs.layer_norm_84 &&
+      (currentLanguage === 'auto' || activeHead || activeEnAdapter || codeSwitchEn)
+    ) {
       const hiddenTensor = outputs.layer_norm_84;
       const hDims = hiddenTensor.dims;
       timeSteps = hDims.length === 3 ? hDims[1] : hDims[0];
@@ -1060,8 +1370,14 @@ async function runAcousticInference(pcm, decodeOpts) {
       if (currentLanguage === 'auto' || codeSwitchEn || decodeOpts?.forcedLanguage) {
         hiddenCopy = new Float32Array(hiddenTensor.data);
       }
-      if (currentLanguage !== 'auto' && !decodeOpts?.forcedLanguage && activeHead) {
-        logits = projectLinearHead(hiddenTensor.data, timeSteps, activeHead.weight, activeHead.bias);
+      if (currentLanguage !== 'auto' && !decodeOpts?.forcedLanguage) {
+        if (activeEnAdapter && typeof forwardEnAdapter === 'function') {
+          logits = forwardEnAdapter(activeEnAdapter, hiddenTensor.data, timeSteps);
+          numClasses = activeEnAdapter.numClasses;
+        } else if (activeHead) {
+          logits = projectLinearHead(hiddenTensor.data, timeSteps, activeHead.weight, activeHead.bias);
+          numClasses = 257;
+        }
       }
     } else {
       const logitsTensor = outputs.logits || Object.values(outputs)[0];
@@ -1082,6 +1398,7 @@ async function runAcousticInference(pcm, decodeOpts) {
   let langConfidence = undefined;
   let langProbabilities = undefined;
   let englishSpans = undefined;
+  let decodeVocabOverride = null;
 
   if (hiddenCopy && effectiveLang === 'auto' && typeof detectLanguageFromHidden === 'function') {
     const { result: lidRes, cachedLogits } = detectLanguageFromHidden(
@@ -1094,41 +1411,71 @@ async function runAcousticInference(pcm, decodeOpts) {
     effectiveLang = lidRes.language;
     langConfidence = lidRes.confidence;
     langProbabilities = lidRes.probabilities;
-    logits = cachedLogits[effectiveLang];
-    if (!logits && multiHeads[effectiveLang]) {
-      logits = projectLinearHead(hiddenCopy, timeSteps, multiHeads[effectiveLang].weight, multiHeads[effectiveLang].bias);
+    if (effectiveLang !== 'sa' && !langAdapters[effectiveLang]) {
+      await ensureLangAdapterInWorker(effectiveLang, activeModelTier === 'mobile');
     }
-    if (codeSwitchEn && effectiveLang !== 'en' && multiHeads.en && multiVocabs.en && logits && typeof decodeBilingualCodeswitch === 'function') {
-      const enLogits = cachedLogits.en || projectLinearHead(hiddenCopy, timeSteps, multiHeads.en.weight, multiHeads.en.bias);
-      const csRes = decodeBilingualCodeswitch(
-        logits,
-        timeSteps,
-        multiVocabs[effectiveLang] || activeVocab,
-        effectiveLang,
-        enLogits,
-        multiVocabs.en,
-        Boolean(decodeOpts?.isPartial)
-      );
-      const elapsedMs = performance.now() - startMs;
-      const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
-      const iastText = effectiveLang === 'sa' ? devanagariToIast(csRes.text) : undefined;
-      return {
-        text: csRes.text,
-        iast: iastText,
-        language: effectiveLang,
-        languageConfidence: langConfidence,
-        languageProbabilities: langProbabilities,
-        englishSpans: csRes.englishSpans,
-        durationMs,
-        inferenceMs: elapsedMs,
-        rtf,
-        tokens: csRes.tokens,
-      };
+    const langDec = computeLangDecodeInWorker(effectiveLang, hiddenCopy, timeSteps, cachedLogits);
+    if (langDec) {
+      logits = langDec.logits;
+      numClasses = timeSteps > 0 ? Math.floor(logits.length / timeSteps) : langDec.vocab.length;
+      decodeVocabOverride = langDec.vocab;
     }
-  } else if (hiddenCopy && decodeOpts?.forcedLanguage && multiHeads[decodeOpts.forcedLanguage]) {
+    if (!logits) {
+      logits = cachedLogits[effectiveLang];
+      if (!logits && multiHeads[effectiveLang]) {
+        logits = projectLinearHead(hiddenCopy, timeSteps, multiHeads[effectiveLang].weight, multiHeads[effectiveLang].bias);
+        numClasses = 257;
+      }
+    }
+    if (codeSwitchEn && effectiveLang !== 'en' && logits && typeof decodeBilingualCodeswitch === 'function') {
+      if (!langAdapters.en) {
+        await ensureLangAdapterInWorker('en', activeModelTier === 'mobile');
+      }
+      const enDec = computeEnDecodeInWorker(hiddenCopy, timeSteps, cachedLogits);
+      if (enDec) {
+        const csRes = decodeBilingualCodeswitch(
+          logits,
+          timeSteps,
+          decodeVocabOverride || multiVocabs[effectiveLang] || activeVocab,
+          effectiveLang,
+          enDec.logits,
+          enDec.vocab,
+          Boolean(decodeOpts?.isPartial)
+        );
+        const elapsedMs = performance.now() - startMs;
+        const rtf = durationMs > 0 ? elapsedMs / durationMs : 0;
+        const iastText = effectiveLang === 'sa' ? devanagariToIast(csRes.text) : undefined;
+        return {
+          text: csRes.text,
+          iast: iastText,
+          language: effectiveLang,
+          languageConfidence: langConfidence,
+          languageProbabilities: langProbabilities,
+          englishSpans: csRes.englishSpans,
+          durationMs,
+          inferenceMs: elapsedMs,
+          rtf,
+          tokens: csRes.tokens,
+        };
+      }
+    }
+  } else if (hiddenCopy && decodeOpts?.forcedLanguage) {
     const fl = decodeOpts.forcedLanguage;
-    effectiveLang = fl;
-    logits = projectLinearHead(hiddenCopy, timeSteps, multiHeads[fl].weight, multiHeads[fl].bias);
+    if (fl !== 'sa' && !langAdapters[fl]) {
+      await ensureLangAdapterInWorker(fl, activeModelTier === 'mobile');
+    }
+    const flDec = computeLangDecodeInWorker(fl, hiddenCopy, timeSteps);
+    if (flDec) {
+      effectiveLang = fl;
+      logits = flDec.logits;
+      numClasses = timeSteps > 0 ? Math.floor(logits.length / timeSteps) : flDec.vocab.length;
+      decodeVocabOverride = flDec.vocab;
+    }
+    if (!logits && multiHeads[fl]) {
+      effectiveLang = fl;
+      logits = projectLinearHead(hiddenCopy, timeSteps, multiHeads[fl].weight, multiHeads[fl].bias);
+      numClasses = 257;
+    }
   }
 
   if (
@@ -1141,15 +1488,15 @@ async function runAcousticInference(pcm, decodeOpts) {
     if (!multiHeads.en || !multiVocabs.en) {
       await ensureMultiHeadsInWorker([effectiveLang, 'en'], activeModelTier === 'mobile');
     }
-    if (multiHeads.en && multiVocabs.en) {
-      const enLogits = projectLinearHead(hiddenCopy, timeSteps, multiHeads.en.weight, multiHeads.en.bias);
+    const enDec = computeEnDecodeInWorker(hiddenCopy, timeSteps);
+    if (enDec) {
       const csRes = decodeBilingualCodeswitch(
         logits,
         timeSteps,
         multiVocabs[effectiveLang] || activeVocab,
         effectiveLang,
-        enLogits,
-        multiVocabs.en,
+        enDec.logits,
+        enDec.vocab,
         Boolean(decodeOpts?.isPartial)
       );
       const elapsedMs = performance.now() - startMs;
@@ -1169,10 +1516,13 @@ async function runAcousticInference(pcm, decodeOpts) {
   }
 
   // 3. CTC Decoding
-  const decodeVocab = multiVocabs[effectiveLang] || activeVocab;
+  const finalClasses = logits && timeSteps > 0 ? Math.floor(logits.length / timeSteps) : numClasses;
+  const decodeVocab =
+    decodeVocabOverride ||
+    (activeEnAdapter ? activeVocab : (multiVocabs[effectiveLang] || activeVocab));
   const decoded = decodeCTC(
     logits,
-    [timeSteps, numClasses],
+    [timeSteps, finalClasses],
     decodeVocab,
     decodeOpts?.isPartial ? { isPartial: true } : undefined
   );

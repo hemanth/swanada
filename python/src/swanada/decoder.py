@@ -174,7 +174,7 @@ def _log_add_exp(a: float, b: float) -> float:
 
 
 def _is_english_sentencepiece_vocab(vocab_list: List[str]) -> bool:
-    if len(vocab_list) < 200:
+    if len(vocab_list) < 64:
         return False
     probe = "".join(vocab_list[2:12])
     return any("a" <= ch <= "z" for ch in probe)
@@ -502,7 +502,7 @@ def decode_ctc(
 
     if (
         isinstance(vocab, list)
-        and len(vocab) >= 200
+        and len(vocab) >= 64
         and blank_id == 0
         and collapse_repeats
         and logits_2d.shape[-1] == len(vocab)

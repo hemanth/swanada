@@ -26,6 +26,8 @@ import onnxruntime as ort
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python" / "src"))
+from swanada.en_adapter import EnglishAdapterWeights, load_en_adapter
+from swanada.engine import _expose_encoder_hidden_output
 from swanada.normalizer import normalize_indic_text
 
 
@@ -131,25 +133,60 @@ def main():
     # Load preprocessor
     prep_sess = ort.InferenceSession(str(args.preprocessor), providers=["CPUExecutionProvider"])
 
-    # Cache vocabularies and inference sessions
-    vocab_cache = {}
-    session_cache = {}
+    # Cache vocabularies, inference sessions, and optional SENH v2 language adapters
+    vocab_cache: dict[str, list[str]] = {}
+    session_cache: dict[str, ort.InferenceSession] = {}
+    adapter_cache: dict[str, EnglishAdapterWeights | None] = {}
+    shared_hidden_sess: ort.InferenceSession | None = None
+
+    def get_lang_adapter(lang: str) -> EnglishAdapterWeights | None:
+        if lang == "sa":
+            return None
+        if lang not in adapter_cache:
+            cand_paths = [
+                args.models_dir / "heads" / f"{lang}_adapter.bin",
+                ROOT / "docs" / "heads" / f"{lang}_adapter.bin",
+            ]
+            ap = next((p for p in cand_paths if p.exists() and p.stat().st_size > 4096), None)
+            if ap is None:
+                adapter_cache[lang] = None
+            elif lang == "en" and not (args.vocab_dir / "en_bpe_vocab.json").exists():
+                adapter_cache[lang] = None
+            else:
+                adapter_cache[lang] = load_en_adapter(ap)
+        return adapter_cache[lang]
 
     def get_vocab(lang: str) -> list[str]:
         if lang not in vocab_cache:
-            vocab_file = "sanskrit_vocab.json" if lang == "sa" else f"{lang}_vocab.json"
+            ad = get_lang_adapter(lang)
+            if lang == "en" and ad is not None:
+                vocab_file = "en_bpe_vocab.json"
+            else:
+                vocab_file = "sanskrit_vocab.json" if lang == "sa" else f"{lang}_vocab.json"
             vpath = args.vocab_dir / vocab_file
             with open(vpath, "r", encoding="utf-8") as vf:
                 vocab_cache[lang] = json.load(vf)
         return vocab_cache[lang]
 
     def get_session(lang: str) -> ort.InferenceSession:
+        nonlocal shared_hidden_sess
         if lang not in session_cache:
-            model_file = "sushrota_sanskrit_ctc_int8.onnx" if lang == "sa" else f"swanada_{lang}_ctc_int8.onnx"
-            mpath = args.models_dir / model_file
-            opts = ort.SessionOptions()
-            opts.intra_op_num_threads = 4
-            session_cache[lang] = ort.InferenceSession(str(mpath), sess_options=opts, providers=["CPUExecutionProvider"])
+            if get_lang_adapter(lang) is not None:
+                if shared_hidden_sess is None:
+                    base_mpath = args.models_dir / "sushrota_sanskrit_ctc_int8.onnx"
+                    if not base_mpath.exists():
+                        base_mpath = args.models_dir / f"swanada_{lang}_ctc_int8.onnx"
+                    opts = ort.SessionOptions()
+                    opts.intra_op_num_threads = 4
+                    exposed_bytes = _expose_encoder_hidden_output(base_mpath.read_bytes())
+                    shared_hidden_sess = ort.InferenceSession(exposed_bytes, sess_options=opts, providers=["CPUExecutionProvider"])
+                session_cache[lang] = shared_hidden_sess
+            else:
+                model_file = "sushrota_sanskrit_ctc_int8.onnx" if lang == "sa" else f"swanada_{lang}_ctc_int8.onnx"
+                mpath = args.models_dir / model_file
+                opts = ort.SessionOptions()
+                opts.intra_op_num_threads = 4
+                session_cache[lang] = ort.InferenceSession(str(mpath), sess_options=opts, providers=["CPUExecutionProvider"])
         return session_cache[lang]
 
     # Warmup
@@ -175,12 +212,18 @@ def main():
         t0 = time.perf_counter()
         # 1. Mel Spectrogram
         mel = prep_sess.run(None, {"audio_signal": pcm[None, :], "length": np.array([len(pcm)], dtype=np.int64)})[0]
-        # 2. Conformer Acoustic Model
+        # 2. Conformer Acoustic Model (+ SENH v2 Language Adapter when present)
         sess = get_session(lang)
-        logits = sess.run(None, {"audio_signal": mel, "length": np.array([mel.shape[2]], dtype=np.int64)})[0]
+        lang_ad = get_lang_adapter(lang)
+        if lang_ad is not None:
+            hidden = sess.run(["layer_norm_84"], {"audio_signal": mel, "length": np.array([mel.shape[2]], dtype=np.int64)})[0]
+            logits_2d = lang_ad.forward(hidden[0])
+        else:
+            logits = sess.run(None, {"audio_signal": mel, "length": np.array([mel.shape[2]], dtype=np.int64)})[0]
+            logits_2d = logits[0]
         # 3. CTC Decode
         vocab = get_vocab(lang)
-        hyp_text = ctc_greedy_decode(logits[0], vocab)
+        hyp_text = ctc_greedy_decode(logits_2d, vocab)
         t_infer = time.perf_counter() - t0
 
         rtf = t_infer / max(1e-4, audio_dur)

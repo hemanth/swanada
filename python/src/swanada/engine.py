@@ -11,6 +11,7 @@ import onnxruntime as ort
 from .audio import load_audio
 from .decoder import CTCDecodeResult, decode_ctc
 from .denoise import enhance_speech_with_telemetry
+from .en_adapter import EnglishAdapterWeights, SENH_MAGIC, parse_en_adapter_bytes
 from .frontend import extract_log_mel_features, extract_log_mel_onnx
 from .lid import (
     CodeSwitchSpan,
@@ -146,12 +147,16 @@ class AcousticEngine:
         self.acoustic_session: Optional[ort.InferenceSession] = None
         self.preprocessor_session: Optional[ort.InferenceSession] = None
         self._linear_head: Optional[Tuple[np.ndarray, np.ndarray]] = None
+        self._en_adapter: Optional[EnglishAdapterWeights] = None
+        self._en_adapter_vocab: List[str] = []
+        self._lang_adapters: Dict[str, Tuple[EnglishAdapterWeights, List[str]]] = {}
         self._multi_heads: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
         self._multi_vocabs: Dict[str, List[str]] = {}
         self._lid_weights: Optional[NeuralLIDWeights] = None
         self._has_hidden_output: bool = False
         self._model_file_path: Optional[Path] = None
         self.vocab: List[str] = []
+        self._fallback_vocab: List[str] = []
 
         # Configure session options
         self.sess_opts = ort.SessionOptions()
@@ -166,7 +171,7 @@ class AcousticEngine:
         onnx_subdir = "onnx_mobile" if self.tier == "mobile" else "onnx"
 
         def _resolve_vocab_file(lg: str) -> Optional[Path]:
-            search_dirs = [repo_root / "models" / "vocabularies"]
+            search_dirs = [repo_root / "models" / "vocabularies", repo_root / "docs" / "vocabularies"]
             if model_path:
                 mp = Path(model_path).resolve()
                 md = mp if mp.is_dir() else mp.parent
@@ -200,14 +205,65 @@ class AcousticEngine:
                     return c
             return None
 
+        def _resolve_lang_adapter_pair(lg: str) -> Tuple[Optional[EnglishAdapterWeights], List[str]]:
+            if lg == "sa":
+                return None, []
+            a_cands: List[Path] = []
+            v_cands: List[Path] = []
+            v_names = ["en_bpe_vocab.json", "en_vocab.json"] if lg == "en" else [f"{lg}_vocab.json"]
+            if model_path:
+                mp = Path(model_path).resolve()
+                md = mp if mp.is_dir() else mp.parent
+                a_cands.extend([
+                    md / heads_subdir / f"{lg}_adapter.bin",
+                    md.parent / heads_subdir / f"{lg}_adapter.bin",
+                    md.parent / "docs" / heads_subdir / f"{lg}_adapter.bin",
+                ])
+                for vn in v_names:
+                    v_cands.extend([
+                        md / "vocabularies" / vn,
+                        md.parent / "vocabularies" / vn,
+                        md / vn,
+                    ])
+            a_cands.extend([
+                repo_root / "docs" / heads_subdir / f"{lg}_adapter.bin",
+                repo_root / "models" / onnx_subdir / "heads" / f"{lg}_adapter.bin",
+            ])
+            for vn in v_names:
+                v_cands.extend([
+                    repo_root / "models" / "vocabularies" / vn,
+                    repo_root / "docs" / "vocabularies" / vn,
+                ])
+            adapter_p = next((p for p in a_cands if p.exists() and p.stat().st_size > 4096), None)
+            if adapter_p is None:
+                return None, []
+            try:
+                ad_w = parse_en_adapter_bytes(adapter_p.read_bytes())
+                for vp in v_cands:
+                    if vp.exists() and vp.stat().st_size > 256:
+                        ad_v = json.loads(vp.read_text(encoding="utf-8"))
+                        if isinstance(ad_v, list) and len(ad_v) == ad_w.num_classes:
+                            return ad_w, ad_v
+            except Exception:
+                pass
+            return None, []
+
+        def _resolve_en_adapter_pair() -> Tuple[Optional[EnglishAdapterWeights], List[str]]:
+            return _resolve_lang_adapter_pair("en")
+
         self._resolve_vocab_file = _resolve_vocab_file
         self._resolve_head_bin = _resolve_head_bin
+        self._resolve_lang_adapter_pair = _resolve_lang_adapter_pair
+        self._resolve_en_adapter_pair = _resolve_en_adapter_pair
         self._repo_root = repo_root
         self._heads_subdir = heads_subdir
         self._onnx_subdir = onnx_subdir
 
         is_auto = self.language == "auto"
         seed_lang = "sa" if is_auto else self.language
+        explicit_vocab_arg = Path(vocab_path) if vocab_path is not None else None
+        explicit_head_arg = Path(head_path) if head_path is not None else None
+        explicit_model_arg = Path(model_path) if model_path is not None else None
 
         # Load primary vocabulary (or 'sa' default seed when language='auto')
         if vocab_path is None:
@@ -215,6 +271,67 @@ class AcousticEngine:
         if vocab_path and Path(vocab_path).exists():
             with open(vocab_path, "r", encoding="utf-8") as f:
                 self.vocab = json.load(f)
+                self._fallback_vocab = list(self.vocab)
+
+        # Check explicit SENH v2 head_path or auto-discover SENH v2 language adapters
+        allow_auto_seed_adapter = True
+        if explicit_vocab_arg is not None:
+            expected_vnames = (
+                ("en_vocab.json", "en_bpe_vocab.json")
+                if seed_lang == "en"
+                else (f"{seed_lang}_vocab.json",)
+            )
+            if explicit_vocab_arg.name not in expected_vnames:
+                allow_auto_seed_adapter = False
+        if explicit_model_arg is not None and explicit_model_arg.is_file():
+            mname = explicit_model_arg.name
+            if (
+                seed_lang != "sa"
+                and mname.startswith(("swanada_",))
+                and mname not in ("swanada_mobile_ctc_int8.onnx",)
+                and explicit_head_arg is None
+            ):
+                # Explicit monolithic per-language ONNX path passed: keep monolithic unless head_path set
+                allow_auto_seed_adapter = False
+
+        if explicit_head_arg is not None and explicit_head_arg.exists():
+            raw_eh = explicit_head_arg.read_bytes()
+            if raw_eh[:4] == SENH_MAGIC:
+                parsed_eh = parse_en_adapter_bytes(raw_eh)
+                _, auto_v = _resolve_lang_adapter_pair(seed_lang)
+                if len(self.vocab) == parsed_eh.num_classes:
+                    use_v = list(self.vocab)
+                elif auto_v and len(auto_v) == parsed_eh.num_classes:
+                    use_v = list(auto_v)
+                    self.vocab = list(auto_v)
+                else:
+                    use_v = list(self.vocab)
+                self._lang_adapters[seed_lang] = (parsed_eh, use_v)
+                if seed_lang == "en":
+                    self._en_adapter = parsed_eh
+                    self._en_adapter_vocab = use_v
+            else:
+                allow_auto_seed_adapter = False
+
+        if not is_auto and seed_lang != "sa" and seed_lang not in self._lang_adapters and allow_auto_seed_adapter:
+            ad_w, ad_v = _resolve_lang_adapter_pair(seed_lang)
+            if ad_w is not None and ad_v:
+                self._lang_adapters[seed_lang] = (ad_w, ad_v)
+                self.vocab = list(ad_v)
+                if seed_lang == "en":
+                    self._en_adapter = ad_w
+                    self._en_adapter_vocab = ad_v
+
+        if is_auto or self.code_switch_en:
+            preload_adapter_langs = LID_LANGUAGES if is_auto else ("en",)
+            for alg in preload_adapter_langs:
+                if alg != "sa" and alg not in self._lang_adapters:
+                    ad_w, ad_v = _resolve_lang_adapter_pair(alg)
+                    if ad_w is not None and ad_v:
+                        self._lang_adapters[alg] = (ad_w, ad_v)
+                        if alg == "en":
+                            self._en_adapter = ad_w
+                            self._en_adapter_vocab = ad_v
 
         # When Auto-LID or Code-Switching is enabled, preload multi-language heads & vocabs
         if is_auto or (self.code_switch_en and self.language != "en"):
@@ -251,19 +368,22 @@ class AcousticEngine:
                     except Exception:
                         pass
 
-        # Load acoustic model (monolithic OR shared encoder + 515 KB `.bin` head)
-        resolved_head: Optional[Path] = Path(head_path) if head_path else None
+        # Load acoustic model (monolithic OR shared encoder + 515 KB `.bin` head / SENH v2 adapter)
+        seed_has_adapter = not is_auto and seed_lang in self._lang_adapters
+        resolved_head: Optional[Path] = explicit_head_arg if (explicit_head_arg and not seed_has_adapter) else None
         if model_path is None:
             if self.tier == "mobile":
                 repo_mob = repo_root / "models" / "onnx_mobile"
                 mono = repo_mob / f"swanada_mobile_{seed_lang}_ctc_int8.onnx"
                 shared = repo_mob / "swanada_mobile_ctc_int8.onnx"
                 h_bin = repo_root / "docs" / "heads_mobile" / f"{seed_lang}.bin"
-                if not is_auto and not self.code_switch_en and mono.exists():
+                if seed_has_adapter and shared.exists():
+                    model_path = shared
+                elif not is_auto and not self.code_switch_en and mono.exists():
                     model_path = mono
                 elif shared.exists():
                     model_path = shared
-                    if not is_auto and seed_lang != "sa" and h_bin.exists():
+                    if not is_auto and seed_lang != "sa" and not seed_has_adapter and h_bin.exists():
                         resolved_head = h_bin
                 elif mono.exists():
                     model_path = mono
@@ -272,30 +392,43 @@ class AcousticEngine:
                 candidate = repo_onnx / f"swanada_{seed_lang}_ctc_int8.onnx"
                 shared = repo_onnx / "sushrota_sanskrit_ctc_int8.onnx"
                 h_bin = repo_root / "docs" / "heads" / f"{seed_lang}.bin"
-                if not is_auto and not self.code_switch_en and candidate.exists():
+                if seed_has_adapter and shared.exists():
+                    model_path = shared
+                elif not is_auto and not self.code_switch_en and candidate.exists():
                     model_path = candidate
                 elif shared.exists():
                     model_path = shared
-                    if not is_auto and seed_lang != "sa" and h_bin.exists():
+                    if not is_auto and seed_lang != "sa" and not seed_has_adapter and h_bin.exists():
                         resolved_head = h_bin
                 elif candidate.exists():
                     model_path = candidate
 
         if resolved_head and resolved_head.exists():
-            self._linear_head = _parse_linear_head_bin(resolved_head.read_bytes())
-        elif not is_auto and self.language in self._multi_heads:
+            raw_rh = resolved_head.read_bytes()
+            if raw_rh[:4] == SENH_MAGIC:
+                parsed_rh = parse_en_adapter_bytes(raw_rh)
+                self._lang_adapters[seed_lang] = (parsed_rh, list(self.vocab))
+                if seed_lang == "en":
+                    self._en_adapter = parsed_rh
+                    self._en_adapter_vocab = list(self.vocab)
+            else:
+                self._linear_head = _parse_linear_head_bin(raw_rh)
+        elif not is_auto and seed_lang not in self._lang_adapters and self.language in self._multi_heads:
             self._linear_head = self._multi_heads[self.language]
 
         need_hidden_out = (
             self._linear_head is not None
+            or bool(self._lang_adapters)
+            or self._en_adapter is not None
             or is_auto
-            or (self.code_switch_en and self.language != "en" and "en" in self._multi_heads)
+            or (self.code_switch_en and self.language != "en" and ("en" in self._multi_heads or "en" in self._lang_adapters))
         )
 
         if model_path and Path(model_path).exists():
             self._model_file_path = Path(model_path)
-            if need_hidden_out:
-                patched = _expose_encoder_hidden_output(self._model_file_path.read_bytes())
+            raw_model_bytes = self._model_file_path.read_bytes()
+            if need_hidden_out and b"layer_norm_84" in raw_model_bytes:
+                patched = _expose_encoder_hidden_output(raw_model_bytes)
                 self.acoustic_session = ort.InferenceSession(
                     patched, sess_options=self.sess_opts, providers=["CPUExecutionProvider"]
                 )
@@ -303,8 +436,10 @@ class AcousticEngine:
                 self._has_hidden_output = "layer_norm_84" in out_names
             else:
                 self.acoustic_session = ort.InferenceSession(
-                    str(model_path), sess_options=self.sess_opts, providers=["CPUExecutionProvider"]
+                    raw_model_bytes, sess_options=self.sess_opts, providers=["CPUExecutionProvider"]
                 )
+                if not is_auto and seed_lang in self._lang_adapters and self._fallback_vocab:
+                    self.vocab = list(self._fallback_vocab)
             # Warm up session graph kernels and pattern memory allocations
             try:
                 dummy_feats = np.zeros((1, 80, 16), dtype=np.float32)
@@ -324,6 +459,46 @@ class AcousticEngine:
                     str(preprocessor_path), sess_options=self.sess_opts, providers=["CPUExecutionProvider"]
                 )
 
+    def get_vocab_for_language(self, lg: str) -> List[str]:
+        if lg in self._lang_adapters:
+            return self._lang_adapters[lg][1]
+        if lg == "en" and self._en_adapter is not None and self._en_adapter_vocab:
+            return self._en_adapter_vocab
+        return self._multi_vocabs.get(lg, self.vocab)
+
+    def _has_lang_decode_head(self, lg: str) -> bool:
+        if lg in self._lang_adapters:
+            return True
+        if lg == "en" and self._en_adapter is not None and bool(self._en_adapter_vocab):
+            return True
+        return lg in self._multi_heads and lg in self._multi_vocabs
+
+    def _has_en_decode_head(self) -> bool:
+        return self._has_lang_decode_head("en")
+
+    def _compute_lang_decode_logits_and_vocab(
+        self,
+        lg: str,
+        hidden_2d: np.ndarray,
+        cached_logits: Optional[Dict[str, np.ndarray]] = None,
+    ) -> Tuple[np.ndarray, List[str]]:
+        if lg in self._lang_adapters:
+            ad_w, ad_v = self._lang_adapters[lg]
+            return ad_w.forward(hidden_2d), ad_v
+        if lg == "en" and self._en_adapter is not None and self._en_adapter_vocab:
+            return self._en_adapter.forward(hidden_2d), self._en_adapter_vocab
+        if cached_logits is not None and lg in cached_logits:
+            return cached_logits[lg], self._multi_vocabs.get(lg, self.vocab)
+        w_h, b_h = self._multi_heads[lg]
+        return hidden_2d @ w_h.T + b_h, self._multi_vocabs.get(lg, self.vocab)
+
+    def _compute_en_decode_logits_and_vocab(
+        self,
+        hidden_2d: np.ndarray,
+        cached_logits: Optional[Dict[str, np.ndarray]] = None,
+    ) -> Tuple[np.ndarray, List[str]]:
+        return self._compute_lang_decode_logits_and_vocab("en", hidden_2d, cached_logits)
+
     def _ensure_hidden_and_heads(self, langs: Tuple[str, ...]) -> None:
         for lg in langs:
             if lg not in self._multi_vocabs:
@@ -335,6 +510,13 @@ class AcousticEngine:
                 hb = self._resolve_head_bin(lg)
                 if hb is not None:
                     self._multi_heads[lg] = _parse_linear_head_bin(hb.read_bytes())
+            if lg != "sa" and lg not in self._lang_adapters:
+                ad_w, ad_v = self._resolve_lang_adapter_pair(lg)
+                if ad_w is not None and ad_v:
+                    self._lang_adapters[lg] = (ad_w, ad_v)
+                    if lg == "en":
+                        self._en_adapter = ad_w
+                        self._en_adapter_vocab = ad_v
         if self._lid_weights is None and len(langs) > 2:
             for lc in (
                 self._repo_root / "docs" / self._heads_subdir / "lid.bin",
@@ -508,49 +690,62 @@ class AcousticEngine:
             active_lang = lid_res.language
             lang_conf = lid_res.confidence
             lang_probs = lid_res.probabilities
-            active_vocab = self._multi_vocabs.get(active_lang, self.vocab)
-            if active_lang in cached_logits:
-                logits_2d = cached_logits[active_lang]
+            if self._has_lang_decode_head(active_lang):
+                logits_2d, active_vocab = self._compute_lang_decode_logits_and_vocab(active_lang, hidden[0], cached_logits)
             else:
-                w_h, b_h = self._multi_heads[active_lang]
-                logits_2d = hidden[0] @ w_h.T + b_h
+                active_vocab = self._multi_vocabs.get(active_lang, self.vocab)
+                if active_lang in cached_logits:
+                    logits_2d = cached_logits[active_lang]
+                else:
+                    w_h, b_h = self._multi_heads[active_lang]
+                    logits_2d = hidden[0] @ w_h.T + b_h
 
-            if use_cs and active_lang != "en" and "en" in self._multi_heads and "en" in self._multi_vocabs:
-                lg_en = cached_logits.get("en")
-                if lg_en is None:
-                    w_en, b_en = self._multi_heads["en"]
-                    lg_en = hidden[0] @ w_en.T + b_en
+            if use_cs and active_lang != "en" and self._has_en_decode_head():
+                lg_en, en_vocab = self._compute_en_decode_logits_and_vocab(hidden[0], cached_logits)
                 cs_res = decode_bilingual_codeswitch(
-                    logits_2d, active_vocab, active_lang, lg_en, self._multi_vocabs["en"], is_partial=is_partial
+                    logits_2d, active_vocab, active_lang, lg_en, en_vocab, is_partial=is_partial
                 )
                 decode_text, decode_tokens, en_spans = cs_res.text, cs_res.tokens, cs_res.english_spans
             else:
                 dec = decode_ctc(logits_2d[None, :, :], vocab=active_vocab, is_partial=is_partial)
                 decode_text, decode_tokens = dec.text, dec.tokens
-        elif forced_language and forced_language in self._multi_heads and self._has_hidden_output:
+        elif (
+            forced_language
+            and self._has_hidden_output
+            and self._has_lang_decode_head(forced_language)
+        ):
             hidden = self.acoustic_session.run(
                 ["layer_norm_84"],
                 {"audio_signal": feats_input, "length": lens_input},
             )[0]
-            w_h, b_h = self._multi_heads[forced_language]
-            logits_2d = hidden[0] @ w_h.T + b_h
-            active_vocab = self._multi_vocabs.get(forced_language, self.vocab)
-            if use_cs and forced_language != "en" and "en" in self._multi_heads and "en" in self._multi_vocabs:
-                w_en, b_en = self._multi_heads["en"]
-                lg_en = hidden[0] @ w_en.T + b_en
+            logits_2d, active_vocab = self._compute_lang_decode_logits_and_vocab(forced_language, hidden[0])
+            if use_cs and forced_language != "en" and self._has_en_decode_head():
+                lg_en, en_vocab = self._compute_en_decode_logits_and_vocab(hidden[0])
                 cs_res = decode_bilingual_codeswitch(
-                    logits_2d, active_vocab, forced_language, lg_en, self._multi_vocabs["en"], is_partial=is_partial
+                    logits_2d, active_vocab, forced_language, lg_en, en_vocab, is_partial=is_partial
                 )
                 decode_text, decode_tokens, en_spans = cs_res.text, cs_res.tokens, cs_res.english_spans
             else:
                 dec = decode_ctc(logits_2d[None, :, :], vocab=active_vocab, is_partial=is_partial)
                 decode_text, decode_tokens = dec.text, dec.tokens
-        elif self._has_hidden_output and (self._linear_head is not None or use_cs):
+        elif self._has_hidden_output and (
+            active_lang in self._lang_adapters
+            or self._en_adapter is not None
+            or self._linear_head is not None
+            or use_cs
+        ):
             hidden = self.acoustic_session.run(
                 ["layer_norm_84"],
                 {"audio_signal": feats_input, "length": lens_input},
             )[0]
-            if self._linear_head is not None:
+            if active_lang in self._lang_adapters:
+                ad_w, ad_v = self._lang_adapters[active_lang]
+                logits = ad_w.forward(hidden)
+                active_vocab = ad_v
+            elif active_lang == "en" and self._en_adapter is not None and self._en_adapter_vocab:
+                logits = self._en_adapter.forward(hidden)
+                active_vocab = self._en_adapter_vocab
+            elif self._linear_head is not None:
                 w_h, b_h = self._linear_head
                 logits = hidden @ w_h.T + b_h
             else:
@@ -558,11 +753,10 @@ class AcousticEngine:
                     ["logits"],
                     {"audio_signal": feats_input, "length": lens_input},
                 )[0]
-            if use_cs and active_lang != "en" and "en" in self._multi_heads and "en" in self._multi_vocabs:
-                w_en, b_en = self._multi_heads["en"]
-                lg_en = hidden[0] @ w_en.T + b_en
+            if use_cs and active_lang != "en" and self._has_en_decode_head():
+                lg_en, en_vocab = self._compute_en_decode_logits_and_vocab(hidden[0])
                 cs_res = decode_bilingual_codeswitch(
-                    logits[0], active_vocab, active_lang, lg_en, self._multi_vocabs["en"], is_partial=is_partial
+                    logits[0], active_vocab, active_lang, lg_en, en_vocab, is_partial=is_partial
                 )
                 decode_text, decode_tokens, en_spans = cs_res.text, cs_res.tokens, cs_res.english_spans
             else:
@@ -711,22 +905,22 @@ class AcousticEngine:
             else:
                 m_h = self._encode_hidden_segment(pcm[int(m_s0) : int(m_s1)], sample_rate)
                 m_cl = {}
-            lg_2d = m_cl.get(m_lg)
-            if lg_2d is None:
-                w_h, b_h = self._multi_heads[m_lg]
-                lg_2d = m_h[0] @ w_h.T + b_h
-            seg_vocab = self._multi_vocabs.get(m_lg, self.vocab)
+            if self._has_lang_decode_head(m_lg):
+                lg_2d, seg_vocab = self._compute_lang_decode_logits_and_vocab(m_lg, m_h[0], m_cl)
+            else:
+                lg_2d = m_cl.get(m_lg)
+                if lg_2d is None:
+                    w_h, b_h = self._multi_heads[m_lg]
+                    lg_2d = m_h[0] @ w_h.T + b_h
+                seg_vocab = self._multi_vocabs.get(m_lg, self.vocab)
 
             seg_text = ""
             seg_tokens: List[str] = []
             seg_spans: List[CodeSwitchSpan] = []
-            if use_cs and m_lg != "en" and "en" in self._multi_heads and "en" in self._multi_vocabs:
-                lg_en = m_cl.get("en")
-                if lg_en is None:
-                    w_e, b_e = self._multi_heads["en"]
-                    lg_en = m_h[0] @ w_e.T + b_e
+            if use_cs and m_lg != "en" and self._has_en_decode_head():
+                lg_en, en_vocab = self._compute_en_decode_logits_and_vocab(m_h[0], m_cl)
                 cs = decode_bilingual_codeswitch(
-                    lg_2d, seg_vocab, m_lg, lg_en, self._multi_vocabs["en"], is_partial=False
+                    lg_2d, seg_vocab, m_lg, lg_en, en_vocab, is_partial=False
                 )
                 seg_text, seg_tokens, seg_spans = cs.text, cs.tokens, cs.english_spans
             else:

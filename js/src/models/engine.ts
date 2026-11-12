@@ -23,6 +23,12 @@ import type {
   CodeSwitchSpan,
 } from '../decoder/lid.ts';
 import { loadModelAsset } from './cache.ts';
+import {
+  isEnAdapterBytes,
+  parseEnAdapterBytes,
+  forwardEnAdapter,
+} from './en_adapter.ts';
+import type { EnglishAdapterWeights } from './en_adapter.ts';
 import type {
   SwanadaEngineConfig as BaseSwanadaEngineConfig,
   SupportedLanguage,
@@ -245,6 +251,11 @@ export class AcousticEngine {
   private acousticSession: any = null;
   private preprocessorSession: any = null;
   private linearHead: { weight: Float32Array; bias: Float32Array } | null = null;
+  private enAdapter: EnglishAdapterWeights | null = null;
+  private enAdapterVocab: string[] = [];
+  private langAdapters: Record<string, { weights: EnglishAdapterWeights; vocab: string[] }> = {};
+  private availableAdapterLangs: Set<string> | null = null;
+  private fallbackVocab: string[] = [];
   private multiHeads: Record<string, LinearHeadWeights> = {};
   private multiVocabs: Record<string, string[]> = {};
   private lidWeights: NeuralLIDWeights | null = null;
@@ -295,7 +306,21 @@ export class AcousticEngine {
     const headsFolder = isMobileTier ? 'heads_mobile' : 'heads';
     const needMultiHeads = isAutoLang || (Boolean(config.codeSwitchEn) && lang !== 'en');
 
-    const modelNames = isAutoLang
+    const isExplicitMonoFile =
+      Boolean(baseModelRef) &&
+      typeof baseModelRef === 'string' &&
+      baseModelRef.endsWith('.onnx') &&
+      !baseModelRef.endsWith('sushrota_sanskrit_ctc_int8.onnx') &&
+      !baseModelRef.endsWith('swanada_mobile_ctc_int8.onnx') &&
+      !config.headPath;
+
+    if (!isAutoLang && lang !== 'sa' && !isExplicitMonoFile) {
+      await engine.tryLoadLangAdapter(lang, baseModelRef, headsFolder);
+    }
+
+    const useSharedForAdapter = !isAutoLang && Boolean(engine.langAdapters[lang]) && !isExplicitMonoFile;
+
+    const modelNames = isAutoLang || useSharedForAdapter
       ? (isMobileTier ? ['swanada_mobile_ctc_int8.onnx', 'swanada_mobile_sa_ctc_int8.onnx'] : ['sushrota_sanskrit_ctc_int8.onnx', 'swanada_sa_ctc_int8.onnx'])
       : (isMobileTier
           ? [
@@ -434,9 +459,19 @@ export class AcousticEngine {
     if (needMultiHeads) {
       const targetLangs = isAutoLang ? LID_LANGUAGES : [lang, 'en'];
       await engine.loadMultiHeadsAndVocabs(targetLangs, baseModelRef, headsFolder);
-      if (!isAutoLang && engine.multiHeads[lang] && !engine.linearHead) {
+      if (!isAutoLang && engine.multiHeads[lang] && !engine.linearHead && !engine.langAdapters[lang]) {
         engine.linearHead = engine.multiHeads[lang];
       }
+    }
+
+    if (isAutoLang) {
+      for (const lg of LID_LANGUAGES) {
+        if (lg !== 'sa') {
+          await engine.tryLoadLangAdapter(lg, baseModelRef, headsFolder);
+        }
+      }
+    } else if (Boolean(config.codeSwitchEn) && lang !== 'en') {
+      await engine.tryLoadLangAdapter('en', baseModelRef, headsFolder);
     }
 
     if (effectiveModelPath) {
@@ -558,7 +593,222 @@ export class AcousticEngine {
       throw new Error(`Invalid vocabulary format for language "${this.config.language || 'sa'}". Expected JSON array or map.`);
     }
 
+    this.fallbackVocab = [...this.vocab];
     this.decoder = new CTCGreedyDecoder(this.vocab);
+  }
+
+  private async tryLoadLangAdapter(lang: string, baseModelRef?: string, headsFolder: string = 'heads'): Promise<void> {
+    if (lang === 'sa' || this.langAdapters[lang]) return;
+    const rawCfgLang = this.config.language || 'sa';
+    if (
+      lang === rawCfgLang &&
+      this.config.vocabPath &&
+      (lang === 'en'
+        ? !this.config.vocabPath.endsWith('en_vocab.json') && !this.config.vocabPath.endsWith('en_bpe_vocab.json')
+        : !this.config.vocabPath.endsWith(`${lang}_vocab.json`))
+    ) {
+      return;
+    }
+    const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
+    const onnxFolder = headsFolder === 'heads_mobile' ? 'onnx_mobile' : 'onnx';
+    const vocabNames = lang === 'en' ? ['en_bpe_vocab.json', 'en_vocab.json'] : [`${lang}_vocab.json`];
+
+    if (isNode) {
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const { fileURLToPath } = await import('node:url');
+
+        const roots: string[] = [];
+        if (baseModelRef && !baseModelRef.startsWith('http')) {
+          const resRef = path.resolve(baseModelRef);
+          const dir = fs.existsSync(resRef) && fs.statSync(resRef).isDirectory() ? resRef : path.dirname(resRef);
+          roots.push(dir, path.dirname(dir));
+        }
+        if (typeof import.meta !== 'undefined' && import.meta.url) {
+          try {
+            roots.push(fileURLToPath(new URL('../../../', import.meta.url)));
+            roots.push(fileURLToPath(new URL('../../', import.meta.url)));
+          } catch {}
+        }
+        roots.push(process.cwd(), path.resolve(process.cwd(), '..'));
+
+        let foundAdapter: string | null = null;
+        if (lang === rawCfgLang && this.config.headPath && fs.existsSync(path.resolve(this.config.headPath))) {
+          const hp = path.resolve(this.config.headPath);
+          const hb = fs.readFileSync(hp);
+          if (isEnAdapterBytes(new Uint8Array(hb.buffer, hb.byteOffset, hb.byteLength))) {
+            foundAdapter = hp;
+          } else {
+            return;
+          }
+        }
+        if (!foundAdapter) {
+          for (const r of roots) {
+            for (const sub of [`docs/${headsFolder}`, headsFolder, `models/${onnxFolder}/heads`, `models/${headsFolder}`]) {
+              const cand = path.join(r, sub, `${lang}_adapter.bin`);
+              if (fs.existsSync(cand) && fs.statSync(cand).size > 4096) {
+                foundAdapter = cand;
+                break;
+              }
+            }
+            if (foundAdapter) break;
+          }
+        }
+
+        if (!foundAdapter) return;
+        const abuf = fs.readFileSync(foundAdapter);
+        const adWeights = parseEnAdapterBytes(new Uint8Array(abuf.buffer, abuf.byteOffset, abuf.byteLength));
+
+        let vArr: string[] | null = null;
+        if (this.multiVocabs[lang] && this.multiVocabs[lang].length === adWeights.numClasses) {
+          vArr = this.multiVocabs[lang];
+        } else {
+          for (const vn of vocabNames) {
+            for (const r of roots) {
+              for (const sub of ['models/vocabularies', 'vocabularies', 'docs/vocabularies', '']) {
+                const cand = sub ? path.join(r, sub, vn) : path.join(r, vn);
+                if (fs.existsSync(cand) && fs.statSync(cand).size > 256) {
+                  const rawV = JSON.parse(fs.readFileSync(cand, 'utf8'));
+                  const parsedV: string[] = Array.isArray(rawV) ? rawV : Object.values(rawV);
+                  if (parsedV.length === adWeights.numClasses) {
+                    vArr = parsedV;
+                    break;
+                  }
+                }
+              }
+              if (vArr) break;
+            }
+            if (vArr) break;
+          }
+        }
+
+        if (vArr && vArr.length === adWeights.numClasses) {
+          this.langAdapters[lang] = { weights: adWeights, vocab: vArr };
+          if (lang === 'en') {
+            this.enAdapter = adWeights;
+            this.enAdapterVocab = vArr;
+          }
+          if (rawCfgLang === lang) {
+            this.vocab = [...vArr];
+            this.decoder = new CTCGreedyDecoder(this.vocab);
+          }
+        }
+      } catch {}
+    } else if (typeof fetch !== 'undefined') {
+      try {
+        if (!this.availableAdapterLangs) {
+          this.availableAdapterLangs = new Set<string>();
+          for (const mu of [`./${headsFolder}/adapters.json`, `./docs/${headsFolder}/adapters.json`]) {
+            try {
+              const rm = await fetch(mu);
+              if (rm.ok) {
+                const arr = await rm.json();
+                if (Array.isArray(arr)) {
+                  this.availableAdapterLangs = new Set(arr.map(String));
+                }
+                break;
+              }
+            } catch {}
+          }
+        }
+        const explicitAdapterHead =
+          lang === rawCfgLang && Boolean(this.config.headPath && this.config.headPath.includes('_adapter.bin'));
+        if (!explicitAdapterHead && !this.availableAdapterLangs.has(lang)) {
+          return;
+        }
+
+        let adWeights: EnglishAdapterWeights | null = null;
+        const aUrls = explicitAdapterHead && this.config.headPath
+          ? [this.config.headPath]
+          : [`./${headsFolder}/${lang}_adapter.bin`, `./docs/${headsFolder}/${lang}_adapter.bin`];
+        for (const u of aUrls) {
+          try {
+            const r = await fetch(u);
+            if (r.ok) {
+              const ab = await r.arrayBuffer();
+              if (isEnAdapterBytes(ab)) {
+                adWeights = parseEnAdapterBytes(ab);
+                break;
+              }
+            }
+          } catch {}
+        }
+        if (adWeights) {
+          let vArr: string[] | null =
+            this.multiVocabs[lang] && this.multiVocabs[lang].length === adWeights.numClasses
+              ? this.multiVocabs[lang]
+              : null;
+          if (!vArr) {
+            for (const vn of vocabNames) {
+              for (const vu of [`./vocabularies/${vn}`, `./models/vocabularies/${vn}`]) {
+                try {
+                  const rv = await fetch(vu);
+                  if (rv.ok) {
+                    const j = await rv.json();
+                    const candArr: string[] = Array.isArray(j) ? j : Object.values(j);
+                    if (candArr.length === adWeights.numClasses) {
+                      vArr = candArr;
+                      break;
+                    }
+                  }
+                } catch {}
+              }
+              if (vArr) break;
+            }
+          }
+          if (vArr && vArr.length === adWeights.numClasses) {
+            this.langAdapters[lang] = { weights: adWeights, vocab: vArr };
+            if (lang === 'en') {
+              this.enAdapter = adWeights;
+              this.enAdapterVocab = vArr;
+            }
+            if (rawCfgLang === lang) {
+              this.vocab = [...vArr];
+              this.decoder = new CTCGreedyDecoder(this.vocab);
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
+  private computeLangDecodeLogitsAndVocab(
+    lang: string,
+    hidden: Float32Array,
+    timeSteps: number,
+    cachedLogits?: Record<string, Float32Array>
+  ): { logits: Float32Array; vocab: string[] } | null {
+    const ad = this.langAdapters[lang];
+    if (ad && ad.vocab.length === ad.weights.numClasses) {
+      return {
+        logits: forwardEnAdapter(ad.weights, hidden, timeSteps),
+        vocab: ad.vocab,
+      };
+    }
+    if (lang === 'en' && this.enAdapter && this.enAdapterVocab.length > 0) {
+      return {
+        logits: forwardEnAdapter(this.enAdapter, hidden, timeSteps),
+        vocab: this.enAdapterVocab,
+      };
+    }
+    if (this.multiHeads[lang] && (this.multiVocabs[lang] || this.vocab.length > 0)) {
+      return {
+        logits:
+          (cachedLogits && cachedLogits[lang]) ||
+          projectLinearHead(hidden, timeSteps, this.multiHeads[lang].weight, this.multiHeads[lang].bias),
+        vocab: this.multiVocabs[lang] || this.vocab,
+      };
+    }
+    return null;
+  }
+
+  private computeEnDecodeLogitsAndVocab(
+    hidden: Float32Array,
+    timeSteps: number,
+    cachedLogits?: Record<string, Float32Array>
+  ): { logits: Float32Array; vocab: string[] } | null {
+    return this.computeLangDecodeLogitsAndVocab('en', hidden, timeSteps, cachedLogits);
   }
 
   async loadMultiHeadsAndVocabs(
@@ -713,6 +963,8 @@ export class AcousticEngine {
     let modelBytes = await loadModelAsset(modelPathOrUrl, this.config.cacheStorageName);
     const needHidden =
       Boolean(this.linearHead) ||
+      Boolean(this.enAdapter) ||
+      Object.keys(this.langAdapters).length > 0 ||
       this.config.language === 'auto' ||
       Boolean(this.config.codeSwitchEn) ||
       Object.keys(this.multiHeads).length > 0;
@@ -769,6 +1021,26 @@ export class AcousticEngine {
         audio_signal: featsTensor,
         length: lenTensor,
       });
+
+      const curLang = this.config.language || 'sa';
+      const curAd = this.langAdapters[curLang];
+      if (curAd && outputs.layer_norm_84) {
+        const hidTensor = outputs.layer_norm_84;
+        const hDims = hidTensor.dims;
+        const timeSteps = hDims.length === 3 ? hDims[1] : hDims[0];
+        const logits = forwardEnAdapter(
+          curAd.weights,
+          hidTensor.data as Float32Array,
+          timeSteps
+        );
+        const inferenceMs = performance.now() - startMs;
+        return {
+          logits,
+          timeSteps,
+          numClasses: curAd.weights.numClasses,
+          inferenceMs,
+        };
+      }
 
       if (this.linearHead && outputs.layer_norm_84) {
         const hidTensor = outputs.layer_norm_84;
@@ -1011,7 +1283,15 @@ export class AcousticEngine {
           this.lidWeights,
           this.vocab,
           useCodeSwitch,
-          16000
+          16000,
+          (segHidden: Float32Array, segSteps: number) =>
+            this.computeEnDecodeLogitsAndVocab(segHidden, segSteps),
+          async (segLang: string, segHidden: Float32Array, segSteps: number) => {
+            if (segLang !== 'sa' && !this.langAdapters[segLang]) {
+              await this.tryLoadLangAdapter(segLang, this.config.modelPath || this.config.modelDir, headsFolder);
+            }
+            return this.computeLangDecodeLogitsAndVocab(segLang, segHidden, segSteps);
+          }
         );
         if (multiRes) {
           const totalInferenceMs = performance.now() - startTotal;
@@ -1089,20 +1369,25 @@ export class AcousticEngine {
     if (
       this.hasHiddenOutput &&
       (targetLang === 'auto' ||
-        (options?.forcedLanguage && this.multiHeads[options.forcedLanguage]) ||
+        (options?.forcedLanguage &&
+          (this.multiHeads[options.forcedLanguage] ||
+            Boolean(this.langAdapters[options.forcedLanguage]))) ||
         (useCodeSwitch && targetLang !== 'en'))
     ) {
       const headsFolder = this.modelTier === 'mobile' ? 'heads_mobile' : 'heads';
       if (useCodeSwitch && targetLang !== 'en' && (!this.multiHeads.en || !this.multiVocabs.en)) {
         await this.loadMultiHeadsAndVocabs([targetLang === 'auto' ? 'sa' : targetLang, 'en'], this.config.modelPath || this.config.modelDir, headsFolder);
       }
+      if ((targetLang === 'auto' || useCodeSwitch || targetLang === 'en') && !this.langAdapters.en) {
+        await this.tryLoadLangAdapter('en', this.config.modelPath || this.config.modelDir, headsFolder);
+      }
       const enc = await this.runEncoderHidden(features, numFrames);
       if (enc.hidden.length > 0) {
         let activeLang = targetLang;
         let langConfidence: number | undefined = undefined;
         let langProbs: Record<string, number> | undefined = undefined;
-        let englishSpans: CodeSwitchSpan[] | undefined = undefined;
         let primaryLogits: Float32Array | undefined = undefined;
+        let primaryVocab: string[] | undefined = undefined;
 
         if (activeLang === 'auto') {
           const { result: lidRes, cachedLogits } = detectLanguageFromHidden(
@@ -1115,86 +1400,104 @@ export class AcousticEngine {
           activeLang = lidRes.language;
           langConfidence = lidRes.confidence;
           langProbs = lidRes.probabilities;
-          primaryLogits = cachedLogits[activeLang];
-          if (!primaryLogits && this.multiHeads[activeLang]) {
-            primaryLogits = projectLinearHead(
-              enc.hidden,
-              enc.timeSteps,
-              this.multiHeads[activeLang].weight,
-              this.multiHeads[activeLang].bias
-            );
+          if (activeLang !== 'sa' && !this.langAdapters[activeLang]) {
+            await this.tryLoadLangAdapter(activeLang, this.config.modelPath || this.config.modelDir, headsFolder);
           }
-          if (useCodeSwitch && activeLang !== 'en' && this.multiHeads.en && this.multiVocabs.en && primaryLogits) {
-            const enLogits =
-              cachedLogits.en ||
-              projectLinearHead(enc.hidden, enc.timeSteps, this.multiHeads.en.weight, this.multiHeads.en.bias);
-            const csRes = decodeBilingualCodeswitch(
-              primaryLogits,
-              enc.timeSteps,
-              this.multiVocabs[activeLang] || this.vocab,
-              activeLang,
-              enLogits,
-              this.multiVocabs.en,
-              Boolean(options?.isPartial)
-            );
-            const totalInferenceMs = performance.now() - startTotal;
-            return {
-              text: csRes.text,
-              language: activeLang,
-              durationMs,
-              inferenceMs: totalInferenceMs,
-              rtf: durationMs > 0 ? totalInferenceMs / durationMs : 0,
-              tokens: csRes.tokens,
-              ...(activeLang === 'sa' && csRes.text ? { iast: devanagariToIast(csRes.text) } : {}),
-              snrDb,
-              languageConfidence: langConfidence,
-              languageProbabilities: langProbs,
-              englishSpans: csRes.englishSpans,
-            };
+          const langDec = this.computeLangDecodeLogitsAndVocab(activeLang, enc.hidden, enc.timeSteps, cachedLogits);
+          if (langDec) {
+            primaryLogits = langDec.logits;
+            primaryVocab = langDec.vocab;
+          }
+          if (!primaryLogits) {
+            primaryLogits = cachedLogits[activeLang];
+            if (!primaryLogits && this.multiHeads[activeLang]) {
+              primaryLogits = projectLinearHead(
+                enc.hidden,
+                enc.timeSteps,
+                this.multiHeads[activeLang].weight,
+                this.multiHeads[activeLang].bias
+              );
+            }
+          }
+          if (useCodeSwitch && activeLang !== 'en' && primaryLogits) {
+            const enDec = this.computeEnDecodeLogitsAndVocab(enc.hidden, enc.timeSteps, cachedLogits);
+            if (enDec) {
+              const csRes = decodeBilingualCodeswitch(
+                primaryLogits,
+                enc.timeSteps,
+                primaryVocab || this.multiVocabs[activeLang] || this.vocab,
+                activeLang,
+                enDec.logits,
+                enDec.vocab,
+                Boolean(options?.isPartial)
+              );
+              const totalInferenceMs = performance.now() - startTotal;
+              return {
+                text: csRes.text,
+                language: activeLang,
+                durationMs,
+                inferenceMs: totalInferenceMs,
+                rtf: durationMs > 0 ? totalInferenceMs / durationMs : 0,
+                tokens: csRes.tokens,
+                ...(activeLang === 'sa' && csRes.text ? { iast: devanagariToIast(csRes.text) } : {}),
+                snrDb,
+                languageConfidence: langConfidence,
+                languageProbabilities: langProbs,
+                englishSpans: csRes.englishSpans,
+              };
+            }
           }
         } else {
-          const headObj = this.multiHeads[activeLang] || this.linearHead;
-          if (headObj) {
-            primaryLogits = projectLinearHead(enc.hidden, enc.timeSteps, headObj.weight, headObj.bias);
-          } else if (enc.logits) {
-            primaryLogits = enc.logits;
+          if (activeLang !== 'sa' && !this.langAdapters[activeLang]) {
+            await this.tryLoadLangAdapter(activeLang, this.config.modelPath || this.config.modelDir, headsFolder);
           }
-          if (useCodeSwitch && activeLang !== 'en' && this.multiHeads.en && this.multiVocabs.en && primaryLogits) {
-            const enLogits = projectLinearHead(
-              enc.hidden,
-              enc.timeSteps,
-              this.multiHeads.en.weight,
-              this.multiHeads.en.bias
-            );
-            const csRes = decodeBilingualCodeswitch(
-              primaryLogits,
-              enc.timeSteps,
-              this.multiVocabs[activeLang] || this.vocab,
-              activeLang,
-              enLogits,
-              this.multiVocabs.en,
-              Boolean(options?.isPartial)
-            );
-            const totalInferenceMs = performance.now() - startTotal;
-            return {
-              text: csRes.text,
-              language: activeLang,
-              durationMs,
-              inferenceMs: totalInferenceMs,
-              rtf: durationMs > 0 ? totalInferenceMs / durationMs : 0,
-              tokens: csRes.tokens,
-              ...(activeLang === 'sa' && csRes.text ? { iast: devanagariToIast(csRes.text) } : {}),
-              snrDb,
-              englishSpans: csRes.englishSpans,
-            };
+          const langDec = this.computeLangDecodeLogitsAndVocab(activeLang, enc.hidden, enc.timeSteps);
+          if (langDec) {
+            primaryLogits = langDec.logits;
+            primaryVocab = langDec.vocab;
+          }
+          if (!primaryLogits) {
+            const headObj = this.multiHeads[activeLang] || this.linearHead;
+            if (headObj) {
+              primaryLogits = projectLinearHead(enc.hidden, enc.timeSteps, headObj.weight, headObj.bias);
+            } else if (enc.logits) {
+              primaryLogits = enc.logits;
+            }
+          }
+          if (useCodeSwitch && activeLang !== 'en' && primaryLogits) {
+            const enDec = this.computeEnDecodeLogitsAndVocab(enc.hidden, enc.timeSteps);
+            if (enDec) {
+              const csRes = decodeBilingualCodeswitch(
+                primaryLogits,
+                enc.timeSteps,
+                primaryVocab || this.multiVocabs[activeLang] || this.vocab,
+                activeLang,
+                enDec.logits,
+                enDec.vocab,
+                Boolean(options?.isPartial)
+              );
+              const totalInferenceMs = performance.now() - startTotal;
+              return {
+                text: csRes.text,
+                language: activeLang,
+                durationMs,
+                inferenceMs: totalInferenceMs,
+                rtf: durationMs > 0 ? totalInferenceMs / durationMs : 0,
+                tokens: csRes.tokens,
+                ...(activeLang === 'sa' && csRes.text ? { iast: devanagariToIast(csRes.text) } : {}),
+                snrDb,
+                englishSpans: csRes.englishSpans,
+              };
+            }
           }
         }
 
-        if (primaryLogits) {
-          const activeVocab = this.multiVocabs[activeLang] || this.vocab;
+        if (primaryLogits && enc.timeSteps > 0) {
+          const activeVocab = primaryVocab || this.multiVocabs[activeLang] || this.vocab;
+          const activeClasses = Math.floor(primaryLogits.length / enc.timeSteps);
           const decodeRes = decodeCTC(
             primaryLogits,
-            [enc.timeSteps, 257],
+            [enc.timeSteps, activeClasses],
             activeVocab,
             options?.isPartial ? { isPartial: true } : undefined
           );
@@ -1219,10 +1522,14 @@ export class AcousticEngine {
     const acousticRes = await this.runAcousticInference(features, numFrames);
 
     // 3. CTC decode
+    const singleVocab =
+      acousticRes.numClasses === this.vocab.length || this.fallbackVocab.length === 0
+        ? this.vocab
+        : this.fallbackVocab;
     const decodeRes = decodeCTC(
       acousticRes.logits,
       [acousticRes.timeSteps, acousticRes.numClasses],
-      this.vocab,
+      singleVocab,
       options?.isPartial ? { isPartial: true } : undefined
     );
 
@@ -1267,6 +1574,13 @@ export class AcousticEngine {
   }
 
   getVocabForLanguage(lang: string): string[] {
+    const ad = this.langAdapters[lang];
+    if (ad && ad.vocab.length > 0) {
+      return ad.vocab;
+    }
+    if (lang === 'en' && this.enAdapter && this.enAdapterVocab.length > 0) {
+      return this.enAdapterVocab;
+    }
     return this.multiVocabs[lang] || this.vocab;
   }
 

@@ -34,6 +34,37 @@ def _find_model_asset(filename: str, model_dir: Optional[Union[str, Path]] = Non
     return None
 
 
+def _find_adapter_asset(
+    lang: str,
+    tier: str,
+    model_dir: Optional[Union[str, Path]] = None,
+) -> Optional[Path]:
+    if lang == "sa":
+        return None
+    fname = f"{lang}_adapter.bin"
+    heads_sub = "heads_mobile" if tier == "mobile" else "heads"
+    onnx_sub = "onnx_mobile" if tier == "mobile" else "onnx"
+    cands = []
+    if model_dir is not None:
+        md = Path(model_dir)
+        cands.extend([
+            md / heads_sub / fname,
+            md / onnx_sub / "heads" / fname,
+            md / fname,
+        ])
+    else:
+        repo_root = Path(__file__).resolve().parents[3]
+        cands.extend([
+            repo_root / "models" / onnx_sub / "heads" / fname,
+            repo_root / "models" / heads_sub / fname,
+            repo_root / "docs" / heads_sub / fname,
+        ])
+    for c in cands:
+        if c.exists() and c.stat().st_size > 4096:
+            return c
+    return None
+
+
 class Swanada:
     """Swanada Speech-to-Text Transcriber.
 
@@ -61,17 +92,23 @@ class Swanada:
         vocab_name = meta.vocab_filename if meta else f"{seed_lang}_vocab.json"
 
         head_path: Optional[Path] = None
+        adapter_cand = None if is_auto else _find_adapter_asset(self.language, self.tier, model_dir)
         if self.tier == "mobile":
             if is_auto:
                 model_path = _find_model_asset("swanada_mobile_ctc_int8.onnx", model_dir, "onnx_mobile")
                 if model_path is None:
                     model_path = _find_model_asset("swanada_mobile_sa_ctc_int8.onnx", model_dir, "onnx_mobile")
             else:
-                mob_name = f"swanada_mobile_{self.language}_ctc_int8.onnx"
-                model_path = _find_model_asset(mob_name, model_dir, "onnx_mobile")
-                if model_path is None:
-                    shared_mob = _find_model_asset("swanada_mobile_ctc_int8.onnx", model_dir, "onnx_mobile")
-                    if shared_mob is not None:
+                shared_mob = _find_model_asset("swanada_mobile_ctc_int8.onnx", model_dir, "onnx_mobile")
+                if adapter_cand is not None and shared_mob is not None:
+                    model_path = shared_mob
+                    head_path = adapter_cand
+                    if self.language == "en":
+                        vocab_name = "en_bpe_vocab.json"
+                else:
+                    mob_name = f"swanada_mobile_{self.language}_ctc_int8.onnx"
+                    model_path = _find_model_asset(mob_name, model_dir, "onnx_mobile")
+                    if model_path is None and shared_mob is not None:
                         model_path = shared_mob
                         if self.language != "sa":
                             head_cand = _find_model_asset(f"{self.language}.bin", model_dir, "heads_mobile")
@@ -86,11 +123,16 @@ class Swanada:
                 if model_path is None:
                     model_path = _find_model_asset("swanada_sa_ctc_int8.onnx", model_dir, "onnx")
             else:
-                model_name = meta.model_filename if meta else f"swanada_{self.language}_ctc_int8.onnx"
-                model_path = _find_model_asset(model_name, model_dir, "onnx")
-                if model_path is None:
-                    shared_studio = _find_model_asset("sushrota_sanskrit_ctc_int8.onnx", model_dir, "onnx")
-                    if shared_studio is not None:
+                shared_studio = _find_model_asset("sushrota_sanskrit_ctc_int8.onnx", model_dir, "onnx")
+                if adapter_cand is not None and shared_studio is not None:
+                    model_path = shared_studio
+                    head_path = adapter_cand
+                    if self.language == "en":
+                        vocab_name = "en_bpe_vocab.json"
+                else:
+                    model_name = meta.model_filename if meta else f"swanada_{self.language}_ctc_int8.onnx"
+                    model_path = _find_model_asset(model_name, model_dir, "onnx")
+                    if model_path is None and shared_studio is not None:
                         model_path = shared_studio
                         if self.language != "sa":
                             head_cand = _find_model_asset(f"{self.language}.bin", model_dir, "heads")

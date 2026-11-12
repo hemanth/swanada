@@ -11,7 +11,7 @@ from .normalizer import normalize_indic_text, join_subwords
 
 
 def _is_en_vocab(vocab: Union[List[str], dict]) -> bool:
-    if not isinstance(vocab, list) or len(vocab) < 200:
+    if not isinstance(vocab, list) or len(vocab) < 64:
         return False
     probe = "".join(vocab[2:12])
     return any("a" <= ch <= "z" for ch in probe)
@@ -485,8 +485,12 @@ class SwanadaStream:
             if res.language and res.language != "auto":
                 if self._detected_language != res.language:
                     self._detected_language = res.language
-                    multi_vocabs = getattr(self.engine, "_multi_vocabs", {})
-                    new_vocab = multi_vocabs.get(res.language, self.engine.vocab)
+                    get_vocab_fn = getattr(self.engine, "get_vocab_for_language", None)
+                    if callable(get_vocab_fn):
+                        new_vocab = get_vocab_fn(res.language)
+                    else:
+                        multi_vocabs = getattr(self.engine, "_multi_vocabs", {})
+                        new_vocab = multi_vocabs.get(res.language, self.engine.vocab)
                     self.decoder = StreamingCTCDecoder(
                         new_vocab,
                         trail_tokens=3,

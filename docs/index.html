@@ -934,7 +934,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.8.0';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.9.0';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -1235,7 +1235,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
     // Preset evaluation utterances
     const PRESETS = {
       auto: [
-        { title: "Auto · Sanskrit (Madhvācārya)", text: "स्वतन्त्रमस्वतन्त्रं च द्विविधं तत्त्वमिष्यते · हरिः सर्वोत्तमः", sampleLang: "sa_madhva" },
+        { title: "Auto · Sanskrit (Madhvācārya)", text: "प्रज्ञापूर्वकव्यापारवत्त्वं जीवत्वम्", sampleLang: "sa_madhva" },
         { title: "Auto · English", text: "Speak naturally in twelve languages with zero cloud servers.", sampleLang: "en_clean" },
         { title: "Auto · Kanglish (+EN)", text: "ಈ ಹೊಸ ಅಪ್ಲಿಕೇಶನ್ ತುಂಬಾ ಚೆನ್ನಾಗಿದೆ · It works completely offline on my phone.", sampleLang: "kanglish", enableCodeSwitch: true },
         { title: "Auto · Hindi", text: "अपने हेडमास्टर साहब ही को देखो", sampleLang: "hi" },
@@ -1245,7 +1245,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
       ],
       sa: [
         { title: "Subhashita", text: "व्यायामः देहस्य अङ्गेषु पुष्टिं ददाति" },
-        { title: "Madhvācārya · Tattvasaṅkhyānam", text: "स्वतन्त्रमस्वतन्त्रं च द्विविधं तत्त्वमिष्यते · हरिः सर्वोत्तमः", sampleLang: "sa_madhva" },
+        { title: "Madhvācārya · Pramāṇalakṣaṇam", text: "प्रज्ञापूर्वकव्यापारवत्त्वं जीवत्वम्", sampleLang: "sa_madhva" },
       ],
       hi: [{ title: "Conversational", text: "अपने हेडमास्टर साहब ही को देखो" }],
       kn: [
@@ -1604,7 +1604,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.8.0',
+              workerUrl: './stt-worker.mjs?v=1.9.0',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -1756,9 +1756,11 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
             });
           }
 
-          // Capability-routed Dual-Tier Shared Conformer Encoder + 515 KB per-language linear CTC head:
+          // Capability-routed Dual-Tier Shared Conformer Encoder + SENH v2 Adapters / 515 KB CTC heads:
           // - Mobile (<30 MB): 25.4 MiB `swanada_mobile_ctc_int8.onnx` + `heads_mobile/<lang>.bin`
           // - Studio (Desktop): 177.4 MiB `sushrota_sanskrit_ctc_int8.onnx` + `heads/<lang>.bin`
+          // Notice: passing `${lang}.bin` as `headUrl` lets `stt-worker.mjs` consult `adapters.json`
+          // and upgrade cleanly to `${lang}_adapter.bin` whenever shipped, with 0 HTTP 404s!
           const encoderUrl = useMobileTier
             ? (isLocalDevHost()
                 ? '../models/onnx_mobile/swanada_mobile_ctc_int8.onnx?v=1.7.0'
@@ -1766,13 +1768,17 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
             : (isLocalDevHost()
                 ? '../models/onnx/sushrota_sanskrit_ctc_int8.onnx?v=1.7.0'
                 : `${HF_MODEL_BASE}/sushrota_sanskrit_ctc_int8.onnx?v=1.7.0`);
+          const headFile = `${lang}.bin`;
+          const headVer = 'v=1.9.1';
           const headUrl = lang === 'auto'
             ? undefined
             : (useMobileTier
-                ? `./heads_mobile/${lang}.bin?v=1.7.0`
-                : `./heads/${lang}.bin?v=1.7.0`);
-          const vocabFile = lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
-          const vocabUrl = lang === 'auto' ? undefined : `./vocabularies/${vocabFile}?v=1.7.0`;
+                ? `./heads_mobile/${headFile}?${headVer}`
+                : `./heads/${headFile}?${headVer}`);
+          const vocabFile =
+            lang === 'sa' ? 'sanskrit_vocab.json' : `${lang}_vocab.json`;
+          const vocabVer = 'v=1.9.1';
+          const vocabUrl = lang === 'auto' ? undefined : `./vocabularies/${vocabFile}?${vocabVer}`;
           const lidUrl = lang === 'auto'
             ? (useMobileTier ? './heads_mobile/lid.bin?v=1.7.0' : './heads/lid.bin?v=1.7.0')
             : undefined;
