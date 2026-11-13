@@ -1198,6 +1198,39 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
       return audioBuffer.sampleRate === 16000 ? ch : resamplePcm(ch, audioBuffer.sampleRate, 16000);
     }
 
+    function setIosAudioSession(mode) {
+      if (navigator.audioSession) {
+        try {
+          navigator.audioSession.type = mode;
+        } catch (_) {}
+      }
+    }
+
+    let silentWavBlobUrl = null;
+    function getSilentWavBlobUrl() {
+      if (silentWavBlobUrl) return silentWavBlobUrl;
+      const sampleCount = 800; // 50ms @ 16kHz 16-bit mono PCM
+      const byteLen = 44 + sampleCount * 2;
+      const buf = new ArrayBuffer(byteLen);
+      const v = new DataView(buf);
+      const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+      writeStr(0, 'RIFF');
+      v.setUint32(4, byteLen - 8, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      v.setUint32(16, 16, true);
+      v.setUint16(20, 1, true);
+      v.setUint16(22, 1, true);
+      v.setUint32(24, 16000, true);
+      v.setUint32(28, 32000, true);
+      v.setUint16(32, 2, true);
+      v.setUint16(34, 16, true);
+      writeStr(36, 'data');
+      v.setUint32(40, sampleCount * 2, true);
+      silentWavBlobUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+      return silentWavBlobUrl;
+    }
+
     function unlockAudioContextSync() {
       try {
         const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -1208,6 +1241,15 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
         if (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted') {
           audioCtx.resume().catch(() => {});
         }
+        // Start a 1-frame silent buffer synchronously inside the user tap gesture (WebKit unlock)
+        try {
+          const sr = audioCtx.sampleRate || 48000;
+          const silentBuf = audioCtx.createBuffer(1, 1, sr);
+          const src = audioCtx.createBufferSource();
+          src.buffer = silentBuf;
+          src.connect(audioCtx.destination);
+          src.start(0);
+        } catch (_) {}
         return audioCtx;
       } catch (_) {
         return null;
@@ -1267,13 +1309,58 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
     };
 
     let presetPlaybackNode = null;
+    let presetAudioEl = null;
+    let presetAudioBlobUrl = null;
     let presetIntervalId = null;
     let activeStreamCancel = null;
+
+    function ensurePresetAudioElement() {
+      if (presetAudioEl) return presetAudioEl;
+      try {
+        const el = document.createElement('audio');
+        el.setAttribute('playsinline', '');
+        el.setAttribute('webkit-playsinline', '');
+        el.setAttribute('x-webkit-airplay', 'deny');
+        el.preload = 'auto';
+        el.style.display = 'none';
+        document.body.appendChild(el);
+        presetAudioEl = el;
+      } catch (_) {}
+      return presetAudioEl;
+    }
+
+    function primePresetAudioPlaybackSync() {
+      // iOS Safari, Chrome iOS (CriOS) & social WKWebViews mute WebAudio when the hardware Silent/Ring
+      // switch is ON unless AVAudioSession is in 'playback' mode and a gesture-unlocked <audio> plays.
+      setIosAudioSession('playback');
+      unlockAudioContextSync();
+      const el = ensurePresetAudioElement();
+      if (el) {
+        try {
+          el.muted = false;
+          el.loop = true;
+          el.volume = 0.01;
+          el.src = getSilentWavBlobUrl();
+          const p = el.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        } catch (_) {}
+      }
+    }
 
     function stopPresetPlayback() {
       if (presetPlaybackNode) {
         try { presetPlaybackNode.stop(); } catch {}
         presetPlaybackNode = null;
+      }
+      if (presetAudioEl) {
+        try {
+          presetAudioEl.pause();
+          presetAudioEl.loop = false;
+        } catch {}
+      }
+      if (presetAudioBlobUrl) {
+        try { URL.revokeObjectURL(presetAudioBlobUrl); } catch {}
+        presetAudioBlobUrl = null;
       }
       if (presetIntervalId) {
         clearInterval(presetIntervalId);
@@ -1468,10 +1555,10 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
 
     async function playAndStreamPreset(lang, sampleLang = lang) {
       try {
-        // Unlock Web Audio synchronously inside user tap gesture (required on iOS Safari/WebKit)
-        unlockAudioContextSync();
+        // Stop prior streams first, then synchronously unlock iOS Playback session + <audio> inside user tap gesture
         stopRecording();
         stopPresetPlayback();
+        primePresetAudioPlaybackSync();
         revealTranscriptOnMobile();
 
         if (!workerClient || !window.__swanadaReady || window.__swanadaLoadedLang !== lang) {
@@ -1499,22 +1586,46 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
         const res = await fetch(sampleUrl);
         if (!res.ok) throw new Error(`Could not load audio sample from ${sampleUrl}`);
         const arrayBuf = await res.arrayBuffer();
+        const wavCopy = arrayBuf.slice(0);
 
         const pcm = await decodeAudioBytesTo16kPcm(arrayBuf);
-        await ensureAudioContext();
 
-        // Play audio out loud through speakers via Web Audio API if context is active
-        try {
-          if (audioCtx && audioCtx.state === 'running') {
-            const sourceNode = audioCtx.createBufferSource();
-            const playBuf = audioCtx.createBuffer(1, pcm.length, 16000);
-            playBuf.getChannelData(0).set(pcm);
-            sourceNode.buffer = playBuf;
-            sourceNode.connect(audioCtx.destination);
-            sourceNode.start();
-            presetPlaybackNode = sourceNode;
-          }
-        } catch (_) {}
+        // Play audio out loud via gesture-unlocked <audio playsinline> (iOS AVAudioSessionCategoryPlayback,
+        // audible even when the iPhone hardware Silent/Ring switch is ON), with Web Audio fallback.
+        let playedOutLoud = false;
+        setIosAudioSession('playback');
+        const el = ensurePresetAudioElement();
+        if (el) {
+          try {
+            if (presetAudioBlobUrl) {
+              try { URL.revokeObjectURL(presetAudioBlobUrl); } catch {}
+            }
+            presetAudioBlobUrl = URL.createObjectURL(new Blob([wavCopy], { type: 'audio/wav' }));
+            el.muted = false;
+            el.loop = false;
+            el.volume = 1.0;
+            el.src = presetAudioBlobUrl;
+            await el.play();
+            playedOutLoud = true;
+          } catch (_) {}
+        }
+
+        if (!playedOutLoud) {
+          await ensureAudioContext();
+          try {
+            if (audioCtx && audioCtx.state === 'running') {
+              const outSr = audioCtx.sampleRate || 16000;
+              const outPcm = outSr === 16000 ? pcm : resamplePcm(pcm, 16000, outSr);
+              const sourceNode = audioCtx.createBufferSource();
+              const playBuf = audioCtx.createBuffer(1, outPcm.length, outSr);
+              playBuf.getChannelData(0).set(outPcm);
+              sourceNode.buffer = playBuf;
+              sourceNode.connect(audioCtx.destination);
+              sourceNode.start();
+              presetPlaybackNode = sourceNode;
+            }
+          } catch (_) {}
+        }
 
         // Reset worker stream and stream PCM chunks (foreground timer + background MessageChannel fallback)
         workerClient.startStream();
@@ -1522,6 +1633,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
           console.error('Preset stream completion error:', err);
         });
       } catch (err) {
+        stopPresetPlayback();
         console.error('Preset streaming error:', err);
         liveBadge.textContent = 'Error';
         placeholder.style.display = 'block';
@@ -1895,6 +2007,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
         //    so iOS Safari / WebKit never drops transient user activation across async awaits!
         unlockAudioContextSync();
         stopPresetPlayback();
+        setIosAudioSession('play-and-record');
         if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
           throw new Error('Microphone capture requires HTTPS or localhost secure context.');
         }
@@ -2076,6 +2189,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
         if (closingStream) {
           try { closingStream.getTracks().forEach(t => t.stop()); } catch {}
         }
+        setIosAudioSession('playback');
         if (workerClient) {
           workerClient.finishStream().catch(() => {});
         }
