@@ -18,6 +18,8 @@ const INDIC_PRODUCTIVE_SUFFIXES: Record<string, string[]> = {
   kn: [
     'ಗಳನ್ನು', 'ಗಳಲ್ಲಿ', 'ಗಳಿಗೆ', 'ಗಳಿಂದ', 'ಗಳ', 'ವನ್ನು', 'ದಲ್ಲಿ', 'ದಿಂದ', 'ಕ್ಕಾಗಿ', 'ಯಲ್ಲಿ', 'ನನ್ನು',
     'ತೀನಿ', 'ತ್ತೀನಿ', 'ತೀಯಾ', 'ತಾರೆ', 'ತೇವೆ', 'ೋಣ', 'ಲ್ಲ', 'ಲ್ವಾ', 'ದಾ', 'ನಲ್ಲಿ', 'ಗೆ', 'ಯಿಂದ',
+    'ವೇ', 'ಯೇ', 'ನೇ', 'ನೂ', 'ಯೂ', 'ವೂ', 'ಮ್ಮ', 'ಯಮ್ಮ', 'ವಮ್ಮ', 'ಪ್ಪ', 'ಯಪ್ಪ', 'ಣ್ಣ', 'ಯಣ್ಣ', 'ಕ್ಕ', 'ಯಕ್ಕ',
+    'ದ್ರೆ', 'ಿದ್ರೆ', 'ದರೆ', 'ಿದರೆ', 'ಂತ', 'ಅಂತ', 'ಾಗಿ', 'ಯಾಗಿ', 'ವಾಗಿ',
   ],
   mr: ['मध्ये', 'साठी', 'कडून', 'वर', 'चा', 'ची', 'चे', 'च्या', 'ला', 'ना', 'तोय', 'तेय', 'णार'],
   bn: ['গুলোর', 'গুলো', 'গুলি', 'দের', 'তে', 'কে', 'র', 'ের', 'য়', 'য়ে', 'টা', 'টি', 'ছি', 'ছে', 'বো'],
@@ -46,6 +48,7 @@ const INDIC_LEX_COLLOQUIAL_SUPPLEMENTS: Record<string, string[]> = {
     'ಚೆನ್ನಾಗಿದೆ', 'ಮಾಡ್ತೀನಿ', 'ಬರ್ತೀನಿ', 'ಹೋಗ್ತೀನಿ', 'ಹೋಗೋಣ', 'ಮಾಡೋಣ', 'ನೋಡೋಣ',
     'ಆಫೀಸ್', 'ಮೀಟಿಂಗ್', 'ಮೊಬೈಲ್', 'ಮೆಸೇಜ್', 'ವಿಡಿಯೋ', 'ವೀಡಿಯೊ', 'ಕಾಲ್', 'ಆನ್‌ಲೈನ್',
     'ಆನ್ಲೈನ್', 'ಟೈಮ್', 'ಆಪ್', 'ವೇಟ್', 'ಫೋನ್', 'ಬ್ಯಾಂಕ್', 'ಪ್ರಾಬ್ಲಮ್', 'ಸ್ವಲ್ಪ', 'ತುಂಬಾ',
+    'ಅಮ್ಮ', 'ಅಪ್ಪ', 'ಅಣ್ಣ', 'ಅಕ್ಕ', 'ತಮ್ಮ', 'ತಂಗಿ', 'ಕೈ', 'ಮನೆ', 'ಊಟ',
   ],
   ta: [
     'மச்சான்', 'மச்சி', 'ண்ணா', 'ப்பா', 'இப்போ', 'அப்போ', 'எப்போ', 'இல்ல', 'இல்லப்பா',
@@ -4139,6 +4142,15 @@ export function classifyIndicWord(word: string, lang: string, coreSet: Set<strin
       if (word.endsWith(suf) && word.length - suf.length >= 2) {
         const stem = word.slice(0, word.length - suf.length);
         if (coreSet.has(stem) || extSet.has(stem)) return 2;
+        if (
+          lang === 'kn' &&
+          (coreSet.has(stem + '\u0ca6') ||
+            extSet.has(stem + '\u0ca6') ||
+            coreSet.has(stem + '\u0cbf\u0ca6') ||
+            extSet.has(stem + '\u0cbf\u0ca6'))
+        ) {
+          return 2;
+        }
         if (lang === 'ml' && stem.endsWith('\u0d3e') && stem.length >= 3) {
           const shortStem = stem.slice(0, -1);
           if (coreSet.has(shortStem) || extSet.has(shortStem)) return 2;
@@ -4146,12 +4158,24 @@ export function classifyIndicWord(word: string, lang: string, coreSet: Set<strin
       }
     }
   }
-  if (word.length >= 6) {
-    for (let splitIdx = 3; splitIdx <= word.length - 3; splitIdx++) {
+  if (word.length >= 5) {
+    const shortAChar =
+      lang === 'kn' ? '\u0c85' :
+      lang === 'te' ? '\u0c05' :
+      lang === 'ml' ? '\u0d05' :
+      lang === 'ta' ? '\u0b85' : '';
+    for (let splitIdx = 3; splitIdx <= word.length - 2; splitIdx++) {
       const s1 = word.slice(0, splitIdx);
       const s2 = word.slice(splitIdx);
-      if ((coreSet.has(s1) || extSet.has(s1)) && (coreSet.has(s2) || extSet.has(s2))) {
+      if (s2.length >= 3 && (coreSet.has(s1) || extSet.has(s1)) && (coreSet.has(s2) || extSet.has(s2))) {
         return 4;
+      }
+      // General Dravidian Lopasandhi: stem ending in inherent short 'a' + vowel-initial second word (`ನಮ್ಮ + ಅಮ್ಮ -> ನಮ್ಮಮ್ಮ`)
+      if (shortAChar && (coreSet.has(s1) || extSet.has(s1))) {
+        const restoredS2 = shortAChar + s2;
+        if (coreSet.has(restoredS2) || extSet.has(restoredS2)) {
+          return 3;
+        }
       }
     }
   }

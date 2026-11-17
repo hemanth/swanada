@@ -934,7 +934,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
 
   <!-- Audio Context, Worker Client & Interactive Studio Logic -->
   <script type="module">
-    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.9.0';
+    import { SwanadaWorkerClient, transliterateIast, resamplePcm, parseWav } from './swanada.mjs?v=1.9.2';
 
     // Global Test Automation Contracts
     window.__swanadaReady = false;
@@ -953,16 +953,20 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
       isIOSDevice ||
       /Android|Mobile/i.test(uaString) ||
       (typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 4);
+    const isConstrainedMobileDevice =
+      isIOSDevice ||
+      (typeof navigator.deviceMemory === 'number' && navigator.deviceMemory > 0 && navigator.deviceMemory <= 4) ||
+      (/Android|Mobile/i.test(uaString) && typeof navigator.deviceMemory !== 'number');
 
-    // Capability-routed model tier (Ninada pattern):
-    // - Mobile browsers auto-route to the 25 MiB (<30 MB) Shared Conformer-Small tier (`?tier=mobile`)
-    // - Desktop browsers auto-route to the 177 MiB Studio Conformer-Large tier (`?tier=studio`)
+    // Capability-routed model tier:
+    // - iOS WebKit & <= 4 GB RAM devices auto-route to the 25 MiB (<30 MB) Shared Conformer-Small tier (`?tier=mobile`)
+    // - >= 6 GB RAM Android & Desktop browsers auto-route to the 177 MiB Studio Conformer-Large + SENH v2 Adapter tier (`?tier=studio`)
     const urlParams = new URLSearchParams(location.search);
     const requestedTier = (urlParams.get('tier') || '').toLowerCase();
     const useMobileTier =
       requestedTier === 'mobile' ? true :
       requestedTier === 'studio' ? false :
-      isMobileDevice;
+      isConstrainedMobileDevice;
     window.__swanadaModelTier = useMobileTier ? 'mobile' : 'studio';
 
     let workerClient = null;
@@ -1716,7 +1720,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
 
           if (!workerClient) {
             workerClient = new SwanadaWorkerClient({
-              workerUrl: './stt-worker.mjs?v=1.9.0',
+              workerUrl: './stt-worker.mjs?v=1.9.2',
               wasmPaths: './ort/',
             });
             window.__swanadaWorkerClient = workerClient;
@@ -2015,7 +2019,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
         const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: { ideal: 1 },
-            echoCancellation: true,
+            echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: true,
           }
@@ -2067,7 +2071,7 @@ cat stream.wav | swanada -l auto --stream --json</code></pre>
         if (audioCtx.audioWorklet && typeof AudioWorkletNode === 'function') {
           try {
             if (!workletModuleLoaded) {
-              await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js?v=1.5.4');
+              await audioCtx.audioWorklet.addModule('./audio-capture-worklet.js?v=1.9.2');
               workletModuleLoaded = true;
             }
             const activeWorklet = new AudioWorkletNode(audioCtx, 'swanada-audio-capture-processor', {

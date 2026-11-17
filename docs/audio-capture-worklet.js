@@ -20,6 +20,7 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
 
     // Causal Automatic Level Control (ALC) state for quiet / distant microphones
     this.alcEnv = 0.0;
+    this.alcNoiseFloor = 0.002;
     this.alcGain = 1.0;
 
     // 16 kHz post-decimation biquad states for 80 Hz HPF + 50 Hz / 60 Hz hum notch + online noise floor
@@ -160,6 +161,7 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
         this.smoothEnv = 0.0;
         this.expanderGain = 1.0;
         this.alcEnv = 0.0;
+        this.alcNoiseFloor = 0.002;
         this.alcGain = 1.0;
       } else if (type === 'config') {
         if (typeof msg.vadThreshold === 'number') this.vadThreshold = msg.vadThreshold;
@@ -324,9 +326,18 @@ class SwanadaAudioCaptureProcessor extends AudioWorkletProcessor {
       this.alcEnv = absIn > this.alcEnv
         ? (0.985 * this.alcEnv + 0.015 * absIn)
         : (0.9992 * this.alcEnv + 0.0008 * absIn);
+      if (this.alcEnv < this.alcNoiseFloor) {
+        this.alcNoiseFloor = 0.96 * this.alcNoiseFloor + 0.04 * this.alcEnv;
+      } else {
+        this.alcNoiseFloor = 0.99985 * this.alcNoiseFloor + 0.00015 * this.alcEnv;
+      }
+      if (this.alcNoiseFloor < 0.0005) this.alcNoiseFloor = 0.0005;
+      if (this.alcNoiseFloor > 0.012) this.alcNoiseFloor = 0.012;
+
+      const speechFloor = Math.max(0.014, this.alcNoiseFloor * 3.5);
       let targetAlc = 1.0;
-      if (this.alcEnv >= 0.0025 && this.alcEnv < 0.075) {
-        targetAlc = Math.min(5.0, 0.075 / (this.alcEnv + 1e-6));
+      if (this.alcEnv >= speechFloor && this.alcEnv < 0.075) {
+        targetAlc = Math.min(2.5, 0.075 / (this.alcEnv + 1e-6));
       } else if (this.alcEnv > 0.14) {
         targetAlc = Math.max(0.6, 0.14 / this.alcEnv);
       }

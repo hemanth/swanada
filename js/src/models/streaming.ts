@@ -55,6 +55,14 @@ export class StreamingAcousticEngine {
     return this.audioBuffer;
   }
 
+  getTotalAudioSamples(): number {
+    return this.totalAudioSamples;
+  }
+
+  hasPriorTurns(): boolean {
+    return this.priorTurnsText.length > 0;
+  }
+
   private listeners: {
     partial: ((res: StreamingTranscript) => void)[];
     final: ((res: TranscriptionResult) => void)[];
@@ -169,13 +177,19 @@ export class StreamingAcousticEngine {
 
   private async segmentTurnOnPause(durationMs: number): Promise<void> {
     if (this.audioBuffer.length >= 4800) {
-      if (this.hasUntranscribedTail || !(this.decoder as any).lastHypTokens?.length) {
+      let directTurnText = '';
+      let directTurnTokens: string[] = [];
+      if (this.hasUntranscribedTail || !(this.decoder as any).lastHypTokens?.length || !this.isAutoLanguage) {
         try {
           const evalBuf = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
             ? this.audioBuffer.slice(-this.maxBufferSamples)
             : this.audioBuffer;
-          const tailRes = await this.transcribeStreamWindow(evalBuf, true);
+          const tailRes = await this.transcribeStreamWindow(evalBuf, this.isAutoLanguage);
           if (tailRes?.tokens?.length > 0) {
+            if (!this.isWindowSliding && !this.isAutoLanguage && tailRes.text?.trim()) {
+              directTurnText = tailRes.text.trim();
+              directTurnTokens = [...tailRes.tokens];
+            }
             if (this.pendingTurnFlush) {
               this.promotePendingTurn();
             }
@@ -195,39 +209,42 @@ export class StreamingAcousticEngine {
               stTail.detectedLanguage = this.detectedLanguage;
               stTail.languageConfidence = this.languageConfidence;
             }
-            this.lastPartialTranscript = this.isAutoLanguage ? this.withPriorTurns(stTail) : stTail;
+            this.lastPartialTranscript = this.withPriorTurns(stTail);
           }
         } catch (err: any) {
           this.emitError(err);
         }
       }
+      this.promotePendingTurn();
+      const turnTxt = directTurnText || this.decoder.getCommittedText().trim();
+      const turnTokens = directTurnText ? directTurnTokens : this.decoder.getCommittedTokens();
+      if (turnTxt) {
+        this.priorTurnsText = this.priorTurnsText ? `${this.priorTurnsText} ${turnTxt}`.trim() : turnTxt;
+        this.priorTurnsTokens.push(...turnTokens);
+      }
+      this.decoder.reset();
+      this.baseCommittedTokens = [];
+      this.pendingTurnFlush = false;
       if (this.isAutoLanguage) {
-        this.promotePendingTurn();
-        const turnTxt = this.decoder.getCommittedText().trim();
-        if (turnTxt) {
-          this.priorTurnsText = this.priorTurnsText ? `${this.priorTurnsText} ${turnTxt}`.trim() : turnTxt;
-          this.priorTurnsTokens.push(...this.decoder.getCommittedTokens());
-        }
-        this.decoder.reset();
-        this.baseCommittedTokens = [];
-        this.pendingTurnFlush = false;
         this.languageLocked = false;
-        if (this.priorTurnsText) {
-          this.lastPartialTranscript = {
-            text: this.priorTurnsText,
-            committed: this.priorTurnsText,
-            volatile: '',
-            isFinal: false,
-            tokens: [...this.priorTurnsTokens],
-            durationMs,
-            inferenceMs: 0,
-            rtf: 0,
+      } else {
+        this.fullRecordingPcm = new Float32Array(0);
+      }
+      if (this.priorTurnsText) {
+        this.lastPartialTranscript = {
+          text: this.priorTurnsText,
+          committed: this.priorTurnsText,
+          volatile: '',
+          isFinal: false,
+          tokens: [...this.priorTurnsTokens],
+          durationMs,
+          inferenceMs: 0,
+          rtf: 0,
+          ...(this.isAutoLanguage ? {
             detectedLanguage: this.detectedLanguage,
             languageConfidence: this.languageConfidence,
-          };
-        }
-      } else {
-        this.pendingTurnFlush = true;
+          } : {}),
+        };
       }
       this.audioBuffer = new Float32Array(0);
       this.pendingChunk = new Float32Array(0);
@@ -253,6 +270,16 @@ export class StreamingAcousticEngine {
 
   async push(chunk: Float32Array): Promise<StreamingTranscript | void> {
     if (this.isFinished || chunk.length === 0) return;
+    if (chunk.length > this.maxBufferSamples) {
+      let lastSt: StreamingTranscript | void = undefined;
+      const stepSamples = 16000;
+      for (let off = 0; off < chunk.length; off += stepSamples) {
+        const sub = chunk.subarray(off, Math.min(chunk.length, off + stepSamples));
+        const r = await this.push(sub);
+        if (r) lastSt = r;
+      }
+      return lastSt;
+    }
     const cap = this.isAutoLanguage ? 960000 : this.maxBufferSamples;
     if (this.isAutoLanguage || !this.isWindowSliding) {
       if (this.fullRecordingPcm.length + chunk.length <= cap) {
@@ -444,8 +471,8 @@ export class StreamingAcousticEngine {
       if (this.isAutoLanguage) {
         st.detectedLanguage = this.detectedLanguage;
         st.languageConfidence = this.languageConfidence;
-        st = this.withPriorTurns(st);
       }
+      st = this.withPriorTurns(st);
       this.lastPartialTranscript = st;
 
       if (this.listeners.token.length > 0 && res.tokens.length > 0) {
@@ -556,7 +583,9 @@ export class StreamingAcousticEngine {
       : this.decoder.getCommittedTokens();
 
     const inferenceMs = performance.now() - startInference;
-    const finalSt = this.decoder.update(streamingTokens, true, durationMs, inferenceMs);
+    const finalSt = this.withPriorTurns(
+      this.decoder.update(streamingTokens, true, durationMs, inferenceMs)
+    );
 
     this.audioBuffer = new Float32Array(0);
     this.pendingChunk = new Float32Array(0);

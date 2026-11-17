@@ -249,12 +249,18 @@ function detectMobileRuntime() {
   const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
   const platform = typeof navigator !== 'undefined' ? navigator?.platform || '' : '';
   const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
-  const devMem = typeof navigator !== 'undefined' ? navigator?.deviceMemory || 8 : 8;
+  const rawDevMem = typeof navigator !== 'undefined' ? navigator?.deviceMemory : undefined;
+  const devMem = typeof rawDevMem === 'number' ? rawDevMem : 8;
   const isIOS =
     /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
     (platform === 'MacIntel' && maxTouch > 1);
-  const isMobile = isIOS || /Android|Mobile/i.test(ua) || devMem <= 4;
-  return { isIOS, isMobile };
+  const isMobileUa = /Android|Mobile/i.test(ua);
+  const isMobile = isIOS || isMobileUa || devMem <= 4;
+  const isConstrainedMobile =
+    isIOS ||
+    (typeof rawDevMem === 'number' && rawDevMem > 0 && rawDevMem <= 4) ||
+    (isMobileUa && typeof rawDevMem !== 'number');
+  return { isIOS, isMobile, isConstrainedMobile, devMem };
 }
 
 function configureWasm(ortInstance, numThreads, wasmPaths) {
@@ -278,13 +284,15 @@ function configureWasm(ortInstance, numThreads, wasmPaths) {
   }
 
   const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
-  const { isMobile } = detectMobileRuntime();
+  const { isMobile, isConstrainedMobile } = detectMobileRuntime();
   let threads = 1;
   if (numThreads && numThreads >= 1) {
     threads = isIsolated ? Math.min(isMobile ? 2 : 4, numThreads) : 1;
   } else if (isIsolated && !isMobile) {
     const cores = typeof navigator !== 'undefined' ? navigator?.hardwareConcurrency || 4 : 4;
     threads = Math.min(4, Math.max(1, cores - 1));
+  } else if (isIsolated && isMobile && !isConstrainedMobile) {
+    threads = 2;
   }
   ortInstance.env.wasm.numThreads = threads;
   return threads;
@@ -1489,11 +1497,14 @@ async function runAcousticInference(pcm, decodeOpts) {
       await ensureMultiHeadsInWorker([effectiveLang, 'en'], activeModelTier === 'mobile');
     }
     const enDec = computeEnDecodeInWorker(hiddenCopy, timeSteps);
-    if (enDec) {
+    const primaryVocab =
+      decodeVocabOverride ||
+      (activeEnAdapter ? activeVocab : (multiVocabs[effectiveLang] || activeVocab));
+    if (enDec && !activeEnAdapter) {
       const csRes = decodeBilingualCodeswitch(
         logits,
         timeSteps,
-        multiVocabs[effectiveLang] || activeVocab,
+        primaryVocab,
         effectiveLang,
         enDec.logits,
         enDec.vocab,
@@ -1563,7 +1574,7 @@ export async function handleIncomingMessage(msg) {
           activeModelTier = reqTier;
         } else if (mUrl.includes('onnx_mobile') || hUrl.includes('heads_mobile')) {
           activeModelTier = 'mobile';
-        } else if (reqTier === 'auto' && !isNodeEnv && detectMobileRuntime().isMobile) {
+        } else if (reqTier === 'auto' && !isNodeEnv && detectMobileRuntime().isConstrainedMobile) {
           activeModelTier = 'mobile';
         } else {
           activeModelTier = 'studio';
@@ -1640,10 +1651,19 @@ export async function handleIncomingMessage(msg) {
         workerState = 'STREAMING';
 
         if (msg.isFinal) {
-          if (chunk.length > 0) {
-            await streamingSession.push(chunk);
+          const isSingleShot =
+            chunk.length > 0 &&
+            streamingSession.bufferLength === 0 &&
+            !(typeof streamingSession.hasPriorTurns === 'function' && streamingSession.hasPriorTurns());
+          let finalRes;
+          if (isSingleShot) {
+            finalRes = await runAcousticInference(chunk, { isPartial: false });
+          } else {
+            if (chunk.length > 0) {
+              await streamingSession.push(chunk);
+            }
+            finalRes = await streamingSession.finish();
           }
-          const finalRes = await streamingSession.finish();
           const outLang = finalRes.language || currentLanguage;
           workerState = 'READY';
           postWorkerMessage({

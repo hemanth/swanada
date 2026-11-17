@@ -1704,6 +1704,8 @@ const INDIC_PRODUCTIVE_SUFFIXES                           = {
   kn: [
     'ಗಳನ್ನು', 'ಗಳಲ್ಲಿ', 'ಗಳಿಗೆ', 'ಗಳಿಂದ', 'ಗಳ', 'ವನ್ನು', 'ದಲ್ಲಿ', 'ದಿಂದ', 'ಕ್ಕಾಗಿ', 'ಯಲ್ಲಿ', 'ನನ್ನು',
     'ತೀನಿ', 'ತ್ತೀನಿ', 'ತೀಯಾ', 'ತಾರೆ', 'ತೇವೆ', 'ೋಣ', 'ಲ್ಲ', 'ಲ್ವಾ', 'ದಾ', 'ನಲ್ಲಿ', 'ಗೆ', 'ಯಿಂದ',
+    'ವೇ', 'ಯೇ', 'ನೇ', 'ನೂ', 'ಯೂ', 'ವೂ', 'ಮ್ಮ', 'ಯಮ್ಮ', 'ವಮ್ಮ', 'ಪ್ಪ', 'ಯಪ್ಪ', 'ಣ್ಣ', 'ಯಣ್ಣ', 'ಕ್ಕ', 'ಯಕ್ಕ',
+    'ದ್ರೆ', 'ಿದ್ರೆ', 'ದರೆ', 'ಿದರೆ', 'ಂತ', 'ಅಂತ', 'ಾಗಿ', 'ಯಾಗಿ', 'ವಾಗಿ',
   ],
   mr: ['मध्ये', 'साठी', 'कडून', 'वर', 'चा', 'ची', 'चे', 'च्या', 'ला', 'ना', 'तोय', 'तेय', 'णार'],
   bn: ['গুলোর', 'গুলো', 'গুলি', 'দের', 'তে', 'কে', 'র', 'ের', 'য়', 'য়ে', 'টা', 'টি', 'ছি', 'ছে', 'বো'],
@@ -1732,6 +1734,7 @@ const INDIC_LEX_COLLOQUIAL_SUPPLEMENTS                           = {
     'ಚೆನ್ನಾಗಿದೆ', 'ಮಾಡ್ತೀನಿ', 'ಬರ್ತೀನಿ', 'ಹೋಗ್ತೀನಿ', 'ಹೋಗೋಣ', 'ಮಾಡೋಣ', 'ನೋಡೋಣ',
     'ಆಫೀಸ್', 'ಮೀಟಿಂಗ್', 'ಮೊಬೈಲ್', 'ಮೆಸೇಜ್', 'ವಿಡಿಯೋ', 'ವೀಡಿಯೊ', 'ಕಾಲ್', 'ಆನ್‌ಲೈನ್',
     'ಆನ್ಲೈನ್', 'ಟೈಮ್', 'ಆಪ್', 'ವೇಟ್', 'ಫೋನ್', 'ಬ್ಯಾಂಕ್', 'ಪ್ರಾಬ್ಲಮ್', 'ಸ್ವಲ್ಪ', 'ತುಂಬಾ',
+    'ಅಮ್ಮ', 'ಅಪ್ಪ', 'ಅಣ್ಣ', 'ಅಕ್ಕ', 'ತಮ್ಮ', 'ತಂಗಿ', 'ಕೈ', 'ಮನೆ', 'ಊಟ',
   ],
   ta: [
     'மச்சான்', 'மச்சி', 'ண்ணா', 'ப்பா', 'இப்போ', 'அப்போ', 'எப்போ', 'இல்ல', 'இல்லப்பா',
@@ -5825,6 +5828,15 @@ function classifyIndicWord(word        , lang        , coreSet             , ext
       if (word.endsWith(suf) && word.length - suf.length >= 2) {
         const stem = word.slice(0, word.length - suf.length);
         if (coreSet.has(stem) || extSet.has(stem)) return 2;
+        if (
+          lang === 'kn' &&
+          (coreSet.has(stem + '\u0ca6') ||
+            extSet.has(stem + '\u0ca6') ||
+            coreSet.has(stem + '\u0cbf\u0ca6') ||
+            extSet.has(stem + '\u0cbf\u0ca6'))
+        ) {
+          return 2;
+        }
         if (lang === 'ml' && stem.endsWith('\u0d3e') && stem.length >= 3) {
           const shortStem = stem.slice(0, -1);
           if (coreSet.has(shortStem) || extSet.has(shortStem)) return 2;
@@ -5832,12 +5844,24 @@ function classifyIndicWord(word        , lang        , coreSet             , ext
       }
     }
   }
-  if (word.length >= 6) {
-    for (let splitIdx = 3; splitIdx <= word.length - 3; splitIdx++) {
+  if (word.length >= 5) {
+    const shortAChar =
+      lang === 'kn' ? '\u0c85' :
+      lang === 'te' ? '\u0c05' :
+      lang === 'ml' ? '\u0d05' :
+      lang === 'ta' ? '\u0b85' : '';
+    for (let splitIdx = 3; splitIdx <= word.length - 2; splitIdx++) {
       const s1 = word.slice(0, splitIdx);
       const s2 = word.slice(splitIdx);
-      if ((coreSet.has(s1) || extSet.has(s1)) && (coreSet.has(s2) || extSet.has(s2))) {
+      if (s2.length >= 3 && (coreSet.has(s1) || extSet.has(s1)) && (coreSet.has(s2) || extSet.has(s2))) {
         return 4;
+      }
+      // General Dravidian Lopasandhi: stem ending in inherent short 'a' + vowel-initial second word (`ನಮ್ಮ + ಅಮ್ಮ -> ನಮ್ಮಮ್ಮ`)
+      if (shortAChar && (coreSet.has(s1) || extSet.has(s1))) {
+        const restoredS2 = shortAChar + s2;
+        if (coreSet.has(restoredS2) || extSet.has(restoredS2)) {
+          return 3;
+        }
       }
     }
   }
@@ -11333,12 +11357,17 @@ function resolveEffectiveModelTier(tier            )                      {
   const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
   const platform = typeof navigator !== 'undefined' ? (navigator       )?.platform || '' : '';
   const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
-  const devMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory || 8 : 8;
-  const isMobile =
-    /Android|iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|Mobile/i.test(ua) ||
-    (platform === 'MacIntel' && maxTouch > 1) ||
-    devMem <= 4;
-  return isMobile ? 'mobile' : 'studio';
+  const rawDevMem = typeof navigator !== 'undefined' ? (navigator       )?.deviceMemory : undefined;
+  const isIOS =
+    /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1);
+  const isMobileUa = /Android|Mobile/i.test(ua);
+  // iOS WebKit and <= 4 GB RAM devices use 25.4 MiB Conformer-Small; >= 6 GB Android & Desktop use 177.4 MiB Studio + SENH v2 adapters
+  const isConstrainedMobile =
+    isIOS ||
+    (typeof rawDevMem === 'number' && rawDevMem > 0 && rawDevMem <= 4) ||
+    (isMobileUa && typeof rawDevMem !== 'number');
+  return isConstrainedMobile ? 'mobile' : 'studio';
 }
 
 /**
@@ -12829,6 +12858,14 @@ class StreamingAcousticEngine {
     return this.audioBuffer;
   }
 
+  getTotalAudioSamples()         {
+    return this.totalAudioSamples;
+  }
+
+  hasPriorTurns()          {
+    return this.priorTurnsText.length > 0;
+  }
+
           listeners   
                                                     
                                                   
@@ -12943,13 +12980,19 @@ class StreamingAcousticEngine {
 
           async segmentTurnOnPause(durationMs        )                {
     if (this.audioBuffer.length >= 4800) {
-      if (this.hasUntranscribedTail || !(this.decoder       ).lastHypTokens?.length) {
+      let directTurnText = '';
+      let directTurnTokens           = [];
+      if (this.hasUntranscribedTail || !(this.decoder       ).lastHypTokens?.length || !this.isAutoLanguage) {
         try {
           const evalBuf = (this.isWindowSliding && this.audioBuffer.length > this.maxBufferSamples)
             ? this.audioBuffer.slice(-this.maxBufferSamples)
             : this.audioBuffer;
-          const tailRes = await this.transcribeStreamWindow(evalBuf, true);
+          const tailRes = await this.transcribeStreamWindow(evalBuf, this.isAutoLanguage);
           if (tailRes?.tokens?.length > 0) {
+            if (!this.isWindowSliding && !this.isAutoLanguage && tailRes.text?.trim()) {
+              directTurnText = tailRes.text.trim();
+              directTurnTokens = [...tailRes.tokens];
+            }
             if (this.pendingTurnFlush) {
               this.promotePendingTurn();
             }
@@ -12969,39 +13012,42 @@ class StreamingAcousticEngine {
               stTail.detectedLanguage = this.detectedLanguage;
               stTail.languageConfidence = this.languageConfidence;
             }
-            this.lastPartialTranscript = this.isAutoLanguage ? this.withPriorTurns(stTail) : stTail;
+            this.lastPartialTranscript = this.withPriorTurns(stTail);
           }
         } catch (err     ) {
           this.emitError(err);
         }
       }
+      this.promotePendingTurn();
+      const turnTxt = directTurnText || this.decoder.getCommittedText().trim();
+      const turnTokens = directTurnText ? directTurnTokens : this.decoder.getCommittedTokens();
+      if (turnTxt) {
+        this.priorTurnsText = this.priorTurnsText ? `${this.priorTurnsText} ${turnTxt}`.trim() : turnTxt;
+        this.priorTurnsTokens.push(...turnTokens);
+      }
+      this.decoder.reset();
+      this.baseCommittedTokens = [];
+      this.pendingTurnFlush = false;
       if (this.isAutoLanguage) {
-        this.promotePendingTurn();
-        const turnTxt = this.decoder.getCommittedText().trim();
-        if (turnTxt) {
-          this.priorTurnsText = this.priorTurnsText ? `${this.priorTurnsText} ${turnTxt}`.trim() : turnTxt;
-          this.priorTurnsTokens.push(...this.decoder.getCommittedTokens());
-        }
-        this.decoder.reset();
-        this.baseCommittedTokens = [];
-        this.pendingTurnFlush = false;
         this.languageLocked = false;
-        if (this.priorTurnsText) {
-          this.lastPartialTranscript = {
-            text: this.priorTurnsText,
-            committed: this.priorTurnsText,
-            volatile: '',
-            isFinal: false,
-            tokens: [...this.priorTurnsTokens],
-            durationMs,
-            inferenceMs: 0,
-            rtf: 0,
+      } else {
+        this.fullRecordingPcm = new Float32Array(0);
+      }
+      if (this.priorTurnsText) {
+        this.lastPartialTranscript = {
+          text: this.priorTurnsText,
+          committed: this.priorTurnsText,
+          volatile: '',
+          isFinal: false,
+          tokens: [...this.priorTurnsTokens],
+          durationMs,
+          inferenceMs: 0,
+          rtf: 0,
+          ...(this.isAutoLanguage ? {
             detectedLanguage: this.detectedLanguage,
             languageConfidence: this.languageConfidence,
-          };
-        }
-      } else {
-        this.pendingTurnFlush = true;
+          } : {}),
+        };
       }
       this.audioBuffer = new Float32Array(0);
       this.pendingChunk = new Float32Array(0);
@@ -13027,6 +13073,16 @@ class StreamingAcousticEngine {
 
   async push(chunk              )                                      {
     if (this.isFinished || chunk.length === 0) return;
+    if (chunk.length > this.maxBufferSamples) {
+      let lastSt                             = undefined;
+      const stepSamples = 16000;
+      for (let off = 0; off < chunk.length; off += stepSamples) {
+        const sub = chunk.subarray(off, Math.min(chunk.length, off + stepSamples));
+        const r = await this.push(sub);
+        if (r) lastSt = r;
+      }
+      return lastSt;
+    }
     const cap = this.isAutoLanguage ? 960000 : this.maxBufferSamples;
     if (this.isAutoLanguage || !this.isWindowSliding) {
       if (this.fullRecordingPcm.length + chunk.length <= cap) {
@@ -13218,8 +13274,8 @@ class StreamingAcousticEngine {
       if (this.isAutoLanguage) {
         st.detectedLanguage = this.detectedLanguage;
         st.languageConfidence = this.languageConfidence;
-        st = this.withPriorTurns(st);
       }
+      st = this.withPriorTurns(st);
       this.lastPartialTranscript = st;
 
       if (this.listeners.token.length > 0 && res.tokens.length > 0) {
@@ -13330,7 +13386,9 @@ class StreamingAcousticEngine {
       : this.decoder.getCommittedTokens();
 
     const inferenceMs = performance.now() - startInference;
-    const finalSt = this.decoder.update(streamingTokens, true, durationMs, inferenceMs);
+    const finalSt = this.withPriorTurns(
+      this.decoder.update(streamingTokens, true, durationMs, inferenceMs)
+    );
 
     this.audioBuffer = new Float32Array(0);
     this.pendingChunk = new Float32Array(0);
@@ -14878,10 +14936,19 @@ async function handleIncomingMessage(msg                )                {
         workerState = 'STREAMING';
 
         if (msg.isFinal) {
-          if (chunk.length > 0) {
-            await streamingSession.push(chunk);
+          const isSingleShot =
+            chunk.length > 0 &&
+            streamingSession.bufferLength === 0 &&
+            !(typeof (streamingSession       ).hasPriorTurns === 'function' && (streamingSession       ).hasPriorTurns());
+          let finalRes                     ;
+          if (isSingleShot) {
+            finalRes = await runAcousticInference(chunk, { isPartial: false });
+          } else {
+            if (chunk.length > 0) {
+              await streamingSession.push(chunk);
+            }
+            finalRes = await streamingSession.finish();
           }
-          const finalRes = await streamingSession.finish();
           workerState = 'READY';
           postWorkerMessage({
             type: 'FINAL',
@@ -15261,6 +15328,8 @@ export {
   enhanceSpeechWithTelemetry,
   denoisePcm16k,
   dedupMarks,
+  getIndicLexicon,
+  classifyIndicWord,
   repairBrahmicOrthography,
   normalizeIndicText,
   assembleText,

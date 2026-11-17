@@ -669,10 +669,19 @@ export async function handleIncomingMessage(msg: IngoingMessage): Promise<void> 
         workerState = 'STREAMING';
 
         if (msg.isFinal) {
-          if (chunk.length > 0) {
-            await streamingSession.push(chunk);
+          const isSingleShot =
+            chunk.length > 0 &&
+            streamingSession.bufferLength === 0 &&
+            !(typeof (streamingSession as any).hasPriorTurns === 'function' && (streamingSession as any).hasPriorTurns());
+          let finalRes: TranscriptionResult;
+          if (isSingleShot) {
+            finalRes = await runAcousticInference(chunk, { isPartial: false });
+          } else {
+            if (chunk.length > 0) {
+              await streamingSession.push(chunk);
+            }
+            finalRes = await streamingSession.finish();
           }
-          const finalRes = await streamingSession.finish();
           workerState = 'READY';
           postWorkerMessage({
             type: 'FINAL',

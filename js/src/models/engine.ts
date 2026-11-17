@@ -158,12 +158,17 @@ export function resolveEffectiveModelTier(tier?: ModelTier): 'mobile' | 'studio'
   const ua = typeof navigator !== 'undefined' ? navigator?.userAgent || '' : '';
   const platform = typeof navigator !== 'undefined' ? (navigator as any)?.platform || '' : '';
   const maxTouch = typeof navigator !== 'undefined' ? navigator?.maxTouchPoints || 0 : 0;
-  const devMem = typeof navigator !== 'undefined' ? (navigator as any)?.deviceMemory || 8 : 8;
-  const isMobile =
-    /Android|iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS|Mobile/i.test(ua) ||
-    (platform === 'MacIntel' && maxTouch > 1) ||
-    devMem <= 4;
-  return isMobile ? 'mobile' : 'studio';
+  const rawDevMem = typeof navigator !== 'undefined' ? (navigator as any)?.deviceMemory : undefined;
+  const isIOS =
+    /iPhone|iPad|iPod|CriOS|FxiOS|EdgiOS/i.test(ua) ||
+    (platform === 'MacIntel' && maxTouch > 1);
+  const isMobileUa = /Android|Mobile/i.test(ua);
+  // iOS WebKit and <= 4 GB RAM devices use 25.4 MiB Conformer-Small; >= 6 GB Android & Desktop use 177.4 MiB Studio + SENH v2 adapters
+  const isConstrainedMobile =
+    isIOS ||
+    (typeof rawDevMem === 'number' && rawDevMem > 0 && rawDevMem <= 4) ||
+    (isMobileUa && typeof rawDevMem !== 'number');
+  return isConstrainedMobile ? 'mobile' : 'studio';
 }
 
 /**
